@@ -1,0 +1,9 @@
+{
+  "name": "Haushaltsplaner",
+  "short_name": "Haushalt",
+  "start_url": "./?v=0.43",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "description": "Budget‑Web‑App für Benny und Madeleine",
+  "icons": []
+}
