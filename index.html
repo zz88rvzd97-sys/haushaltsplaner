@@ -1,0 +1,62 @@
+<!--
+  Haushaltsplaner Developer Beta 0.34
+  Diese Version korrigiert die Datenmigration aus älteren Versionen:
+  die Beta 0.33 speicherte übernommene Daten versehentlich unter
+  einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
+  wurden. Beim erstmaligen Laden einer Beta 0.34 Installation werden
+  vorhandene Daten aus früheren States korrekt übernommen und unter
+  dem neuen Schlüssel gespeichert.
+
+  Außerdem zeigt das Menü „Töpfe“ nun auch ohne vorhandene Töpfe eine
+  sinnvolle Übersicht über den Spar‑Plan. Der Bereich „Sichern &
+  Exportieren“ ist wieder vollständig nutzbar.
+-->
+<!--
+  Aktualisierung Developer Beta 0.37: Diese Version startet die Rücklagen‑Verteilung
+  erst ab Mai 2026 und fügt einen "Markieren"-Knopf in der Tabelle
+  "Rücklagen & Sparen" hinzu, damit du bestätigen kannst, dass die
+  Beträge für einen Monat bereits zurückgelegt oder angespart wurden.
+  Nach dem Anklicken des Knopfs wird der entsprechende Monat als
+  erledigt angezeigt. Alle weiteren Verbesserungen aus Beta 0.34
+  bleiben erhalten.
+-->
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Haushaltsplaner Developer Beta 0.37</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="manifest" href="manifest.json" />
+  </head>
+  <body>
+    <header>
+      <h1>Benny & Madeleine – Haushaltsplaner</h1>
+      <div class="nav-bar">
+        <select id="sectionSelect">
+          <option value="overview">Übersicht</option>
+          <option value="common">Gemeinsame Kosten</option>
+          <option value="personal">Persönliche Ausgaben</option>
+          <option value="debts">Schulden</option>
+          <option value="settings">Regeln & Personen</option>
+          <option value="savings">Rücklagen & Sparen</option>
+          <option value="pots" selected>Töpfe</option>
+          <option value="save">Sichern</option>
+        </select>
+        <button id="reloadButton">Neu laden</button>
+      </div>
+    </header>
+    <main>
+      <section id="overview" class="tab-section"></section>
+      <section id="common" class="tab-section"></section>
+      <section id="personal" class="tab-section"></section>
+      <section id="debts" class="tab-section"></section>
+      <section id="settings" class="tab-section"></section>
+      <section id="savings" class="tab-section"></section>
+      <section id="pots" class="tab-section active"></section>
+      <section id="save" class="tab-section"></section>
+    </main>
+      <footer>Developer Beta 0.37</footer>
+    <script src="script.js"></script>
+  </body>
+</html>
