@@ -32,6 +32,8 @@ body {
   background-color: var(--bg-color);
   color: var(--text-color);
   -webkit-font-smoothing: antialiased;
+  /* Verhindere horizontales Scrollen, indem überschüssige Breite ausgeblendet wird. */
+  overflow-x: hidden;
 }
 
 header {
@@ -48,10 +50,14 @@ h1 {
 }
 
 nav {
+  /* Navigation besteht aus einem Auswahlfeld für die Ansicht und einem
+     optionalen Reload-Button. Auf kleinen Bildschirmen soll sie
+     nebeneinander stehen, ohne horizontalen Scrollbalken. */
   margin-top: 0.5rem;
   display: flex;
-  overflow-x: auto;
+  align-items: center;
   gap: 0.5rem;
+  overflow: visible;
 }
 
 nav button {
@@ -64,6 +70,13 @@ nav button {
   cursor: pointer;
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+/* Navigation: das Auswahlfeld soll möglichst viel Platz einnehmen, damit
+   der Text lesbar bleibt. */
+nav select {
+  flex: 1 1 auto;
+  min-width: 140px;
 }
 
 nav button.active {

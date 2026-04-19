@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 0.28
+ * Haushaltsplaner Developer Beta 0.29
  *
   * Diese JavaScript-Datei enthält die komplette Logik der Web‑App. Die
  * Applikation speichert alle Daten im LocalStorage, so dass die
@@ -102,24 +102,29 @@
     commonCosts: [],
     personalCosts: [],
     debts: []
+    ,
+    // Rücklagen- und Spar-Töpfe. Jeder Topf besitzt eine eindeutige id,
+    // einen Namen, einen aktuellen Saldo und eine Liste von Buchungen.
+    // Buchungen können Einzahlungen (positiver Betrag) oder Ausgaben
+    // (negativer Betrag) sein.
+    pots: []
   };
   let state;
   try {
-    // Lade eventuell vorhandene Daten aus dem LocalStorage. Für Beta 0.28
-    // heisst der Schlüssel "budgetStateV028". Falls dort nichts gespeichert
+    // Lade eventuell vorhandene Daten aus dem LocalStorage. Für Beta 0.29
+    // heisst der Schlüssel "budgetStateV029". Falls dort nichts gespeichert
     // ist, versuchen wir eine Migration aus den Vorgänger‑Versionen
-    // (0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16, 0.15). So
-    // bleiben deine bisher gespeicherten Daten erhalten.
-    let saved = localStorage.getItem('budgetStateV028');
+    // (0.28, 0.27, 0.26, 0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16, 0.15).
+    let saved = localStorage.getItem('budgetStateV029');
     if (!saved) {
-      const fallbackKeys = ['budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'];
+      const fallbackKeys = ['budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'];
       for (const k of fallbackKeys) {
         const data = localStorage.getItem(k);
         if (data) {
           saved = data;
           // Kopiere die Daten unter den neuen Schlüssel, damit die
           // Migration nur einmal durchgeführt werden muss.
-          localStorage.setItem('budgetStateV028', data);
+          localStorage.setItem('budgetStateV029', data);
           break;
         }
       }
@@ -129,7 +134,9 @@
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV028', JSON.stringify(state));
+    // Speichere den aktuellen Zustand unter dem Beta‑0.29‑Schlüssel. So wird
+    // verhindert, dass alte Versionen die neuen Daten überschreiben.
+    localStorage.setItem('budgetStateV029', JSON.stringify(state));
   }
 
   // ---------- Zeitliche Auswahl ----------
@@ -145,6 +152,7 @@
   const debtsSection = document.getElementById('debts');
   const settingsSection = document.getElementById('settings');
   const saveSection = document.getElementById('save');
+  const savingsSection = document.getElementById('savings');
   const sectionSelect = document.getElementById('sectionSelect');
   // Aktuelle Ansicht (Übersicht, common, personal, debts, settings, save)
   let currentSection = 'overview';
@@ -219,11 +227,153 @@
     renderPersonal();
     renderDebts();
     renderSettings();
+    renderSavings();
     renderSave();
     // Aktualisiere die Sichtbarkeit der Abschnitte entsprechend der aktuellen Auswahl
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
     });
+  }
+
+  /**
+   * Zeigt die Rücklagen- und Spar-Töpfe an und erlaubt das Hinzufügen
+   * neuer Töpfe sowie Einzahlungen und Ausgaben. Jeder Topf hat
+   * einen Namen, einen aktuellen Saldo und eine Liste von Buchungen.
+   */
+  function renderSavings() {
+    savingsSection.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'card';
+    // Auswahl des Monats und Kopfzeile mit Titel und Neu-Button
+    const headerRow = document.createElement('div');
+    headerRow.className = 'row';
+    // Monat auswählen
+    const monthLabel = document.createElement('label');
+    monthLabel.textContent = 'Monat:';
+    const monthSelect = createMonthSelect();
+    monthSelect.addEventListener('change', (e) => {
+      currentMonth = e.target.value;
+      updateMonthListIfNeeded();
+      render();
+    });
+    headerRow.appendChild(monthLabel);
+    headerRow.appendChild(monthSelect);
+    card.appendChild(headerRow);
+    // Kopfzeile mit Titel und Neu-Button
+    const header = document.createElement('div');
+    header.className = 'row';
+    const title = document.createElement('h2');
+    title.textContent = 'Rücklagen & Sparen';
+    title.style.flex = '1 1 auto';
+    const addBtn = document.createElement('button');
+    addBtn.textContent = '+ Neuer Topf';
+    addBtn.className = 'primary';
+    addBtn.addEventListener('click', () => {
+      const name = prompt('Name des Topfs:');
+      if (name == null) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const initialStr = prompt('Startbetrag (in €):', '0');
+      let initial = parseFloat(initialStr);
+      if (isNaN(initial)) initial = 0;
+      state.pots.push({ id: generateId(), name: trimmed, balance: initial, transactions: [] });
+      saveState();
+      render();
+    });
+    header.appendChild(title);
+    header.appendChild(addBtn);
+    card.appendChild(header);
+    // Anzeige der bestehenden Töpfe
+    if (!state.pots || state.pots.length === 0) {
+      const p = document.createElement('p');
+      p.textContent = 'Keine Rücklagen-Töpfe definiert.';
+      card.appendChild(p);
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table';
+      const thead = document.createElement('thead');
+      thead.innerHTML = `<tr><th>Name</th><th>Saldo</th><th>Aktion</th></tr>`;
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      state.pots.forEach((pot) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${pot.name}</td><td>${pot.balance.toFixed(2)} €</td><td></td>`;
+        const actionCell = tr.children[2];
+        // Einzahlen-Button
+        const depositBtn = document.createElement('button');
+        depositBtn.textContent = 'Einzahlen';
+        depositBtn.className = 'success';
+        depositBtn.addEventListener('click', () => {
+          const amountStr = prompt(`Betrag zum Einzahlen in "${pot.name}":`, '0');
+          if (amountStr == null) return;
+          let amount = parseFloat(amountStr);
+          if (isNaN(amount) || amount <= 0) {
+            alert('Bitte einen positiven Betrag eingeben.');
+            return;
+          }
+          const desc = prompt('Beschreibung (optional):', 'Einzahlung');
+          pot.balance += amount;
+          if (!pot.transactions) pot.transactions = [];
+          // Verwende das aktuell gewählte Monat als Buchungsdatum, damit
+          // Einzahlungen dem Monat zugeordnet werden, der im Monatselect
+          // gewählt ist. Dadurch verhält sich die App eher wie eine
+          // Bankapp, die Buchungen einem Monat zuordnet.
+          pot.transactions.push({ date: currentMonth, type: 'deposit', amount, description: desc || '' });
+          saveState();
+          render();
+        });
+        // Ausgeben-Button
+        const withdrawBtn = document.createElement('button');
+        withdrawBtn.textContent = 'Ausgeben';
+        withdrawBtn.className = 'danger';
+        withdrawBtn.addEventListener('click', () => {
+          const amountStr = prompt(`Betrag zum Ausgeben aus "${pot.name}":`, '0');
+          if (amountStr == null) return;
+          let amount = parseFloat(amountStr);
+          if (isNaN(amount) || amount <= 0) {
+            alert('Bitte einen positiven Betrag eingeben.');
+            return;
+          }
+          if (amount > pot.balance) {
+            if (!confirm('Der Betrag ist größer als der Saldo. Trotzdem fortfahren?')) {
+              return;
+            }
+          }
+          const desc = prompt('Beschreibung (optional):', 'Ausgabe');
+          pot.balance -= amount;
+          if (!pot.transactions) pot.transactions = [];
+          // Verwende das aktuell gewählte Monat als Buchungsdatum, analog zu
+          // Einzahlungen.
+          pot.transactions.push({ date: currentMonth, type: 'withdraw', amount: -amount, description: desc || '' });
+          saveState();
+          render();
+        });
+        actionCell.appendChild(depositBtn);
+        actionCell.appendChild(withdrawBtn);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      card.appendChild(table);
+      // Monatliche Summe der Einzahlungen/Ausgaben über alle Töpfe
+      let monthlyDeposits = 0;
+      let monthlyWithdrawals = 0;
+      state.pots.forEach((pot) => {
+        if (pot.transactions) {
+          pot.transactions.forEach((t) => {
+            if (t.date === currentMonth) {
+              if (t.amount > 0) monthlyDeposits += t.amount;
+              if (t.amount < 0) monthlyWithdrawals += Math.abs(t.amount);
+            }
+          });
+        }
+      });
+      if (monthlyDeposits > 0 || monthlyWithdrawals > 0) {
+        const summaryP = document.createElement('p');
+        summaryP.innerHTML = `<strong>Dieser Monat:</strong> +${monthlyDeposits.toFixed(2)} € / -${monthlyWithdrawals.toFixed(2)} €`;
+        card.appendChild(summaryP);
+      }
+    }
+    savingsSection.appendChild(card);
   }
   // Übersicht
   function renderOverview() {
@@ -251,20 +401,23 @@
       totalIncome += income;
       return { person: p, income, commonShare: 0, personalDue: 0, debtShare: 0 };
     });
-    // Gesamtsumme der monatlichen gemeinsamen Kosten
-    let totalCommonShare = 0;
+    // Gesamtsumme der monatlichen gemeinsamen Kosten (ungestuft). Anschließend
+    // berechnen wir die gerundeten Anteile und die gerundete Gesamtsumme.
+    let totalCommonShareRaw = 0;
     state.commonCosts.forEach((c) => {
-      totalCommonShare += getCommonMonthlyShare(c);
+      totalCommonShareRaw += getCommonMonthlyShare(c);
     });
-    // Verteilung: Die gemeinsamen Kosten werden gerundet und so angepasst,
-    // dass die Summe der Anteile exakt der Gesamtsumme entspricht. Wir
-    // verwenden computeRoundedCommonShares, um die Anteile pro Person
-    // einmalig zu berechnen.
+    // Erstelle eine Liste der Personen mit ihren Netto-Einkommen für die
+    // aktuelle Periode und berechne die gerundeten Anteile. Die Summe
+    // dieser Anteile wird als offizielle Gesamtsumme genutzt, damit
+    // Anteil + Anteil genau die Gesamtsumme ergibt.
     const personsListForShares = state.persons.map((p) => {
       const income = getPersonNet(p, currentMonth);
       return { person: p, income };
     });
-    const shareMappingOverview = computeRoundedCommonShares(totalCommonShare, personsListForShares);
+    const shareMappingOverview = computeRoundedCommonShares(totalCommonShareRaw, personsListForShares);
+    // Summiere die gerundeten Anteile
+    const totalCommonShareRounded = Object.values(shareMappingOverview).reduce((sum, val) => sum + val, 0);
     personsData.forEach((pd) => {
       const shareVal = shareMappingOverview[pd.person.id] !== undefined ? shareMappingOverview[pd.person.id] : 0;
       pd.commonShare = shareVal;
@@ -315,7 +468,7 @@
     footRow.innerHTML = `
       <td><strong>Summe</strong></td>
       <td>${totalIncome.toFixed(2)} €</td>
-      <td>${totalCommonShare.toFixed(2)} €</td>
+      <td>${totalCommonShareRounded.toFixed(2)} €</td>
       <td>${totalPersonal.toFixed(2)} €</td>
       <td>${totalAvail.toFixed(2)} €</td>
     `;
@@ -577,7 +730,13 @@
       title.textContent = 'Summe & Aufschlüsselung gemeinsamer Kosten';
       summaryCard.appendChild(title);
       const sumPara = document.createElement('p');
-      sumPara.innerHTML = `<strong>Monatliche Gesamtsumme:</strong> ${totalMonthly.toFixed(2)} €`;
+      // Die Gesamtsumme ergibt sich aus der Summe der gerundeten Anteile, damit
+      // Person 1 + Person 2 exakt den Gesamtbetrag ergibt. Berechne sie
+      // anhand der shareMapping. Wenn shareMapping leer ist, verwende
+      // die ungerundete Gesamtsumme.
+      const totalRoundedSum = Object.values(shareMapping).reduce((sum, val) => sum + val, 0);
+      const displayTotal = totalRoundedSum > 0 ? totalRoundedSum : totalMonthly;
+      sumPara.innerHTML = `<strong>Monatliche Gesamtsumme:</strong> ${displayTotal.toFixed(2)} €`;
       summaryCard.appendChild(sumPara);
 
       // Zeige an, welche gemeinsamen Kosten im aktuellen Monat bereits bezahlt
