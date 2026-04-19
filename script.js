@@ -1,14 +1,14 @@
 /*
- * Haushaltsplaner Developer Beta 0.26
+ * Haushaltsplaner Developer Beta 0.28
  *
- * Diese JavaScript-Datei enthält die komplette Logik der Web‑App. Die
+  * Diese JavaScript-Datei enthält die komplette Logik der Web‑App. Die
  * Applikation speichert alle Daten im LocalStorage, so dass die
  * eingegebenen Posten und Einstellungen auch nach dem Schließen des
  * Browsers bestehen bleiben. Kernfunktionen:
  *
- *  - Übersicht: zeigt pro Person Einkommen, Anteil gemeinsamer Kosten,
- *    persönliche Ausgaben, Schuldenanteil und verfügbaren Rest für den
- *    aktuell ausgewählten Monat.
+    *  - Übersicht: zeigt pro Person Einkommen, Anteil gemeinsamer Kosten,
+    *    persönliche Ausgaben, Schuldenanteil und verfügbaren Rest für den
+    *    aktuell ausgewählten Monat.
  *  - Gemeinsame Kosten: Posten mit Betrag, Zahlungsintervall und
  *    Startmonat. Die monatlichen Anteile werden automatisch aus dem
  *    Betrag und dem Intervall berechnet. In Monaten, in denen ein
@@ -105,21 +105,21 @@
   };
   let state;
   try {
-    // Lade eventuell vorhandene Daten aus dem LocalStorage. Für Beta 0.26
-    // heisst der Schlüssel "budgetStateV026". Falls dort nichts gespeichert
+    // Lade eventuell vorhandene Daten aus dem LocalStorage. Für Beta 0.28
+    // heisst der Schlüssel "budgetStateV028". Falls dort nichts gespeichert
     // ist, versuchen wir eine Migration aus den Vorgänger‑Versionen
     // (0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16, 0.15). So
     // bleiben deine bisher gespeicherten Daten erhalten.
-    let saved = localStorage.getItem('budgetStateV026');
+    let saved = localStorage.getItem('budgetStateV028');
     if (!saved) {
-      const fallbackKeys = ['budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'];
+      const fallbackKeys = ['budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'];
       for (const k of fallbackKeys) {
         const data = localStorage.getItem(k);
         if (data) {
           saved = data;
           // Kopiere die Daten unter den neuen Schlüssel, damit die
           // Migration nur einmal durchgeführt werden muss.
-          localStorage.setItem('budgetStateV026', data);
+          localStorage.setItem('budgetStateV028', data);
           break;
         }
       }
@@ -129,7 +129,7 @@
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV026', JSON.stringify(state));
+    localStorage.setItem('budgetStateV028', JSON.stringify(state));
   }
 
   // ---------- Zeitliche Auswahl ----------
@@ -176,6 +176,42 @@
   function getCommonMonthlyShare(cost) {
     return cost.amount / cost.interval;
   }
+
+  /**
+   * Berechnet die monatlichen Anteile der gemeinsamen Kosten für jede Person.
+   *
+   * Für jede Person wird anhand des Nettoeinkommens (inklusive
+   * Verschiebebetrag) ein ungerundeter Anteil ermittelt. Dieser wird
+   * anschließend **für jede Person unabhängig** auf das nächsthöhere
+   * 5‑€‑Intervall aufgerundet.  Dadurch kann die Summe der gerundeten
+   * Anteile größer als die tatsächliche Gesamtsumme der gemeinsamen
+   * Kosten sein; diese Funktion führt **keine** Korrektur der
+   * Differenz durch.  Das Ergebnis ist daher eine Liste von Anteilen,
+   * bei denen jeder Anteil aufgerundet ist.  Die Summe der Anteile
+   * kann die Gesamtsumme übersteigen – das ist beabsichtigt, da beide
+   * Anteile jeweils aufgerundet werden sollen.
+   *
+   * @param {number} totalMonthly Gesamtsumme der monatlichen Anteile aller gemeinsamen Kosten
+   * @param {Array<{person: Object, income: number}>} persons Eine Liste der Personen mit deren Einkommen
+   * @returns {Object} Ein Mapping von person.id auf den aufgerundeten Anteil
+   */
+  function computeRoundedCommonShares(totalMonthly, persons) {
+    const result = {};
+    if (persons.length === 0) return result;
+    // Gesamtnetto berechnen
+    let totalIncome = 0;
+    persons.forEach((p) => {
+      totalIncome += p.income;
+    });
+    const roundingStep = 5;
+    persons.forEach((p) => {
+      const ratio = totalIncome ? p.income / totalIncome : 0;
+      const base = (ratio * totalMonthly) + (p.person.shift || 0);
+      const rounded = Math.ceil(base / roundingStep) * roundingStep;
+      result[p.person.id] = rounded;
+    });
+    return result;
+  }
   // ---------- Render-Funktionen ----------
   function render() {
     renderOverview();
@@ -220,20 +256,18 @@
     state.commonCosts.forEach((c) => {
       totalCommonShare += getCommonMonthlyShare(c);
     });
-    // Aufteilung: Verhältnis nach Netto plus Verschiebebetrag
-    const totalShift = state.persons.reduce((sum, p) => sum + (p.shift || 0), 0);
-    // Berechne die ungerundeten Anteile auf Basis des Nettoeinkommens und
-    // addiere etwaige Verschiebebeträge. Für Version 0.26 werden die
-    // Anteile jeder Person unabhängig voneinander auf das nächsthöhere
-    // 5‑€‑Intervall aufgerundet. Das kann dazu führen, dass die Summe
-    // der gerundeten Anteile größer ist als die Gesamtsumme der
-    // gemeinsamen Kosten.
-    const roundingStep = 5;
+    // Verteilung: Die gemeinsamen Kosten werden gerundet und so angepasst,
+    // dass die Summe der Anteile exakt der Gesamtsumme entspricht. Wir
+    // verwenden computeRoundedCommonShares, um die Anteile pro Person
+    // einmalig zu berechnen.
+    const personsListForShares = state.persons.map((p) => {
+      const income = getPersonNet(p, currentMonth);
+      return { person: p, income };
+    });
+    const shareMappingOverview = computeRoundedCommonShares(totalCommonShare, personsListForShares);
     personsData.forEach((pd) => {
-      const ratio = totalIncome ? pd.income / totalIncome : 0;
-      const base = (ratio * totalCommonShare) + (pd.person.shift || 0);
-      const rounded = Math.ceil(base / roundingStep) * roundingStep;
-      pd.commonShare = rounded;
+      const shareVal = shareMappingOverview[pd.person.id] !== undefined ? shareMappingOverview[pd.person.id] : 0;
+      pd.commonShare = shareVal;
     });
     // Persönliche Ausgaben
     state.personalCosts.forEach((pc) => {
@@ -528,20 +562,14 @@
       state.commonCosts.forEach((c) => {
         totalMonthly += getCommonMonthlyShare(c);
       });
-      // Gesamtnetto berechnen und Verteilung erstellen
-      let totalIncome = 0;
-      const shares = state.persons.map((p) => {
+      // Gesamtnetto berechnen und Anteile ermitteln. Wir
+      // erstellen zunächst eine Liste mit Einkommen pro
+      // Person und übergeben diese an computeRoundedCommonShares.
+      const personsList = state.persons.map((p) => {
         const income = getPersonNet(p, currentMonth);
-        totalIncome += income;
-        return { person: p, income, share: 0 };
+        return { person: p, income };
       });
-      shares.forEach((s) => {
-        const ratio = totalIncome ? s.income / totalIncome : 0;
-        const base = ratio * totalMonthly + (s.person.shift || 0);
-        // Runde für jede Person unabhängig auf das nächsthöhere 5‑€‑Intervall
-        const roundingStep = 5;
-        s.share = Math.ceil(base / roundingStep) * roundingStep;
-      });
+      const shareMapping = computeRoundedCommonShares(totalMonthly, personsList);
       // Erstelle Zusammenfassungskarte
       const summaryCard = document.createElement('div');
       summaryCard.className = 'card';
@@ -576,9 +604,10 @@
       distHead.innerHTML = '<tr><th>Person</th><th>Beitrag</th></tr>';
       distTable.appendChild(distHead);
       const distBody = document.createElement('tbody');
-      shares.forEach((s) => {
+      state.persons.forEach((person) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${s.person.name}</td><td>${s.share.toFixed(2)} €</td>`;
+        const shareValue = shareMapping[person.id] !== undefined ? shareMapping[person.id] : 0;
+        row.innerHTML = `<td>${person.name}</td><td>${shareValue.toFixed(2)} €</td>`;
         distBody.appendChild(row);
       });
       distTable.appendChild(distBody);
@@ -636,7 +665,21 @@
   // Persönliche Ausgaben
   function renderPersonal() {
     personalSection.innerHTML = '';
-    // Kopfzeile mit Monat und Neu-Button (pro Person separat)
+    // Füge eine Kopfzeile mit Monatsauswahl hinzu. So kann der Benutzer den
+    // Monat innerhalb des Bereichs "Persönliche Ausgaben" wechseln, ähnlich wie
+    // in den anderen Abschnitten. Die Auswahl aktualisiert die globale
+    // currentMonth-Variable und rendert die Ansicht neu.
+    const headerRow = document.createElement('div');
+    headerRow.className = 'row';
+    const monthSelect = createMonthSelect();
+    monthSelect.addEventListener('change', (e) => {
+      currentMonth = e.target.value;
+      updateMonthListIfNeeded();
+      render();
+    });
+    headerRow.appendChild(monthSelect);
+    personalSection.appendChild(headerRow);
+    // Für jede Person eine eigene Karte mit den persönlichen Ausgaben
     state.persons.forEach((person) => {
       const card = document.createElement('div');
       card.className = 'card';
@@ -654,7 +697,7 @@
       header.appendChild(title);
       header.appendChild(addBtn);
       card.appendChild(header);
-      // Tabelle der Posten
+      // Filtere die Posten für diese Person
       const posts = state.personalCosts.filter((pc) => pc.personId === person.id);
       if (posts.length === 0) {
         const p = document.createElement('p');
@@ -676,6 +719,8 @@
         table.appendChild(thead);
         const tbody = document.createElement('tbody');
         posts.forEach((pc) => {
+          // Stelle sicher, dass paidMonths vorhanden ist, um Fehler zu vermeiden
+          if (!pc.paidMonths) pc.paidMonths = [];
           const tr = document.createElement('tr');
           const dueNow = isDue(pc, currentMonth);
           const paid = pc.paidMonths && pc.paidMonths.includes(currentMonth);
@@ -688,7 +733,7 @@
             <td></td>
             <td></td>
           `;
-          // Checkbox bezahlt
+          // Checkbox "Bezahlt?" für fällige Posten
           const cellCheck = tr.children[5];
           if (dueNow) {
             const cb = document.createElement('input');
@@ -715,13 +760,13 @@
           editBtn.textContent = '✎';
           editBtn.className = 'primary';
           editBtn.addEventListener('click', () => {
-            // Zeile in den Bearbeitungsmodus versetzen. Wir ersetzen die Zellen durch Eingabefelder.
+            // Nicht erneut bearbeiten, falls schon im Edit-Modus
             if (tr.dataset.editing === 'true') return;
             tr.dataset.editing = 'true';
-            // Speichere die Originalzellen, um später abbrechen zu können
+            // Originalzellen speichern
             const originalCells = [...tr.children].map((td) => td.innerHTML);
             tr.dataset.originalCells = JSON.stringify(originalCells);
-            // Leere Zeile
+            // Zeile leeren und Eingabefelder einfügen
             tr.innerHTML = '';
             // Name
             const nameTd = document.createElement('td');
@@ -755,18 +800,18 @@
             dueTd.textContent = isDue(pc, currentMonth) ? 'Ja' : 'Nein';
             // Bezahlt? Checkbox
             const paidTd = document.createElement('td');
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = pc.paidMonths && pc.paidMonths.includes(currentMonth);
-            cb.addEventListener('change', () => {
+            const cbEdit = document.createElement('input');
+            cbEdit.type = 'checkbox';
+            cbEdit.checked = pc.paidMonths && pc.paidMonths.includes(currentMonth);
+            cbEdit.addEventListener('change', () => {
               if (!pc.paidMonths) pc.paidMonths = [];
-              if (cb.checked) {
+              if (cbEdit.checked) {
                 if (!pc.paidMonths.includes(currentMonth)) pc.paidMonths.push(currentMonth);
               } else {
                 pc.paidMonths = pc.paidMonths.filter((m) => m !== currentMonth);
               }
             });
-            paidTd.appendChild(cb);
+            paidTd.appendChild(cbEdit);
             // Aktionen: Speichern und Abbrechen
             const actionTd = document.createElement('td');
             const saveBtn = document.createElement('button');
@@ -798,7 +843,7 @@
               pc.amount = newAmount;
               pc.interval = newInterval;
               pc.startMonth = newStart;
-              // Paid months bleiben wie angepasst
+              // paidMonths bleiben erhalten
               saveState();
               render();
             });
@@ -806,7 +851,6 @@
             cancelBtn.textContent = '↺';
             cancelBtn.className = 'secondary';
             cancelBtn.addEventListener('click', () => {
-              // Originalzellen wiederherstellen
               const cells = JSON.parse(tr.dataset.originalCells);
               tr.innerHTML = '';
               cells.forEach((html) => {
@@ -819,7 +863,7 @@
             });
             actionTd.appendChild(saveBtn);
             actionTd.appendChild(cancelBtn);
-            // Neue Zeile zusammenbauen
+            // Zeile zusammenstellen
             tr.appendChild(nameTd);
             tr.appendChild(amountTd);
             tr.appendChild(intervalTd);
@@ -845,6 +889,22 @@
         });
         table.appendChild(tbody);
         card.appendChild(table);
+        // Summenzeile für persönliche Ausgaben: Was ist bereits bezahlt und was ist offen im ausgewählten Monat?
+        let dueSum = 0;
+        let paidSum = 0;
+        posts.forEach((pc) => {
+          if (isDue(pc, currentMonth)) {
+            dueSum += pc.amount;
+            if (pc.paidMonths && pc.paidMonths.includes(currentMonth)) {
+              paidSum += pc.amount;
+            }
+          }
+        });
+        if (dueSum > 0) {
+          const summary = document.createElement('p');
+          summary.innerHTML = `<strong>Bereits bezahlt:</strong> ${paidSum.toFixed(2)} € (offen: ${(dueSum - paidSum).toFixed(2)} €)`;
+          card.appendChild(summary);
+        }
       }
       personalSection.appendChild(card);
     });
@@ -948,7 +1008,7 @@
           <td></td>
           <td></td>
         `;
-        // Bezahlt-Knopf
+        // "Bezahlt?"-Knopf: nur anzeigen, wenn in diesem Monat fällig
         const payCell = tr.children[4];
         if (dueNow) {
           const btn = document.createElement('button');
@@ -985,6 +1045,27 @@
       });
       table.appendChild(tbody);
       card.appendChild(table);
+      // Füge eine Zusammenfassung hinzu: wie viel der monatlichen Raten im ausgewählten Monat noch fällig ist und wie viel bereits bezahlt wurde.
+      let dueSum = 0;
+      let paidSum = 0;
+      state.debts.forEach((d) => {
+        if (d.nextDueMonth === currentMonth) {
+          // In diesem Monat fällig: addiere Monatsrate zum offenen Betrag
+          dueSum += d.monthlyRate;
+        } else {
+          // Wenn die nächste Fälligkeit genau einen Monat nach dem aktuellen Monat liegt, wurde dieser Monat bereits bezahlt
+          if (monthDiff(currentMonth, d.nextDueMonth) === 1) {
+            paidSum += d.monthlyRate;
+          }
+        }
+      });
+      if (dueSum > 0 || paidSum > 0) {
+        const summary = document.createElement('p');
+        let openAmount = dueSum - paidSum;
+        if (openAmount < 0) openAmount = 0;
+        summary.innerHTML = `<strong>Bereits bezahlt:</strong> ${paidSum.toFixed(2)} € (offen: ${openAmount.toFixed(2)} €)`;
+        card.appendChild(summary);
+      }
     }
     debtsSection.appendChild(card);
   }
@@ -1228,7 +1309,7 @@
   render();
 
   // Button zum vollständigen Neuladen der Seite
-  const reloadBtn = document.getElementById('reloadApp');
+  const reloadBtn = document.getElementById('reloadButton');
   if (reloadBtn) {
     reloadBtn.addEventListener('click', () => {
       if (confirm('Möchtest du die App komplett neu laden? Nicht gespeicherte Änderungen gehen verloren.')) {
