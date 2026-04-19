@@ -1,59 +1,52 @@
 <!--
-  Haushaltsplaner Developer Beta 0.32
-
-  Haushaltsplaner Developer Beta 0.32
-
-  Diese Version erweitert den Bereich „Rücklagen & Sparen“ um eine
-  automatische Aufteilungslogik, wie sie in der hochgeladenen Excel‑Datei
-  enthalten ist. Für jeden Monat wird der frei verfügbare Betrag ab
-  einem Mindestpuffer von 150 € aufgeteilt: 70 % gehen in Rücklagen und
-  werden dort auf die Töpfe „Auto“, „Urlaub“, „Anschaffungen (inkl.
-  Wohnen)“, „Kleidung“ und „Freizeit“ verteilt; 30 % fließen in das
-  Spar‑Depot. Im Menü „Rücklagen & Sparen“ wird eine Tabelle mit den
-  Aufteilungswerten für die nächsten zwölf Monate angezeigt. Im Menü
-  „Töpfe“ findest du weiterhin die Einzelkonten und deren
-  Gesamtsummen sowie die Möglichkeit, Ein‑ und Auszahlungen vorzunehmen
-  und die Transaktionen monatsweise einzusehen.
+  Haushaltsplaner Developer Beta 0.33
+  Diese Version behebt das leere „Töpfe“-Menü aus der Beta 0.32 und
+  ergänzt dort eine vollständige Aufschlüsselung aller Rücklagen‑Töpfe.
+  Jeder Topf zeigt jetzt neben dem manuellen Saldo auch die Summe der
+  automatischen Rücklagen‑Beiträge für die nächsten zwölf Monate. In der
+  Detailansicht eines Topfs werden für jedes der nächsten zwölf Monate
+  sowohl der automatische Beitrag (gemäß Aufteilung aus dem Abschnitt
+  „Rücklagen & Sparen“) als auch manuelle Ein‑ und Auszahlungen
+  angezeigt. Zusätzlich gibt es eine Zeile für das „Sparen“‑Depot,
+  das die 30‑%‑Sparen‑Anteile darstellt.
 -->
 <!DOCTYPE html>
 <html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Haushaltsplaner Developer Beta 0.32</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <header>
-    <h1>Haushaltsplaner</h1>
-    <nav>
-      <select id="sectionSelect">
-        <option value="overview">Übersicht</option>
-        <option value="common">Gemeinsame Kosten</option>
-        <option value="personal">Persönliche Ausgaben</option>
-        <option value="debts">Schulden</option>
-        <option value="settings">Regeln & Personen</option>
-        <option value="savings">Rücklagen &amp; Sparen</option>
-        <option value="pots">Töpfe</option>
-        <option value="save">Sichern</option>
-      </select>
-      <button id="reloadButton">Neu laden</button>
-    </nav>
-  </header>
-  <main>
-    <section id="overview" class="tab-section active"></section>
-    <section id="common" class="tab-section"></section>
-    <section id="personal" class="tab-section"></section>
-    <section id="debts" class="tab-section"></section>
-    <section id="settings" class="tab-section"></section>
-    <section id="savings" class="tab-section"></section>
-    <section id="pots" class="tab-section"></section>
-    <section id="save" class="tab-section"></section>
-  </main>
-  <footer>
-    Developer Beta 0.32
-  </footer>
-  <script src="script.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Haushaltsplaner Developer Beta 0.33</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="manifest" href="manifest.json" />
+  </head>
+  <body>
+    <header>
+      <h1>Benny & Madeleine – Haushaltsplaner</h1>
+      <div class="nav-bar">
+        <select id="sectionSelect">
+          <option value="overview">Übersicht</option>
+          <option value="common">Gemeinsame Kosten</option>
+          <option value="personal">Persönliche Ausgaben</option>
+          <option value="debts">Schulden</option>
+          <option value="settings">Regeln & Personen</option>
+          <option value="savings">Rücklagen & Sparen</option>
+          <option value="pots" selected>Töpfe</option>
+          <option value="save">Sichern</option>
+        </select>
+        <button id="reloadButton">Neu laden</button>
+      </div>
+    </header>
+    <main>
+      <section id="overview" class="tab-section"></section>
+      <section id="common" class="tab-section"></section>
+      <section id="personal" class="tab-section"></section>
+      <section id="debts" class="tab-section"></section>
+      <section id="settings" class="tab-section"></section>
+      <section id="savings" class="tab-section"></section>
+      <section id="pots" class="tab-section active"></section>
+      <section id="save" class="tab-section"></section>
+    </main>
+    <footer>Developer Beta 0.33</footer>
+    <script src="script.js"></script>
+  </body>
 </html>

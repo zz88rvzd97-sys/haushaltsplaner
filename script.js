@@ -1,16 +1,15 @@
 /*
- * Haushaltsplaner Developer Beta 0.32
+ * Haushaltsplaner Developer Beta 0.33
  *
- * Diese Version implementiert die automatische Aufteilungslogik für
- * Rücklagen und Sparen gemäß der bereitgestellten Excel‑Datei.
- * Ab einem Mindestpuffer von 150 € wird der freie Betrag in jedem
- * Monat aufgeteilt: 70 % gehen in Rücklagen (mit prozentualer
- * Aufteilung auf die Töpfe „Auto“, „Urlaub“, „Anschaffungen (inkl.
- * Wohnen)“, „Kleidung“ und „Freizeit“) und 30 % in das Spar‑Depot.
- * Die entsprechende Tabelle wird im Abschnitt „Rücklagen & Sparen“
- * für die nächsten zwölf Monate angezeigt. Zusätzlich bleiben die
- * einheitlichen „Markieren“-Knöpfe für fällige Posten und der
- * kompakte Reload‑Button erhalten.
+ * Diese Version behebt ein Problem im Abschnitt „Töpfe“ und
+ * erweitert die Darstellung der Rücklagen‑Töpfe. Neben dem manuellen
+ * Saldo jedes Topfs wird nun auch die Summe der automatischen
+ * Rücklagenbeiträge (basierend auf der Aufteilungslogik) für die
+ * nächsten zwölf Monate angezeigt. In der Detailansicht eines
+ * Topfs werden für jedes der nächsten zwölf Monate sowohl der
+ * automatische Beitrag als auch manuelle Ein- und Auszahlungen
+ * ausgewiesen. Zusätzlich wird die 30‑%‑Sparen‑Komponente als
+ * eigener Eintrag angezeigt.
  */
 
 (() => {
@@ -83,11 +82,11 @@
   };
   let state;
   try {
-    let saved = localStorage.getItem('budgetStateV032');
+    let saved = localStorage.getItem('budgetStateV033');
     if (!saved) {
       // Fallback-Migration aus älteren Versionen
       const fallback = [
-        'budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
+        'budgetStateV032','budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
       ];
       for (const k of fallback) {
         const data = localStorage.getItem(k);
@@ -103,7 +102,7 @@
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV032', JSON.stringify(state));
+    localStorage.setItem('budgetStateV033', JSON.stringify(state));
   }
 
   // ----- Konfiguration für die Rücklagen‑Aufteilung -----
@@ -112,9 +111,15 @@
   // verteilt. Die Rücklagen verteilen sich entsprechend der
   // reservePotShares auf verschiedene Töpfe.
   const savingsConfig = {
+    // Ab welchem freien Betrag eine Verteilung erfolgt.
     minFree: 150,
+    // Anteil des verteilbaren Betrags, der in die Rücklagen fließt.
     reservesRatio: 0.7,
+    // Anteil des verteilbaren Betrags, der in das Sparen fließt.
     savingsRatio: 0.3,
+    // Monat, ab dem die automatische Verteilung gestartet wird (JJJJ-MM).
+    startMonth: '2026-05',
+    // Aufteilung der Rücklagen auf einzelne Töpfe.
     reservePotShares: {
       'Auto': 0.35,
       'Urlaub': 0.15,
@@ -123,6 +128,47 @@
       'Freizeit': 0.10
     }
   };
+
+  /**
+   * Berechnet den automatischen Rücklagenbeitrag für einen bestimmten
+   * Topf in einem gegebenen Monat. Vor dem Start der Verteilung
+   * (savingsConfig.startMonth) wird 0 zurückgegeben. Die Berechnung
+   * basiert auf dem freien Betrag, der Verteilung auf Rücklagen
+   * (reservesRatio) und dem Anteil des jeweiligen Topfs.
+   *
+   * @param {string} potName Name des Rücklagen-Topfs
+   * @param {string} monthKey Monat im Format JJJJ-MM
+   * @returns {number} Automatischer Beitrag für den Topf in diesem Monat
+   */
+  function getReserveContributionForPot(potName, monthKey) {
+    // Prüfen, ob der Monat vor dem Start der Verteilung liegt. monthDiff(a,b) gibt die Differenz b - a.
+    // Ist monthKey < savingsConfig.startMonth, also monthDiff(monthKey, startMonth) negativ, wird 0 zurückgegeben.
+    if (monthDiff(monthKey, savingsConfig.startMonth) < 0) {
+      return 0;
+    }
+    const free = computeFreeSumForMonth(monthKey);
+    const verteilbar = Math.max(free - savingsConfig.minFree, 0);
+    const ruecklagen = verteilbar * savingsConfig.reservesRatio;
+    const share = savingsConfig.reservePotShares[potName] || 0;
+    return ruecklagen * share;
+  }
+
+  /**
+   * Berechnet den automatischen Sparbetrag (30 % des verteilbaren
+   * Betrags) für einen gegebenen Monat. Vor dem Start der Verteilung
+   * wird 0 zurückgegeben.
+   *
+   * @param {string} monthKey Monat im Format JJJJ-MM
+   * @returns {number} Sparbeitrag in diesem Monat
+   */
+  function getSavingsContribution(monthKey) {
+    if (monthDiff(monthKey, savingsConfig.startMonth) < 0) {
+      return 0;
+    }
+    const free = computeFreeSumForMonth(monthKey);
+    const verteilbar = Math.max(free - savingsConfig.minFree, 0);
+    return verteilbar * savingsConfig.savingsRatio;
+  }
 
   // Hilfsfunktion: berechnet den freien Betrag für ein gegebenes
   // Monats‑Key. Dabei werden die Nettoeinkommen, die gerundeten
@@ -1207,6 +1253,12 @@
       if (pot.id === selectedPotId) opt.selected = true;
       potSelect.appendChild(opt);
     });
+    // Option für das Sparen-Depot (nur Anzeige)
+    const savingsOpt = document.createElement('option');
+    savingsOpt.value = 'savings';
+    savingsOpt.textContent = 'Sparen';
+    if (selectedPotId === 'savings') savingsOpt.selected = true;
+    potSelect.appendChild(savingsOpt);
     potSelect.addEventListener('change', (e) => {
       selectedPotId = e.target.value || '';
       render();
@@ -1231,125 +1283,159 @@
     header.appendChild(potSelect);
     header.appendChild(addBtn);
     card.appendChild(header);
-    // Liste der Töpfe
-    if (!state.pots || state.pots.length === 0) {
-      const p = document.createElement('p');
-      p.textContent = 'Keine Töpfe angelegt.';
-      card.appendChild(p);
-    } else {
-      const table = document.createElement('table');
-      table.className = 'list-table';
-      const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>Name</th><th>Saldo</th><th>Aktion</th></tr>';
-      table.appendChild(thead);
-      const tbody = document.createElement('tbody');
-      state.pots.forEach((pot) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${pot.name}</td><td>${pot.balance.toFixed(2)} €</td><td></td>`;
-        const act = tr.children[2];
-        // Einzahlen
-        const dep = document.createElement('button');
-        dep.textContent = 'Einzahlen';
-        dep.className = 'success';
-        dep.addEventListener('click', () => {
-          const amountStr = prompt(`Betrag zum Einzahlen in "${pot.name}":`, '0');
-          if (amountStr == null) return;
-          let amount = parseFloat(amountStr);
-          if (isNaN(amount) || amount <= 0) {
-            alert('Bitte einen positiven Betrag eingeben.');
+    // Liste der Töpfe mit manuellen Salden und automatischen Beiträgen
+    const table = document.createElement('table');
+    table.className = 'list-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>Name</th><th>Saldo</th><th>Plan (12 Monate)</th><th>Aktion</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    // Falls keine Töpfe vorhanden sind, soll trotzdem die Plan-Zeile für die Rücklagen angezeigt werden
+    if (!state.pots) state.pots = [];
+    state.pots.forEach((pot) => {
+      const tr = document.createElement('tr');
+      // Summe der automatischen Beiträge für diesen Topf in den nächsten 12 Monaten
+      let autoSum = 0;
+      monthList.forEach((m) => {
+        autoSum += getReserveContributionForPot(pot.name, m.key);
+      });
+      tr.innerHTML = `<td>${pot.name}</td><td>${pot.balance.toFixed(2)} €</td><td>${autoSum.toFixed(2)} €</td><td></td>`;
+      const act = tr.children[3];
+      // Einzahlen
+      const dep = document.createElement('button');
+      dep.textContent = 'Einzahlen';
+      dep.className = 'success';
+      dep.addEventListener('click', () => {
+        const amountStr = prompt(`Betrag zum Einzahlen in "${pot.name}":`, '0');
+        if (amountStr == null) return;
+        let amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+          alert('Bitte einen positiven Betrag eingeben.');
+          return;
+        }
+        const desc = prompt('Beschreibung (optional):', 'Einzahlung');
+        pot.balance += amount;
+        if (!pot.transactions) pot.transactions = [];
+        pot.transactions.push({ date: currentMonth, type: 'deposit', amount: amount, description: desc || '' });
+        saveState();
+        render();
+      });
+      // Ausgeben
+      const wit = document.createElement('button');
+      wit.textContent = 'Ausgeben';
+      wit.className = 'danger';
+      wit.addEventListener('click', () => {
+        const amountStr = prompt(`Betrag zum Ausgeben aus "${pot.name}":`, '0');
+        if (amountStr == null) return;
+        let amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+          alert('Bitte einen positiven Betrag eingeben.');
+          return;
+        }
+        if (amount > pot.balance) {
+          if (!confirm('Der Betrag ist größer als der Saldo. Trotzdem fortfahren?')) {
             return;
           }
-          const desc = prompt('Beschreibung (optional):', 'Einzahlung');
-          pot.balance += amount;
-          if (!pot.transactions) pot.transactions = [];
-          pot.transactions.push({ date: currentMonth, type: 'deposit', amount: amount, description: desc || '' });
-          saveState();
-          render();
-        });
-        // Ausgeben
-        const wit = document.createElement('button');
-        wit.textContent = 'Ausgeben';
-        wit.className = 'danger';
-        wit.addEventListener('click', () => {
-          const amountStr = prompt(`Betrag zum Ausgeben aus "${pot.name}":`, '0');
-          if (amountStr == null) return;
-          let amount = parseFloat(amountStr);
-          if (isNaN(amount) || amount <= 0) {
-            alert('Bitte einen positiven Betrag eingeben.');
-            return;
-          }
-          if (amount > pot.balance) {
-            if (!confirm('Der Betrag ist größer als der Saldo. Trotzdem fortfahren?')) {
-              return;
-            }
-          }
-          const desc = prompt('Beschreibung (optional):', 'Ausgabe');
-          pot.balance -= amount;
-          if (!pot.transactions) pot.transactions = [];
-          pot.transactions.push({ date: currentMonth, type: 'withdraw', amount: -amount, description: desc || '' });
-          saveState();
-          render();
-        });
-        act.appendChild(dep);
-        act.appendChild(wit);
-        tbody.appendChild(tr);
+        }
+        const desc = prompt('Beschreibung (optional):', 'Ausgabe');
+        pot.balance -= amount;
+        if (!pot.transactions) pot.transactions = [];
+        pot.transactions.push({ date: currentMonth, type: 'withdraw', amount: -amount, description: desc || '' });
+        saveState();
+        render();
       });
-      table.appendChild(tbody);
-      card.appendChild(table);
-      // Monatsübersicht: Ein- und Auszahlungen
-      let deposits = 0;
-      let withdrawals = 0;
-      state.pots.forEach((pot) => {
-        (pot.transactions || []).forEach((t) => {
-          if (t.date === currentMonth) {
-            if (t.amount >= 0) deposits += t.amount;
-            if (t.amount < 0) withdrawals += Math.abs(t.amount);
-          }
-        });
+      act.appendChild(dep);
+      act.appendChild(wit);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    card.appendChild(table);
+    // Automatische Zeile für die Spar-Komponente (30 % des verteilbaren Betrags)
+    // Diese Zeile dient nur zur Anzeige und besitzt keine manuellen Aktionen.
+    const savingsTable = document.createElement('table');
+    savingsTable.className = 'list-table';
+    const sHead = document.createElement('thead');
+    sHead.innerHTML = '<tr><th>Depot</th><th>Plan (12 Monate)</th></tr>';
+    savingsTable.appendChild(sHead);
+    const sBody = document.createElement('tbody');
+    let savingsSum = 0;
+    monthList.forEach((m) => {
+      savingsSum += getSavingsContribution(m.key);
+    });
+    const sRow = document.createElement('tr');
+    sRow.innerHTML = `<td>Sparen</td><td>${savingsSum.toFixed(2)} €</td>`;
+    sBody.appendChild(sRow);
+    savingsTable.appendChild(sBody);
+    card.appendChild(savingsTable);
+    // Gesamtsummen unter den Tabellen anzeigen
+    let totalManual = 0;
+    let totalAuto = 0;
+    state.pots.forEach((p) => {
+      totalManual += p.balance;
+      monthList.forEach((m) => {
+        totalAuto += getReserveContributionForPot(p.name, m.key);
       });
-      if (deposits > 0 || withdrawals > 0) {
-        const summary = document.createElement('p');
-        summary.innerHTML = `<strong>Diesen Monat:</strong> +${deposits.toFixed(2)} € / -${withdrawals.toFixed(2)} €`;
-        card.appendChild(summary);
+    });
+    const totalsP = document.createElement('p');
+    totalsP.innerHTML = `<strong>Gesamtsumme manuell:</strong> ${totalManual.toFixed(2)} € &nbsp; | &nbsp; <strong>Gesamt Rücklagen‑Plan:</strong> ${totalAuto.toFixed(2)} € &nbsp; | &nbsp; <strong>Sparen‑Plan:</strong> ${savingsSum.toFixed(2)} €`;
+    card.appendChild(totalsP);
+    // Detailansicht für ausgewählten Topf oder das Sparen
+    if (selectedPotId) {
+      let pot;
+      let isSavingsPot = false;
+      if (selectedPotId === 'savings') {
+        isSavingsPot = true;
+      } else {
+        pot = state.pots.find((p) => p.id === selectedPotId);
+        if (!pot) {
+          // Fallback: falls der pot inzwischen entfernt wurde
+          selectedPotId = '';
+        }
       }
-      // Gesamtsumme über alle Töpfe
-      const total = state.pots.reduce((sum, pot) => sum + pot.balance, 0);
-      const totalP = document.createElement('p');
-      totalP.innerHTML = `<strong>Gesamtsumme aller Töpfe:</strong> ${total.toFixed(2)} €`;
-      card.appendChild(totalP);
-      // Detailansicht für ausgewählten Topf
-      if (selectedPotId) {
-        const pot = state.pots.find((p) => p.id === selectedPotId);
-        if (pot) {
-          const detailCard = document.createElement('div');
-          detailCard.className = 'card';
-          const detailTitle = document.createElement('h3');
-          detailTitle.textContent = `Details für ${pot.name}`;
-          detailCard.appendChild(detailTitle);
-          const detTable = document.createElement('table');
-          detTable.className = 'list-table';
-          const dHead = document.createElement('thead');
-          dHead.innerHTML = '<tr><th>Monat</th><th>Einzahlungen</th><th>Auszahlungen</th></tr>';
-          detTable.appendChild(dHead);
-          const dBody = document.createElement('tbody');
-          // Für die nächsten 12 Monate die Buchungen aufsummieren
-          monthList.forEach((m) => {
-            let dep = 0;
-            let wit = 0;
+      if (isSavingsPot || pot) {
+        const detailCard = document.createElement('div');
+        detailCard.className = 'card';
+        const detailTitle = document.createElement('h3');
+        detailTitle.textContent = isSavingsPot ? 'Details für Sparen' : `Details für ${pot.name}`;
+        detailCard.appendChild(detailTitle);
+        const detTable = document.createElement('table');
+        detTable.className = 'list-table';
+        const dHead = document.createElement('thead');
+        dHead.innerHTML = '<tr><th>Monat</th><th>Plan</th><th>Einzahlungen</th><th>Auszahlungen</th></tr>';
+        detTable.appendChild(dHead);
+        const dBody = document.createElement('tbody');
+        monthList.forEach((m) => {
+          let autoVal;
+          if (isSavingsPot) {
+            autoVal = getSavingsContribution(m.key);
+          } else {
+            autoVal = getReserveContributionForPot(pot.name, m.key);
+          }
+          let dep = 0;
+          let wit = 0;
+          if (!isSavingsPot) {
             (pot.transactions || []).forEach((t) => {
               if (t.date === m.key) {
                 if (t.amount >= 0) dep += t.amount;
                 if (t.amount < 0) wit += Math.abs(t.amount);
               }
             });
-            const dRow = document.createElement('tr');
-            dRow.innerHTML = `<td>${m.label}</td><td>${dep.toFixed(2)} €</td><td>${wit.toFixed(2)} €</td>`;
-            dBody.appendChild(dRow);
-          });
-          detTable.appendChild(dBody);
-          detailCard.appendChild(detTable);
-          card.appendChild(detailCard);
-        }
+          }
+          const dRow = document.createElement('tr');
+          dRow.innerHTML = `<td>${m.label}</td><td>${autoVal.toFixed(2)} €</td><td>${dep.toFixed(2)} €</td><td>${wit.toFixed(2)} €</td>`;
+          dBody.appendChild(dRow);
+        });
+        detTable.appendChild(dBody);
+        detailCard.appendChild(detTable);
+        // Summe für Details
+        let sumAuto = 0;
+        monthList.forEach((m) => {
+          sumAuto += isSavingsPot ? getSavingsContribution(m.key) : getReserveContributionForPot(pot.name, m.key);
+        });
+        const summaryDetail = document.createElement('p');
+        summaryDetail.innerHTML = `<strong>Plan-Gesamt für 12 Monate:</strong> ${sumAuto.toFixed(2)} €`;
+        detailCard.appendChild(summaryDetail);
+        card.appendChild(detailCard);
       }
     }
     potsSection.appendChild(card);

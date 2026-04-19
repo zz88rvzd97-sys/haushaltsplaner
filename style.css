@@ -43,7 +43,8 @@ h1 {
   font-size: 1.4rem;
 }
 
-nav {
+/* Navigationsbereich: sowohl <nav> als auch die nav-bar verwenden diese Styles */
+.nav-bar, nav {
   margin-top: 0.5rem;
   display: flex;
   align-items: center;
@@ -51,9 +52,9 @@ nav {
   overflow: visible;
 }
 
-/* Der Reload‑Button soll die Breite automatisch seinem Inhalt
-   anpassen. Die allgemeine Regel width: 100% wird daher hier
-   überschrieben. */
+/* Der Reload‑Button soll die Breite automatisch seinem Inhalt anpassen.
+   Gilt für Buttons in <nav> und .nav-bar. */
+.nav-bar button,
 nav button {
   flex: 0 0 auto;
   background-color: var(--card-color);
@@ -67,6 +68,7 @@ nav button {
   width: auto;
 }
 
+.nav-bar select,
 nav select {
   flex: 1 1 auto;
   min-width: 140px;
