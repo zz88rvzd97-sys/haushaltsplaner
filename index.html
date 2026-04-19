@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    Diese Version (Developer Beta 0.26) rundet die Anteile der
+    gemeinsamen Kosten für beide Personen auf das jeweils nächste
+    5‑€‑Intervall auf. Darüber hinaus zeigt die Zusammenfassung
+    „Gemeinsame Kosten“ jetzt an, wie viel im ausgewählten Monat
+    bereits bezahlt wurde und wie viel noch offen ist. Die übrigen
+    Verbesserungen aus der vorangegangenen Beta (optimierte
+    Schriftgrößen, Abstände, Drop‑down‑Navigation, Export/Import,
+    Inline‑Bearbeitung und automatische Datenmigration der Versionen
+    0.15–0.25) bleiben erhalten.
+  -->
+  <title>Benny &amp; Madeleine – Haushaltsplaner Developer&nbsp;Beta&nbsp;0.26</title>
+  <!-- A basic manifest so iOS can add this page to the home screen -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Benny &amp; Madeleine – Haushaltsplaner</h1>
+    <div class="nav-bar">
+      <label for="sectionSelect">Bereich:</label>
+      <select id="sectionSelect">
+        <option value="overview">Übersicht</option>
+        <option value="common">Gemeinsame Kosten</option>
+        <option value="personal">Persönliche Ausgaben</option>
+        <option value="debts">Schulden</option>
+        <option value="settings">Regeln &amp; Personen</option>
+        <option value="save">Sichern</option>
+      </select>
+      <!-- Button zum Neuladen der App bleibt erhalten -->
+      <button id="reloadApp" title="App neu laden">Neu laden</button>
+    </div>
+  </header>
+  <main>
+    <!-- Each section is rendered by the script -->
+    <section id="overview" class="tab-section active"></section>
+    <section id="common" class="tab-section"></section>
+    <section id="personal" class="tab-section"></section>
+    <section id="debts" class="tab-section"></section>
+    <section id="settings" class="tab-section"></section>
+    <section id="save" class="tab-section"></section>
+  </main>
+  <footer id="version">Developer&nbsp;Beta&nbsp;0.26</footer>
+  <script src="script.js"></script>
+</body>
+</html>

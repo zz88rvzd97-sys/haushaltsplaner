@@ -1,0 +1,9 @@
+{
+  "name": "Haushaltsplaner Developer Beta",
+  "short_name": "Haushaltsplaner",
+  "start_url": "index.html",
+  "display": "standalone",
+  "theme_color": "#0a2342",
+  "background_color": "#0a2342",
+  "icons": []
+}
