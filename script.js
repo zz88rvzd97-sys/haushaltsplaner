@@ -1,21 +1,16 @@
 /*
- * Haushaltsplaner Developer Beta 0.31
+ * Haushaltsplaner Developer Beta 0.32
  *
- * Diese Version bringt drei wesentliche Neuerungen:
- *
- * 1. Einheitliche „Markieren“-Knöpfe für fällige Posten. In den
- *    Bereichen „Gemeinsame Kosten“ und „Persönliche Ausgaben“ werden
- *    fällige Einträge nicht länger über eine Checkbox markiert,
- *    sondern über einen Knopf wie im Schulden‑Bereich. Bereits
- *    beglichene Posten werden mit einem deaktivierten Knopf
- *    gekennzeichnet.
- * 2. Der Bereich „Rücklagen & Sparen“ zeigt nur noch die
- *    Aufteilung (freien Betrag und Transaktionsübersicht). Die
- *    Verwaltung der einzelnen Töpfe und die Gesamtsumme aller
- *    Rücklagen befinden sich im neuen Abschnitt „Töpfe“.
- * 3. Die Navigation wurde verbessert: Der Reload‑Button passt sich
- *    jetzt automatisch dem Inhalt an und ist nicht mehr übermäßig
- *    breit.
+ * Diese Version implementiert die automatische Aufteilungslogik für
+ * Rücklagen und Sparen gemäß der bereitgestellten Excel‑Datei.
+ * Ab einem Mindestpuffer von 150 € wird der freie Betrag in jedem
+ * Monat aufgeteilt: 70 % gehen in Rücklagen (mit prozentualer
+ * Aufteilung auf die Töpfe „Auto“, „Urlaub“, „Anschaffungen (inkl.
+ * Wohnen)“, „Kleidung“ und „Freizeit“) und 30 % in das Spar‑Depot.
+ * Die entsprechende Tabelle wird im Abschnitt „Rücklagen & Sparen“
+ * für die nächsten zwölf Monate angezeigt. Zusätzlich bleiben die
+ * einheitlichen „Markieren“-Knöpfe für fällige Posten und der
+ * kompakte Reload‑Button erhalten.
  */
 
 (() => {
@@ -88,17 +83,17 @@
   };
   let state;
   try {
-    let saved = localStorage.getItem('budgetStateV031');
+    let saved = localStorage.getItem('budgetStateV032');
     if (!saved) {
       // Fallback-Migration aus älteren Versionen
       const fallback = [
-        'budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
+        'budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
       ];
       for (const k of fallback) {
         const data = localStorage.getItem(k);
         if (data) {
           saved = data;
-          localStorage.setItem('budgetStateV031', data);
+          localStorage.setItem('budgetStateV032', data);
           break;
         }
       }
@@ -108,7 +103,64 @@
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV031', JSON.stringify(state));
+    localStorage.setItem('budgetStateV032', JSON.stringify(state));
+  }
+
+  // ----- Konfiguration für die Rücklagen‑Aufteilung -----
+  // Ab einem Mindestpuffer von minFree wird der freie Betrag im
+  // Verhältnis von reservesRatio (Rücklagen) und savingsRatio (Sparen)
+  // verteilt. Die Rücklagen verteilen sich entsprechend der
+  // reservePotShares auf verschiedene Töpfe.
+  const savingsConfig = {
+    minFree: 150,
+    reservesRatio: 0.7,
+    savingsRatio: 0.3,
+    reservePotShares: {
+      'Auto': 0.35,
+      'Urlaub': 0.15,
+      'Anschaffungen (inkl. Wohnen)': 0.25,
+      'Kleidung': 0.15,
+      'Freizeit': 0.10
+    }
+  };
+
+  // Hilfsfunktion: berechnet den freien Betrag für ein gegebenes
+  // Monats‑Key. Dabei werden die Nettoeinkommen, die gerundeten
+  // Anteile der gemeinsamen Kosten und die persönlichen Ausgaben
+  // berücksichtigt. Das Ergebnis ist der Betrag, der nach Abzug der
+  // gemeinsamen Kosten und der persönlichen Ausgaben zur freien
+  // Verfügung steht.
+  function computeFreeSumForMonth(monthKey) {
+    // Daten pro Person erfassen
+    const personsData = state.persons.map((p) => ({
+      person: p,
+      income: getPersonNet(p, monthKey),
+      personalDue: 0
+    }));
+    // Gesamtsumme der monatlichen Anteile der gemeinsamen Kosten
+    let totalCommonRaw = 0;
+    state.commonCosts.forEach((c) => {
+      totalCommonRaw += getCommonMonthlyShare(c);
+    });
+    // Gerundete Anteile für jede Person berechnen
+    const shareMap = computeRoundedCommonShares(
+      totalCommonRaw,
+      state.persons.map((p) => ({ person: p, income: getPersonNet(p, monthKey) }))
+    );
+    // Persönliche Ausgaben pro Person summieren
+    state.personalCosts.forEach((pc) => {
+      if (pc.personId && isDue(pc, monthKey)) {
+        const pd = personsData.find((x) => x.person.id === pc.personId);
+        if (pd) pd.personalDue += pc.amount;
+      }
+    });
+    // Freier Betrag über alle Personen aufsummieren
+    let free = 0;
+    personsData.forEach((pd) => {
+      const share = shareMap[pd.person.id] || 0;
+      free += (pd.income - share - pd.personalDue);
+    });
+    return free;
   }
   // ----- Zeitliche Auswahl -----
   const today = new Date();
@@ -127,6 +179,11 @@
   const sectionSelect = document.getElementById('sectionSelect');
   const reloadButton = document.getElementById('reloadButton');
   let currentSection = 'overview';
+
+  // ID des aktuell ausgewählten Topfs für die Detailansicht in
+  // renderPots. Ein leerer String bedeutet, dass keine Detailansicht
+  // angezeigt wird.
+  let selectedPotId = '';
   // Navigation: Bereiche wechseln
   sectionSelect.addEventListener('change', (e) => {
     currentSection = e.target.value;
@@ -1063,10 +1120,11 @@
     savingsSection.innerHTML = '';
     const card = document.createElement('div');
     card.className = 'card';
+    // Monatsauswahl: bestimmt den Beginn der 12‑Monatsliste
     const monthRow = document.createElement('div');
     monthRow.className = 'row';
     const monthLbl = document.createElement('label');
-    monthLbl.textContent = 'Monat:';
+    monthLbl.textContent = 'Ab Monat:';
     const monthSelect = createMonthSelect();
     monthSelect.addEventListener('change', (e) => {
       currentMonth = e.target.value;
@@ -1077,63 +1135,44 @@
     monthRow.appendChild(monthSelect);
     card.appendChild(monthRow);
     const heading = document.createElement('h2');
-    heading.textContent = 'Rücklagen‑Aufteilung';
+    heading.textContent = 'Rücklagen‑Aufteilung (nächste 12 Monate)';
     card.appendChild(heading);
-    // freien Betrag berechnen: Netto minus gerundete gemeinsame Anteile und persönliche Ausgaben
-    let freeSum = 0;
-    // Berechne gerundete Anteile der gemeinsamen Kosten
-    let totalCommonRaw = 0;
-    state.commonCosts.forEach((c) => {
-      totalCommonRaw += getCommonMonthlyShare(c);
+    // Tabelle mit Aufteilung je Monat erstellen
+    const table = document.createElement('table');
+    table.className = 'list-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>Monat</th><th>Freier Betrag</th><th>Mindestpuffer</th><th>Verteilbar</th><th>Rücklagen total</th><th>Auto</th><th>Urlaub</th><th>Anschaffungen</th><th>Kleidung</th><th>Freizeit</th><th>Sparen</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    monthList.forEach((m) => {
+      const free = computeFreeSumForMonth(m.key);
+      const verteilbar = Math.max(free - savingsConfig.minFree, 0);
+      const ruecklagen = verteilbar * savingsConfig.reservesRatio;
+      const sparen = verteilbar * savingsConfig.savingsRatio;
+      // Rücklagen aufteilen
+      const auto = ruecklagen * savingsConfig.reservePotShares['Auto'];
+      const urlaub = ruecklagen * savingsConfig.reservePotShares['Urlaub'];
+      const ansch = ruecklagen * savingsConfig.reservePotShares['Anschaffungen (inkl. Wohnen)'];
+      const kleid = ruecklagen * savingsConfig.reservePotShares['Kleidung'];
+      const frei = ruecklagen * savingsConfig.reservePotShares['Freizeit'];
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${m.label}</td>
+        <td>${free.toFixed(2)} €</td>
+        <td>${savingsConfig.minFree.toFixed(2)} €</td>
+        <td>${verteilbar.toFixed(2)} €</td>
+        <td>${ruecklagen.toFixed(2)} €</td>
+        <td>${auto.toFixed(2)} €</td>
+        <td>${urlaub.toFixed(2)} €</td>
+        <td>${ansch.toFixed(2)} €</td>
+        <td>${kleid.toFixed(2)} €</td>
+        <td>${frei.toFixed(2)} €</td>
+        <td>${sparen.toFixed(2)} €</td>
+      `;
+      tbody.appendChild(row);
     });
-    const shareMap = computeRoundedCommonShares(
-      totalCommonRaw,
-      state.persons.map((p) => ({ person: p, income: getPersonNet(p, currentMonth) }))
-    );
-    state.persons.forEach((p) => {
-      const income = getPersonNet(p, currentMonth);
-      let personalDue = 0;
-      state.personalCosts.forEach((pc) => {
-        if (pc.personId === p.id && isDue(pc, currentMonth)) {
-          personalDue += pc.amount;
-        }
-      });
-      const share = shareMap[p.id] || 0;
-      freeSum += income - share - personalDue;
-    });
-    const freeP = document.createElement('p');
-    freeP.innerHTML = `<strong>Freier Betrag in ${currentMonth}:</strong> ${freeSum.toFixed(2)} €`;
-    card.appendChild(freeP);
-    // Transaktionen in diesem Monat
-    if (state.pots && state.pots.length > 0) {
-      const transCard = document.createElement('div');
-      transCard.className = 'card';
-      const transTitle = document.createElement('h3');
-      transTitle.textContent = 'Transaktionen in diesem Monat';
-      transCard.appendChild(transTitle);
-      let has = false;
-      state.pots.forEach((pot) => {
-        const monthly = (pot.transactions || []).filter((t) => t.date === currentMonth);
-        if (monthly.length > 0) {
-          has = true;
-          const tHeading = document.createElement('p');
-          tHeading.innerHTML = `<strong>${pot.name}</strong>`;
-          transCard.appendChild(tHeading);
-          monthly.forEach((t) => {
-            const line = document.createElement('p');
-            const sign = t.amount >= 0 ? '+' : '-';
-            line.textContent = `${sign}${Math.abs(t.amount).toFixed(2)} € – ${t.description || (t.amount >= 0 ? 'Einzahlung' : 'Ausgabe')}`;
-            transCard.appendChild(line);
-          });
-        }
-      });
-      if (!has) {
-        const none = document.createElement('p');
-        none.textContent = 'Keine Transaktionen in diesem Monat.';
-        transCard.appendChild(none);
-      }
-      card.appendChild(transCard);
-    }
+    table.appendChild(tbody);
+    card.appendChild(table);
     const note = document.createElement('p');
     note.textContent = 'Die Gesamtsumme und Verwaltung der Rücklagen findest du im Menü "Töpfe".';
     card.appendChild(note);
@@ -1147,12 +1186,32 @@
     // Kopfzeile mit Monat und Neu-Button
     const header = document.createElement('div');
     header.className = 'row';
+    // Monat auswählen
     const monthSelect = createMonthSelect();
     monthSelect.addEventListener('change', (e) => {
       currentMonth = e.target.value;
       updateMonthListIfNeeded();
       render();
     });
+    // Pot-Auswahl
+    const potSelect = document.createElement('select');
+    // Option für Gesamt / keine Details
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'Alle Töpfe';
+    potSelect.appendChild(allOpt);
+    state.pots.forEach((pot) => {
+      const opt = document.createElement('option');
+      opt.value = pot.id;
+      opt.textContent = pot.name;
+      if (pot.id === selectedPotId) opt.selected = true;
+      potSelect.appendChild(opt);
+    });
+    potSelect.addEventListener('change', (e) => {
+      selectedPotId = e.target.value || '';
+      render();
+    });
+    // Neuer Topf
     const addBtn = document.createElement('button');
     addBtn.textContent = '+ Neuer Topf';
     addBtn.className = 'primary';
@@ -1169,6 +1228,7 @@
       render();
     });
     header.appendChild(monthSelect);
+    header.appendChild(potSelect);
     header.appendChild(addBtn);
     card.appendChild(header);
     // Liste der Töpfe
@@ -1257,6 +1317,40 @@
       const totalP = document.createElement('p');
       totalP.innerHTML = `<strong>Gesamtsumme aller Töpfe:</strong> ${total.toFixed(2)} €`;
       card.appendChild(totalP);
+      // Detailansicht für ausgewählten Topf
+      if (selectedPotId) {
+        const pot = state.pots.find((p) => p.id === selectedPotId);
+        if (pot) {
+          const detailCard = document.createElement('div');
+          detailCard.className = 'card';
+          const detailTitle = document.createElement('h3');
+          detailTitle.textContent = `Details für ${pot.name}`;
+          detailCard.appendChild(detailTitle);
+          const detTable = document.createElement('table');
+          detTable.className = 'list-table';
+          const dHead = document.createElement('thead');
+          dHead.innerHTML = '<tr><th>Monat</th><th>Einzahlungen</th><th>Auszahlungen</th></tr>';
+          detTable.appendChild(dHead);
+          const dBody = document.createElement('tbody');
+          // Für die nächsten 12 Monate die Buchungen aufsummieren
+          monthList.forEach((m) => {
+            let dep = 0;
+            let wit = 0;
+            (pot.transactions || []).forEach((t) => {
+              if (t.date === m.key) {
+                if (t.amount >= 0) dep += t.amount;
+                if (t.amount < 0) wit += Math.abs(t.amount);
+              }
+            });
+            const dRow = document.createElement('tr');
+            dRow.innerHTML = `<td>${m.label}</td><td>${dep.toFixed(2)} €</td><td>${wit.toFixed(2)} €</td>`;
+            dBody.appendChild(dRow);
+          });
+          detTable.appendChild(dBody);
+          detailCard.appendChild(detTable);
+          card.appendChild(detailCard);
+        }
+      }
     }
     potsSection.appendChild(card);
   }

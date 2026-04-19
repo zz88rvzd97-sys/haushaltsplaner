@@ -1,22 +1,26 @@
 <!--
-  Haushaltsplaner Developer Beta 0.31
+  Haushaltsplaner Developer Beta 0.32
 
-  In dieser Version wurden die Navigation, die Kennzeichnung bezahlter Posten
-  und der Bereich „Rücklagen & Sparen“ weiter verbessert. Alle
-  Bereiche, in denen Posten fällig werden, verwenden jetzt einen
-  einheitlichen „Markieren“-Knopf anstelle von Checkboxen. Der
-  Bereich „Rücklagen & Sparen“ zeigt nur noch die Aufteilung und
-  Transaktionen; die Verwaltung der Töpfe und die Gesamtsummen
-  befinden sich nun im separaten Menüpunkt „Töpfe“. Zusätzlich wurde
-  die Breite des Reload‑Buttons reduziert, so dass er sich besser an
-  die Länge seines Textes anpasst.
+  Haushaltsplaner Developer Beta 0.32
+
+  Diese Version erweitert den Bereich „Rücklagen & Sparen“ um eine
+  automatische Aufteilungslogik, wie sie in der hochgeladenen Excel‑Datei
+  enthalten ist. Für jeden Monat wird der frei verfügbare Betrag ab
+  einem Mindestpuffer von 150 € aufgeteilt: 70 % gehen in Rücklagen und
+  werden dort auf die Töpfe „Auto“, „Urlaub“, „Anschaffungen (inkl.
+  Wohnen)“, „Kleidung“ und „Freizeit“ verteilt; 30 % fließen in das
+  Spar‑Depot. Im Menü „Rücklagen & Sparen“ wird eine Tabelle mit den
+  Aufteilungswerten für die nächsten zwölf Monate angezeigt. Im Menü
+  „Töpfe“ findest du weiterhin die Einzelkonten und deren
+  Gesamtsummen sowie die Möglichkeit, Ein‑ und Auszahlungen vorzunehmen
+  und die Transaktionen monatsweise einzusehen.
 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Haushaltsplaner Developer Beta 0.31</title>
+  <title>Haushaltsplaner Developer Beta 0.32</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -48,7 +52,7 @@
     <section id="save" class="tab-section"></section>
   </main>
   <footer>
-    Developer Beta 0.31
+    Developer Beta 0.32
   </footer>
   <script src="script.js"></script>
 </body>
