@@ -1,19 +1,16 @@
 /*
- * Einfaches dunkles Theme für den Haushaltsplaner.
- * Die Gestaltung ist bewusst reduziert, damit Inhalte auf dem iPhone
- * leicht lesbar und bedienbar bleiben. Alle Farben sind auf guten
- * Kontrast optimiert. Tabellenähnliche Bereiche werden als Karten
- * dargestellt.
+ * Die CSS‑Datei für die Haushaltsplaner Developer Beta 0.31.
+ *
+ * Diese Version übernimmt das moderne, helle Farbschema und die
+ * responsiven Layout‑Anpassungen aus den vorherigen Betas. Sie
+ * sorgt dafür, dass der Reload‑Button im Navigationsbereich nicht
+ * die volle Breite einnimmt, sondern sich an seinen Inhalt
+ * anpasst. Gleichzeitig bleiben Tabellen auf schmalen
+ * Smartphone‑Displays lesbar, da sie horizontal scrollen können.
  */
 
 :root {
-  /*
-   * Modern helles Farbschema für die Haushaltsplaner‑App. Statt des
-   * dunklen Hintergrunds nutzen wir nun ein helles Layout mit klaren
-   * Akzenten. Die Farbwerte orientieren sich an aktuellen Designtrends
-   * und sorgen für einen freundlichen Gesamteindruck. Passen Sie
-   * die Farben gerne an Ihre eigenen Bedürfnisse an.
-   */
+  /* Helles Farbschema – gleiche Werte wie in Beta 0.30 */
   --bg-color: #f8fafc;
   --card-color: #ffffff;
   --accent-color: #4676d7;
@@ -22,7 +19,6 @@
   --danger-color: #e74c3c;
   --success-color: #2ecc71;
   --warning-color: #f39c12;
-  /* Ausgangsschriftgröße etwas verkleinern, damit Inhalte nicht zu groß wirken */
   font-size: 16px;
 }
 
@@ -32,7 +28,6 @@ body {
   background-color: var(--bg-color);
   color: var(--text-color);
   -webkit-font-smoothing: antialiased;
-  /* Verhindere horizontales Scrollen, indem überschüssige Breite ausgeblendet wird. */
   overflow-x: hidden;
 }
 
@@ -40,7 +35,6 @@ header {
   background-color: var(--accent-color);
   color: #ffffff;
   padding: 1rem;
-  border-bottom: none;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
@@ -50,9 +44,6 @@ h1 {
 }
 
 nav {
-  /* Navigation besteht aus einem Auswahlfeld für die Ansicht und einem
-     optionalen Reload-Button. Auf kleinen Bildschirmen soll sie
-     nebeneinander stehen, ohne horizontalen Scrollbalken. */
   margin-top: 0.5rem;
   display: flex;
   align-items: center;
@@ -60,6 +51,9 @@ nav {
   overflow: visible;
 }
 
+/* Der Reload‑Button soll die Breite automatisch seinem Inhalt
+   anpassen. Die allgemeine Regel width: 100% wird daher hier
+   überschrieben. */
 nav button {
   flex: 0 0 auto;
   background-color: var(--card-color);
@@ -70,10 +64,9 @@ nav button {
   cursor: pointer;
   font-size: 0.9rem;
   white-space: nowrap;
+  width: auto;
 }
 
-/* Navigation: das Auswahlfeld soll möglichst viel Platz einnehmen, damit
-   der Text lesbar bleibt. */
 nav select {
   flex: 1 1 auto;
   min-width: 140px;
@@ -81,6 +74,7 @@ nav select {
 
 nav button.active {
   background-color: var(--accent-color);
+  color: #fff;
 }
 
 main {
@@ -100,7 +94,6 @@ main {
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 1.5rem;
-  /* dezenter Schatten für mehr Tiefe */
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
@@ -144,7 +137,7 @@ input:disabled, button:disabled {
 button.primary {
   background-color: var(--accent-color);
   border-color: var(--accent-color);
-  color: var(--text-color);
+  color: #fff;
   cursor: pointer;
 }
 
@@ -160,9 +153,13 @@ button.success {
   color: #fff;
 }
 
+button.secondary {
+  background-color: var(--muted-color);
+  border-color: var(--muted-color);
+  color: #fff;
+}
+
 .list-table {
-  /* Tabellen erhalten einen eigenen Scrollbereich, damit sie auf
-     schmalen Displays nicht gequetscht werden. */
   width: 100%;
   border-collapse: collapse;
   margin-top: 0.5rem;
@@ -200,14 +197,10 @@ footer {
 
 /* Responsive Anpassungen für kleinere Bildschirme */
 @media (max-width: 600px) {
-  /* Für kleine Bildschirme die Schriftgröße nicht vergrößern. So bleibt
-     das Layout kompakt und es entsteht kein unnötiger Zeilenumbruch. */
   body {
     font-size: 16px;
   }
-  .nav-bar label,
-  .nav-bar select,
-  .nav-bar button {
+  nav button, nav select {
     font-size: 0.9rem;
   }
   .card h2 {
@@ -222,17 +215,4 @@ footer {
     padding: 1.2rem;
     margin-bottom: 1.5rem;
   }
-}
-
-/* Navigation in der Kopfzeile */
-.nav-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-.nav-bar label {
-  font-weight: 600;
-  color: #ffffff;
-  font-size: 0.9rem;
 }

@@ -1,28 +1,22 @@
 <!--
-  Haushaltsplaner Developer Beta 0.27
+  Haushaltsplaner Developer Beta 0.31
 
-  Diese Version behebt ein Rechenproblem bei der Verteilung der
-  gemeinsamen Kosten. In den bisherigen Versionen wurden die
-  anteiligen Beiträge jeder Person immer unabhängig voneinander auf
-  das nächsthöhere 5‑€‑Intervall gerundet. Dadurch ergab sich, dass
-  die Summe der gerundeten Anteile oftmals größer war als die
-  tatsächliche Gesamtsumme der gemeinsamen Kosten – insbesondere wenn
-  der Gesamtbetrag selbst kein Vielfaches von fünf ist.  Die Folge war,
-  dass die freien Beträge in der Übersicht nicht mehr korrekt
-  erschienen.  Beta 0.27 korrigiert dieses Verhalten: Zwar wird nach
-  wie vor für jeden Anteil zunächst aufgerundet, anschließend
-  reduziert die App jedoch den größten gerundeten Anteil um die
-  überschüssige Differenz, sodass die Summe aller Anteile exakt der
-  tatsächlichen Gesamtsumme entspricht.  Dadurch bleiben die Anteile
-  weitestgehend auf 5‑€‑Schritte gerundet, ohne dass sich ein
-  Differenzbetrag aufaddiert.
+  In dieser Version wurden die Navigation, die Kennzeichnung bezahlter Posten
+  und der Bereich „Rücklagen & Sparen“ weiter verbessert. Alle
+  Bereiche, in denen Posten fällig werden, verwenden jetzt einen
+  einheitlichen „Markieren“-Knopf anstelle von Checkboxen. Der
+  Bereich „Rücklagen & Sparen“ zeigt nur noch die Aufteilung und
+  Transaktionen; die Verwaltung der Töpfe und die Gesamtsummen
+  befinden sich nun im separaten Menüpunkt „Töpfe“. Zusätzlich wurde
+  die Breite des Reload‑Buttons reduziert, so dass er sich besser an
+  die Länge seines Textes anpasst.
 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Haushaltsplaner Developer Beta 0.29</title>
+  <title>Haushaltsplaner Developer Beta 0.31</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -36,7 +30,8 @@
         <option value="personal">Persönliche Ausgaben</option>
         <option value="debts">Schulden</option>
         <option value="settings">Regeln & Personen</option>
-      <option value="savings">Rücklagen &amp; Sparen</option>
+        <option value="savings">Rücklagen &amp; Sparen</option>
+        <option value="pots">Töpfe</option>
         <option value="save">Sichern</option>
       </select>
       <button id="reloadButton">Neu laden</button>
@@ -49,10 +44,11 @@
     <section id="debts" class="tab-section"></section>
     <section id="settings" class="tab-section"></section>
     <section id="savings" class="tab-section"></section>
+    <section id="pots" class="tab-section"></section>
     <section id="save" class="tab-section"></section>
   </main>
   <footer>
-    Developer Beta 0.29
+    Developer Beta 0.31
   </footer>
   <script src="script.js"></script>
 </body>
