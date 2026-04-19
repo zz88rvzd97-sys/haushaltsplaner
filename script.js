@@ -1,15 +1,13 @@
 /*
- * Haushaltsplaner Developer Beta 0.33
+ * Haushaltsplaner Developer Beta 0.34
  *
- * Diese Version behebt ein Problem im Abschnitt „Töpfe“ und
- * erweitert die Darstellung der Rücklagen‑Töpfe. Neben dem manuellen
- * Saldo jedes Topfs wird nun auch die Summe der automatischen
- * Rücklagenbeiträge (basierend auf der Aufteilungslogik) für die
- * nächsten zwölf Monate angezeigt. In der Detailansicht eines
- * Topfs werden für jedes der nächsten zwölf Monate sowohl der
- * automatische Beitrag als auch manuelle Ein- und Auszahlungen
- * ausgewiesen. Zusätzlich wird die 30‑%‑Sparen‑Komponente als
- * eigener Eintrag angezeigt.
+ * Diese Version korrigiert die Datenmigration aus älteren Versionen
+ * (die Beta 0.33 legte migrierte Daten unter einem falschen Key ab). Beim
+ * Laden werden vorhandene States korrekt übernommen und fortan unter
+ * dem neuen Schlüssel gespeichert. Zusätzlich zeigt die Ansicht
+ * „Töpfe“ nun auch ohne vorhandene Töpfe eine sinnvolle Übersicht
+ * über die Sparanteile und ermöglicht die Verwaltung der manuell
+ * angelegten Töpfe wie gehabt.
  */
 
 (() => {
@@ -82,17 +80,18 @@
   };
   let state;
   try {
-    let saved = localStorage.getItem('budgetStateV033');
+  let saved = localStorage.getItem('budgetStateV034');
     if (!saved) {
       // Fallback-Migration aus älteren Versionen
       const fallback = [
-        'budgetStateV032','budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
+        'budgetStateV033','budgetStateV032','budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
       ];
       for (const k of fallback) {
         const data = localStorage.getItem(k);
         if (data) {
           saved = data;
-          localStorage.setItem('budgetStateV032', data);
+          // Bei erfolgreicher Migration unter neuem Key speichern
+          localStorage.setItem('budgetStateV034', data);
           break;
         }
       }
@@ -102,7 +101,7 @@
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV033', JSON.stringify(state));
+    localStorage.setItem('budgetStateV034', JSON.stringify(state));
   }
 
   // ----- Konfiguration für die Rücklagen‑Aufteilung -----

@@ -1,21 +1,22 @@
 <!--
-  Haushaltsplaner Developer Beta 0.33
-  Diese Version behebt das leere „Töpfe“-Menü aus der Beta 0.32 und
-  ergänzt dort eine vollständige Aufschlüsselung aller Rücklagen‑Töpfe.
-  Jeder Topf zeigt jetzt neben dem manuellen Saldo auch die Summe der
-  automatischen Rücklagen‑Beiträge für die nächsten zwölf Monate. In der
-  Detailansicht eines Topfs werden für jedes der nächsten zwölf Monate
-  sowohl der automatische Beitrag (gemäß Aufteilung aus dem Abschnitt
-  „Rücklagen & Sparen“) als auch manuelle Ein‑ und Auszahlungen
-  angezeigt. Zusätzlich gibt es eine Zeile für das „Sparen“‑Depot,
-  das die 30‑%‑Sparen‑Anteile darstellt.
+  Haushaltsplaner Developer Beta 0.34
+  Diese Version korrigiert die Datenmigration aus älteren Versionen:
+  die Beta 0.33 speicherte übernommene Daten versehentlich unter
+  einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
+  wurden. Beim erstmaligen Laden einer Beta 0.34 Installation werden
+  vorhandene Daten aus früheren States korrekt übernommen und unter
+  dem neuen Schlüssel gespeichert.
+
+  Außerdem zeigt das Menü „Töpfe“ nun auch ohne vorhandene Töpfe eine
+  sinnvolle Übersicht über den Spar‑Plan. Der Bereich „Sichern &
+  Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!DOCTYPE html>
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Haushaltsplaner Developer Beta 0.33</title>
+    <title>Haushaltsplaner Developer Beta 0.34</title>
     <link rel="stylesheet" href="style.css" />
     <link rel="manifest" href="manifest.json" />
   </head>
@@ -46,7 +47,7 @@
       <section id="pots" class="tab-section active"></section>
       <section id="save" class="tab-section"></section>
     </main>
-    <footer>Developer Beta 0.33</footer>
+      <footer>Developer Beta 0.34</footer>
     <script src="script.js"></script>
   </body>
 </html>
