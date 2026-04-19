@@ -1,13 +1,18 @@
 /*
- * Haushaltsplaner Developer Beta 0.34
+ * Haushaltsplaner Developer Beta 0.35
  *
- * Diese Version korrigiert die Datenmigration aus älteren Versionen
- * (die Beta 0.33 legte migrierte Daten unter einem falschen Key ab). Beim
- * Laden werden vorhandene States korrekt übernommen und fortan unter
- * dem neuen Schlüssel gespeichert. Zusätzlich zeigt die Ansicht
- * „Töpfe“ nun auch ohne vorhandene Töpfe eine sinnvolle Übersicht
- * über die Sparanteile und ermöglicht die Verwaltung der manuell
- * angelegten Töpfe wie gehabt.
+ * Diese Version startet die automatische Rücklagen‑Verteilung erst ab
+ * dem Startmonat der Excel-Vorlage (Mai 2026) und ergänzt eine
+ * Bestätigungsfunktion für die Rücklagen. In der Tabelle
+ * „Rücklagen & Sparen“ wird neben jedem Monat ein Button zum
+ * Markieren angezeigt. Durch Anklicken bestätigst du, dass der
+ * Rücklagen‑ und Sparbetrag für diesen Monat tatsächlich
+ * zurückgelegt oder angespart wurde. Sobald markiert, erscheint der
+ * Monat als „gespart“.
+ *
+ * Alle Verbesserungen aus Beta 0.34 bleiben erhalten: korrekte
+ * Migration älterer States, verbesserte Darstellung in „Töpfe“ und
+ * funktionsfähiger Sicherungsbereich.
  */
 
 (() => {
@@ -76,32 +81,38 @@
     commonCosts: [],
     personalCosts: [],
     debts: [],
-    pots: []
+    pots: [],
+    // Liste der Monate, in denen die Rücklagen/Spar‑Beträge bereits
+    // zurückgelegt wurden. Wird zum Markieren in der Tabelle
+    // „Rücklagen & Sparen“ verwendet.
+    reservesSavedMonths: []
   };
   let state;
   try {
-  let saved = localStorage.getItem('budgetStateV034');
+  let saved = localStorage.getItem('budgetStateV035');
     if (!saved) {
       // Fallback-Migration aus älteren Versionen
       const fallback = [
-        'budgetStateV033','budgetStateV032','budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
+        'budgetStateV034','budgetStateV033','budgetStateV032','budgetStateV031','budgetStateV030','budgetStateV029','budgetStateV028','budgetStateV027','budgetStateV026','budgetStateV025','budgetStateV024','budgetStateV023','budgetStateV022','budgetStateV021','budgetStateV020','budgetStateV019','budgetStateV018','budgetStateV017','budgetStateV016','budgetStateV015'
       ];
       for (const k of fallback) {
         const data = localStorage.getItem(k);
         if (data) {
           saved = data;
           // Bei erfolgreicher Migration unter neuem Key speichern
-          localStorage.setItem('budgetStateV034', data);
+          localStorage.setItem('budgetStateV035', data);
           break;
         }
       }
     }
     state = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(defaultState));
+    // Falls das neue Flag für Rücklagen‑Bestätigungen fehlt, initialisiere es
+    if (!state.reservesSavedMonths) state.reservesSavedMonths = [];
   } catch (err) {
     state = JSON.parse(JSON.stringify(defaultState));
   }
   function saveState() {
-    localStorage.setItem('budgetStateV034', JSON.stringify(state));
+    localStorage.setItem('budgetStateV035', JSON.stringify(state));
   }
 
   // ----- Konfiguration für die Rücklagen‑Aufteilung -----
@@ -1186,21 +1197,37 @@
     const table = document.createElement('table');
     table.className = 'list-table';
     const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>Monat</th><th>Freier Betrag</th><th>Mindestpuffer</th><th>Verteilbar</th><th>Rücklagen total</th><th>Auto</th><th>Urlaub</th><th>Anschaffungen</th><th>Kleidung</th><th>Freizeit</th><th>Sparen</th></tr>';
+    // Tabellenkopf um eine Status‑Spalte erweitern
+    thead.innerHTML = '<tr><th>Monat</th><th>Freier Betrag</th><th>Mindestpuffer</th><th>Verteilbar</th><th>Rücklagen total</th><th>Auto</th><th>Urlaub</th><th>Anschaffungen</th><th>Kleidung</th><th>Freizeit</th><th>Sparen</th><th>Status</th></tr>';
     table.appendChild(thead);
     const tbody = document.createElement('tbody');
     monthList.forEach((m) => {
       const free = computeFreeSumForMonth(m.key);
       const verteilbar = Math.max(free - savingsConfig.minFree, 0);
-      const ruecklagen = verteilbar * savingsConfig.reservesRatio;
-      const sparen = verteilbar * savingsConfig.savingsRatio;
-      // Rücklagen aufteilen
+      // Prüfe, ob dieser Monat auf oder nach dem Startmonat liegt
+      const afterStart = monthDiff(savingsConfig.startMonth, m.key) >= 0;
+      // Rücklagen und Sparen nur berechnen, wenn afterStart sonst 0
+      const ruecklagen = afterStart ? verteilbar * savingsConfig.reservesRatio : 0;
+      const sparen = afterStart ? verteilbar * savingsConfig.savingsRatio : 0;
+      // Rücklagen auf einzelne Töpfe verteilen
       const auto = ruecklagen * savingsConfig.reservePotShares['Auto'];
       const urlaub = ruecklagen * savingsConfig.reservePotShares['Urlaub'];
       const ansch = ruecklagen * savingsConfig.reservePotShares['Anschaffungen (inkl. Wohnen)'];
       const kleid = ruecklagen * savingsConfig.reservePotShares['Kleidung'];
       const frei = ruecklagen * savingsConfig.reservePotShares['Freizeit'];
       const row = document.createElement('tr');
+      // Status: Button zum Bestätigen der Rücklagen/Sparen dieses Monats
+      let statusHtml = '';
+      if (afterStart) {
+        const isSaved = state.reservesSavedMonths && state.reservesSavedMonths.includes(m.key);
+        if (isSaved) {
+          statusHtml = '<button class="primary" disabled>Gespart</button>';
+        } else {
+          statusHtml = `<button class="primary" data-month="${m.key}">Markieren</button>`;
+        }
+      } else {
+        statusHtml = '-';
+      }
       row.innerHTML = `
         <td>${m.label}</td>
         <td>${free.toFixed(2)} €</td>
@@ -1213,7 +1240,25 @@
         <td>${kleid.toFixed(2)} €</td>
         <td>${frei.toFixed(2)} €</td>
         <td>${sparen.toFixed(2)} €</td>
+        <td>${statusHtml}</td>
       `;
+      // Falls eine Markieren-Schaltfläche vorhanden ist, Klick-Handler registrieren
+      const btn = row.querySelector('button[data-month]');
+      if (btn) {
+        btn.addEventListener('click', (ev) => {
+          const mk = ev.target.getAttribute('data-month');
+          // Toggle: Wenn bereits markiert, entferne den Monat, sonst füge hinzu
+          if (!state.reservesSavedMonths) state.reservesSavedMonths = [];
+          const idx = state.reservesSavedMonths.indexOf(mk);
+          if (idx >= 0) {
+            state.reservesSavedMonths.splice(idx, 1);
+          } else {
+            state.reservesSavedMonths.push(mk);
+          }
+          saveState();
+          render();
+        });
+      }
       tbody.appendChild(row);
     });
     table.appendChild(tbody);
