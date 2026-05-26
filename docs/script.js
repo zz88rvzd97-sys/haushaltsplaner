@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.04
+ * Haushaltsplaner Developer Beta 2.05
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -533,7 +533,8 @@
         createdAt: entry.createdAt || '',
         previousNextDueMonth: isMonthKey(entry.previousNextDueMonth) ? entry.previousNextDueMonth : '',
         markedAsMonthly: entry.markedAsMonthly === true,
-        accountTransactionId: typeof entry.accountTransactionId === 'string' ? entry.accountTransactionId : ''
+        accountTransactionId: typeof entry.accountTransactionId === 'string' ? entry.accountTransactionId : '',
+        reducedOpenBalance: entry.reducedOpenBalance !== false
       }));
     if (isMonthKey(debt.completedMonth)) {
       // Bereits abgeschlossen: Abschlussmonat beibehalten.
@@ -589,9 +590,42 @@
   function resetDebtPaymentFromPost(post, monthKey) {
     const debt = getLinkedDebtForPost(post);
     if (!debt || !isMonthKey(monthKey)) return false;
-    return resetDebtPaymentForMonth(debt, monthKey, {
+    const reset = resetDebtPaymentForMonth(debt, monthKey, {
       sourcePostId: post.id || '',
       sourceLabel: `Verknüpfter Posten: ${post.name || 'Posten'}`
+    });
+    if (reset || !debt.paidMonths.includes(monthKey)) return reset;
+    const hasOtherMonthlyProof = (debt.paymentHistory || []).some((entry) => entry && entry.month === monthKey && entry.markedAsMonthly)
+      || getLinkedPostsForDebt(debt).some(({ post: candidate }) => candidate !== post && isPostPaidForMonth(candidate, monthKey));
+    if (hasOtherMonthlyProof) return false;
+    debt.paidMonths = debt.paidMonths.filter((month) => month !== monthKey);
+    if (!debt.nextDueMonth || monthDiff(monthKey, debt.nextDueMonth) > 0) debt.nextDueMonth = monthKey;
+    addChangeLog('Schulden', `${debt.name || 'Schuld'}: Bezahlt-Status ohne Zahlungsnachweis für ${formatMonthLabel(monthKey)} zurückgesetzt; Restschuld unverändert.`, monthKey);
+    return true;
+  }
+  function repairMissingDebtPaymentFromPost(post, monthKey, reduceOpenBalance) {
+    const debt = getLinkedDebtForPost(post);
+    if (!debt || !isMonthKey(monthKey) || !isPostPaidForMonth(post, monthKey)) return false;
+    ensureDebtConfig(debt);
+    ensurePostConfig(post);
+    const sourceLabel = `Verknüpfter Posten: ${post.name || 'Posten'}`;
+    const alreadyRecorded = (debt.paymentHistory || []).some((entry) => entry && entry.month === monthKey
+      && ((post.id && entry.sourcePostId === post.id) || (!entry.sourcePostId && entry.source === sourceLabel)));
+    if (alreadyRecorded) return false;
+    const amount = Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    if (!(amount > 0)) return false;
+    return addDebtPayment(debt, {
+      month: monthKey,
+      amount,
+      source: sourceLabel,
+      sourcePostId: post.id || '',
+      note: reduceOpenBalance === false
+        ? 'Nachtrag: Zahlung war im gespeicherten Restschuldstand bereits berücksichtigt.'
+        : 'Nachtrag aus bereits bezahltem, verknüpftem Kostenposten.',
+      markAsMonthly: true,
+      allowExistingMonthlyStatus: true,
+      reducedOpenBalance: reduceOpenBalance !== false,
+      skipAccountTransaction: true
     });
   }
   // ----- Datenmodell und Persistenz -----
@@ -661,7 +695,7 @@
   let state;
   let stateLoadFailed = false;
   const STATE_STORAGE_KEY = 'budgetStateStable';
-  const CURRENT_VERSION_STORAGE_KEY = 'budgetStateV204';
+  const CURRENT_VERSION_STORAGE_KEY = 'budgetStateV205';
   const DEFAULT_TRANSACTION_MONTH = dateToMonthKey(new Date());
   const DEFAULT_SHARED_ACCOUNT_ID = 'account_shared_main';
   const savingsConfig = {
@@ -686,7 +720,7 @@
   // Ab 1.96 ist Stable die verbindliche Quelle. Alte Versions-Keys werden nur
   // einmalig zur Rettung genutzt, wenn noch kein gueltiger Stable-State existiert.
   const fallback = [
-    'budgetStateAutoBackup','budgetStateV203','budgetStateV202','budgetStateV201','budgetStateV200','budgetStateV199','budgetStateV198','budgetStateV197','budgetStateV196','budgetStateV195','budgetStateV194','budgetStateV193','budgetStateV192','budgetStateV191','budgetStateV190','budgetStateV189','budgetStateV188','budgetStateV187','budgetStateV186','budgetStateV185','budgetStateV184','budgetStateV183','budgetStateV182','budgetStateV181','budgetStateV180','budgetStateV179','budgetStateV178','budgetStateV177','budgetStateV176','budgetStateV175','budgetStateV174','budgetStateV173','budgetStateV172','budgetStateV171','budgetStateV170','budgetStateV169','budgetStateV168','budgetStateV167','budgetStateV166','budgetStateV165','budgetStateV164','budgetStateV163','budgetStateV162','budgetStateV161','budgetStateV160','budgetStateV159','budgetStateV158','budgetStateV156','budgetStateV155','budgetStateV153','budgetStateV152','budgetStateV151','budgetStateV150','budgetStateV149','budgetStateV148','budgetStateV146','budgetStateV145','budgetStateV144','budgetStateV143','budgetStateV142','budgetStateV140','budgetStateV139','budgetStateV136','budgetStateV135'
+    'budgetStateAutoBackup','budgetStateV204','budgetStateV203','budgetStateV202','budgetStateV201','budgetStateV200','budgetStateV199','budgetStateV198','budgetStateV197','budgetStateV196','budgetStateV195','budgetStateV194','budgetStateV193','budgetStateV192','budgetStateV191','budgetStateV190','budgetStateV189','budgetStateV188','budgetStateV187','budgetStateV186','budgetStateV185','budgetStateV184','budgetStateV183','budgetStateV182','budgetStateV181','budgetStateV180','budgetStateV179','budgetStateV178','budgetStateV177','budgetStateV176','budgetStateV175','budgetStateV174','budgetStateV173','budgetStateV172','budgetStateV171','budgetStateV170','budgetStateV169','budgetStateV168','budgetStateV167','budgetStateV166','budgetStateV165','budgetStateV164','budgetStateV163','budgetStateV162','budgetStateV161','budgetStateV160','budgetStateV159','budgetStateV158','budgetStateV156','budgetStateV155','budgetStateV153','budgetStateV152','budgetStateV151','budgetStateV150','budgetStateV149','budgetStateV148','budgetStateV146','budgetStateV145','budgetStateV144','budgetStateV143','budgetStateV142','budgetStateV140','budgetStateV139','budgetStateV136','budgetStateV135'
   ];
   const scoreStatePayload = (obj) => {
     if (!obj || typeof obj !== 'object') return -1;
@@ -769,6 +803,7 @@
     if (!Array.isArray(state.changeLog)) state.changeLog = [];
     if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = JSON.parse(JSON.stringify(defaultState.appMeta));
     migrateKreiskasseToBennyPersonal();
+    migrateKreiskassePayrollPayment();
     if (!state.reserveItemSaved) state.reserveItemSaved = {};
     syncAllReserveSelectionsToPots();
     normalizeAllPersonConfigs();
@@ -1956,6 +1991,14 @@
       const name = (item && item.name ? String(item.name) : '').toLowerCase();
       return !name.includes('kreiskasse');
     });
+  }
+
+  function migrateKreiskassePayrollPayment() {
+    if (!state || !state.appMeta || state.appMeta.kreiskassePayrollPaymentV205Done === true) return false;
+    const post = (state.personalCosts || []).find((item) => item && item.personId === 'benny' && normalizeTextKey(item.name).includes('kreiskasse'));
+    if (post && typeof post.paidWithIncome !== 'boolean') post.paidWithIncome = true;
+    state.appMeta.kreiskassePayrollPaymentV205Done = true;
+    return !!post;
   }
 
   /**
@@ -3730,6 +3773,30 @@
     person.incomeAccountId = accountId || '';
   }
 
+  function syncPaymentsPaidWithIncome(person, month, received) {
+    if (!person || !isMonthKey(month)) return 0;
+    let changes = 0;
+    (state.personalCosts || []).forEach((post) => {
+      if (!post || post.personId !== person.id) return;
+      ensurePostConfig(post);
+      if (received) {
+        if (post.paidWithIncome !== true || !isDue(post, month) || isPostPaidForMonth(post, month)) return;
+        setPostPaidForMonth(post, month, true);
+        if (!post.incomePaidMonths.includes(month)) post.incomePaidMonths.push(month);
+        syncDebtPaymentFromPost(post, month);
+        addChangeLog('Persönliche Ausgaben', `${post.name || 'Lohnabzug'}: mit Lohn-Eingang automatisch als bezahlt markiert.`, month);
+        changes += 1;
+        return;
+      }
+      if (!post.incomePaidMonths.includes(month)) return;
+      setPostPaidForMonth(post, month, false);
+      resetDebtPaymentFromPost(post, month);
+      addChangeLog('Persönliche Ausgaben', `${post.name || 'Lohnabzug'}: automatische Markierung mit rückgängig gemachtem Lohn-Eingang zurückgesetzt.`, month);
+      changes += 1;
+    });
+    return changes;
+  }
+
   function syncPersonIncomeReceivedAmount(person, month) {
     ensurePersonIncomeConfig(person);
     if (!isMonthKey(month)) return false;
@@ -3796,10 +3863,12 @@
         transactionId: txId
       };
       addChangeLog('Einkommen', `${person.name}: Lohn ${euro(amount)} für ${formatMonthLabel(month)} erhalten und auf ${getAccountName(targetAccountId)} gebucht.`, month);
+      syncPaymentsPaidWithIncome(person, month, true);
       return true;
     }
     if (existing) {
       removeAccountTransaction(existing.accountId, existing.transactionId);
+      syncPaymentsPaidWithIncome(person, month, false);
       addChangeLog('Einkommen', `${person.name}: Lohn-Eingang für ${formatMonthLabel(month)} rückgängig gemacht.`, month);
       delete person.incomeReceived[month];
     }
@@ -3949,6 +4018,9 @@
     post.paidMonths = post.paidMonths.filter((m, index, arr) => isMonthKey(m) && arr.indexOf(m) === index);
     if (!Array.isArray(post.sharedBalanceDebitedMonths)) post.sharedBalanceDebitedMonths = [];
     post.sharedBalanceDebitedMonths = post.sharedBalanceDebitedMonths.filter((m, index, arr) => isMonthKey(m) && arr.indexOf(m) === index);
+    post.paidWithIncome = post.paidWithIncome === true;
+    if (!Array.isArray(post.incomePaidMonths)) post.incomePaidMonths = [];
+    post.incomePaidMonths = post.incomePaidMonths.filter((m, index, arr) => isMonthKey(m) && arr.indexOf(m) === index);
   }
   function isPostPaidForMonth(post, month) {
     ensurePostConfig(post);
@@ -4026,6 +4098,7 @@
       applyCommonCostBalanceDebit(post, month, false);
       syncSavingsGoalFromPost(post, month, false);
       post.paidMonths = post.paidMonths.filter((m) => m !== month);
+      post.incomePaidMonths = post.incomePaidMonths.filter((m) => m !== month);
       applyPostAccountBooking(post, month, false);
     }
     return true;
@@ -5633,12 +5706,17 @@
           if (!isMonthKey(paidMonth)) return;
           if (!isDue(post, paidMonth)) return;
           const hasHistory = (debt.paymentHistory || []).some((entry) => entry && entry.month === paidMonth && Number(entry.amount || 0) > 0);
-          if (!hasHistory && Number(debt.amountOpen || 0) > 0) {
+          if (!hasHistory) {
             items.push({
               kind: 'warning',
               area: 'Schulden',
+              checkType: 'missing-linked-debt-payment',
+              debtId: debt.id,
+              postId: post.id || '',
+              paidMonth,
+              paymentAmount: Number(getEffectiveAmountForMonth(post, paidMonth) || 0),
               title: `Bezahlter Posten ohne Schuldzahlung: ${debt.name}`,
-              detail: `${post.name} ist in ${formatMonthLabel(paidMonth)} als bezahlt markiert, aber in der Schuld gibt es keine passende Zahlungshistorie. Bitte prüfen, damit Restschuld und Nachweis zusammenpassen.`
+              detail: `${post.name} ist in ${formatMonthLabel(paidMonth)} als bezahlt markiert, aber in der Schuld gibt es keine passende Zahlungshistorie. Entscheide unten, ob die Restschuld dabei noch vermindert werden muss.`
             });
           }
         });
@@ -6127,6 +6205,53 @@
       const label = item.kind === 'success' ? 'OK' : (item.kind === 'warning' ? 'Prüfen' : (item.kind === 'danger' ? 'Fehler' : 'Info'));
       const cls = item.kind === 'success' ? 'success' : (item.kind === 'warning' ? 'warning' : (item.kind === 'danger' ? 'danger' : ''));
       tr.innerHTML = `<td><span class="pill ${cls}">${label}</span></td><td>${item.area}</td><td>${item.title}</td><td>${item.detail}</td>`;
+      if (item.checkType === 'missing-linked-debt-payment') {
+        const linked = getAllCostPosts().find(({ post }) => post && post.id === item.postId);
+        const post = linked && linked.post;
+        const amount = Number(item.paymentAmount || 0);
+        if (post && amount > 0) {
+          const actions = document.createElement('div');
+          actions.className = 'button-row';
+          const takePayment = document.createElement('button');
+          takePayment.type = 'button';
+          takePayment.className = 'success';
+          takePayment.textContent = `Zahlung ${euro(amount)} übernehmen`;
+          takePayment.title = 'Ergänzt den Schuldzahlungsnachweis und vermindert die gespeicherte Restschuld einmalig.';
+          takePayment.addEventListener('click', () => {
+            if (!confirm(`Wurde ${euro(amount)} für "${post.name}" bezahlt und ist dieser Betrag in der gespeicherten Restschuld noch NICHT abgezogen? Die Restschuld wird einmalig vermindert; der Bankstand bleibt unverändert.`)) return;
+            if (!repairMissingDebtPaymentFromPost(post, item.paidMonth, true)) return alert('Diese Schuldzahlung ist bereits erfasst oder konnte nicht übernommen werden.');
+            saveState();
+            render();
+          });
+          actions.appendChild(takePayment);
+          const proofOnly = document.createElement('button');
+          proofOnly.type = 'button';
+          proofOnly.className = 'secondary';
+          proofOnly.textContent = 'Nur Nachweis ergänzen';
+          proofOnly.title = 'Vermerkt die Zahlung als bezahlt, ohne die bereits aktuelle Restschuld nochmals zu vermindern.';
+          proofOnly.addEventListener('click', () => {
+            if (!confirm(`Ist die Zahlung von ${euro(amount)} für "${post.name}" bereits im angezeigten Restschuldstand enthalten? Dann wird nur der Nachweis ergänzt; Restschuld und Bankstand bleiben unverändert.`)) return;
+            if (!repairMissingDebtPaymentFromPost(post, item.paidMonth, false)) return alert('Diese Schuldzahlung ist bereits erfasst oder konnte nicht ergänzt werden.');
+            saveState();
+            render();
+          });
+          actions.appendChild(proofOnly);
+          const resetStatus = document.createElement('button');
+          resetStatus.type = 'button';
+          resetStatus.className = 'secondary';
+          resetStatus.textContent = 'Nicht bezahlt: Status zurücksetzen';
+          resetStatus.title = 'Öffnet den Kostenposten wieder; eine fehlende Zahlung wird nicht erfunden.';
+          resetStatus.addEventListener('click', () => {
+            if (!confirm(`Wurde "${post.name}" in ${formatMonthLabel(item.paidMonth)} nicht bezahlt? Der Bezahlt-Status wird zurückgesetzt; Restschuld und Bankstand bleiben unverändert.`)) return;
+            setPostPaidForMonth(post, item.paidMonth, false);
+            resetDebtPaymentFromPost(post, item.paidMonth);
+            saveState();
+            render();
+          });
+          actions.appendChild(resetStatus);
+          tr.children[3].appendChild(actions);
+        }
+      }
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -8151,7 +8276,8 @@ function renderPersonal() {
           const currentAmount = getEffectiveAmountForMonth(pc, currentMonth);
           const linkedSavingsGoalName = getLinkedSavingsGoalName(pc);
           const linkedDebtName = getLinkedDebtName(pc);
-          tr.innerHTML = `<td>${pc.name}</td>
+          const paidWithIncomeHint = pc.paidWithIncome === true ? '<div class="small muted">Lohnabzug · automatisch bei Lohn-Eingang</div>' : '';
+          tr.innerHTML = `<td>${pc.name}${paidWithIncomeHint}</td>
             <td>${currentAmount.toFixed(2)} €</td>
             <td>${getDisplayInterval(pc)}</td>
             <td>${pc.startMonth}</td>
@@ -8166,7 +8292,7 @@ function renderPersonal() {
           if (dueNow) {
             if (!paidNow) {
               const btn = document.createElement('button');
-              btn.textContent = linkedSavingsGoalName ? 'Zurücklegen' : 'Bezahlt (nur Status)';
+              btn.textContent = linkedSavingsGoalName ? 'Zurücklegen' : (linkedDebtName ? 'Bezahlt + Schuld aktualisieren' : 'Bezahlt (nur Status)');
               btn.className = 'success';
               btn.addEventListener('click', () => {
                 setPostPaidForMonth(pc, currentMonth, true);
@@ -8177,7 +8303,7 @@ function renderPersonal() {
               paidCell.appendChild(btn);
             } else {
               const doneBtn = document.createElement('button');
-              doneBtn.textContent = linkedSavingsGoalName ? 'Zurückgelegt' : 'Bezahlt (nur Status)';
+              doneBtn.textContent = linkedSavingsGoalName ? 'Zurückgelegt' : (linkedDebtName ? 'Bezahlt · Schuld geführt' : 'Bezahlt (nur Status)');
               doneBtn.disabled = true;
               doneBtn.className = 'secondary';
               paidCell.appendChild(doneBtn);
@@ -8206,7 +8332,7 @@ function renderPersonal() {
           });
           const bookedNow = isPostBookedForMonth(pc, currentMonth);
           actionCell.appendChild(createActionMenu([
-            { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : 'Bezahlt + buchen', className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(pc, currentMonth); syncDebtPaymentFromPost(pc, currentMonth); saveState(); render(); } },
+            { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : (linkedDebtName ? 'Bezahlt + Schuld + Nachweis buchen' : 'Bezahlt + buchen'), className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(pc, currentMonth); syncDebtPaymentFromPost(pc, currentMonth); saveState(); render(); } },
             { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(pc, currentMonth); saveState(); render(); } },
             { label: 'Zahlung zurücksetzen', className: 'secondary', disabled: !paidNow, onClick: () => { setPostPaidForMonth(pc, currentMonth, false); resetDebtPaymentFromPost(pc, currentMonth); saveState(); render(); } },
             { label: 'Bearbeiten', className: 'primary', onClick: () => showPersonalEditor(person.id, pc) },
@@ -8292,6 +8418,18 @@ function showPersonalEditor(personId, editPost) {
     row4.appendChild(createLabelInput('Schuld verknüpfen', refs.debtSelect));
     row4.appendChild(createLabelInput('Zahlungskonto', refs.accountSelect));
     content.appendChild(row4);
+    const incomePaymentLabel = document.createElement('label');
+    incomePaymentLabel.className = 'check-line';
+    refs.paidWithIncomeCheck = document.createElement('input');
+    refs.paidWithIncomeCheck.type = 'checkbox';
+    refs.paidWithIncomeCheck.checked = !!(editPost && editPost.paidWithIncome === true);
+    incomePaymentLabel.appendChild(refs.paidWithIncomeCheck);
+    incomePaymentLabel.appendChild(document.createTextNode(' Direkt vom Lohn einbehalten: bei Lohn-Eingang automatisch als bezahlt markieren'));
+    content.appendChild(incomePaymentLabel);
+    const incomePaymentHint = document.createElement('p');
+    incomePaymentHint.className = 'small muted';
+    incomePaymentHint.textContent = 'Nutze dies z. B. für Kreiskasse OPR, wenn du den einbehaltenen Betrag zuvor zum eingetragenen Auszahlungslohn hinzurechnest. Die Ausgabe und Schuldzahlung bleiben dadurch korrekt sichtbar.';
+    content.appendChild(incomePaymentHint);
     appendSavingsGoalLinkField(content, refs, editPost);
     appendTransferBookingFields(content, refs, editPost);
 
@@ -8349,6 +8487,7 @@ function showPersonalEditor(personId, editPost) {
             editPost.startMonth = startMonth;
             editPost.linkedDebtId = refs.debtSelect.value || '';
             editPost.accountId = refs.accountSelect.value || '';
+            editPost.paidWithIncome = refs.paidWithIncomeCheck.checked;
             if (!applyTransferBookingFieldsToPost(editPost, refs)) return;
             applyScheduleSettings(editPost, scheduleValidation.value);
             if (mode) {
@@ -8374,11 +8513,16 @@ function showPersonalEditor(personId, editPost) {
               amountOverrides: {},
               linkedDebtId: refs.debtSelect.value || '',
               linkedSavingsGoalId: refs.savingsGoalSelect.value || '',
-              accountId: refs.accountSelect.value || ''
+              accountId: refs.accountSelect.value || '',
+              paidWithIncome: refs.paidWithIncomeCheck.checked,
+              incomePaidMonths: []
             };
             if (!applyTransferBookingFieldsToPost(newPost, refs)) return;
             state.personalCosts.push(newPost);
             syncLinkedDebtRateFromPost(newPost, startMonth, 'future');
+          }
+          if (refs.paidWithIncomeCheck.checked && isPersonIncomeReceived(person, currentMonth)) {
+            syncPaymentsPaidWithIncome(person, currentMonth, true);
           }
           saveState();
           render();
@@ -9570,10 +9714,14 @@ function showPersonalEditor(personId, editPost) {
     if (!(amount > 0)) return false;
     const markAsMonthly = options.markAsMonthly === true;
     const previousNextDueMonth = debt.nextDueMonth || '';
-    if (markAsMonthly && (debt.paidMonths.includes(month) || debt.paymentHistory.some((entry) => entry.month === month && entry.markedAsMonthly))) {
+    const alreadyMarkedMonthly = debt.paidMonths.includes(month);
+    const alreadyHasMonthlyHistory = debt.paymentHistory.some((entry) => entry.month === month && entry.markedAsMonthly);
+    if (markAsMonthly && (alreadyHasMonthlyHistory || (alreadyMarkedMonthly && options.allowExistingMonthlyStatus !== true))) {
       return false;
     }
-    const paymentAmount = Math.min(amount, Number(debt.amountOpen || 0));
+    const paymentAmount = options.reducedOpenBalance === false
+      ? amount
+      : Math.min(amount, Number(debt.amountOpen || 0));
     if (!(paymentAmount > 0)) return false;
 
     const historyId = generateId();
@@ -9602,10 +9750,13 @@ function showPersonalEditor(personId, editPost) {
       createdAt: new Date().toISOString(),
       previousNextDueMonth,
       markedAsMonthly: markAsMonthly,
-      accountTransactionId
+      accountTransactionId,
+      reducedOpenBalance: options.reducedOpenBalance !== false
     });
 
-    debt.amountOpen = Math.max(0, Number(debt.amountOpen || 0) - paymentAmount);
+    if (options.reducedOpenBalance !== false) {
+      debt.amountOpen = Math.max(0, Number(debt.amountOpen || 0) - paymentAmount);
+    }
     if (Number(debt.amountOpen || 0) <= 0) {
       debt.completedMonth = month;
     }
@@ -9635,7 +9786,7 @@ function showPersonalEditor(personId, editPost) {
         if (entry.accountTransactionId) removeAccountTransaction(debt.accountId, entry.accountTransactionId);
         removeAccountTransactionBySource(getDebtAccountTransactionSource(debt, monthKey, entry.id));
       });
-      restoreAmount = entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      restoreAmount = entries.reduce((sum, entry) => sum + (entry.reducedOpenBalance === false ? 0 : Number(entry.amount || 0)), 0);
       debt.paymentHistory = debt.paymentHistory.filter((entry) => !matchesEntry(entry));
     } else if (!restrictToPost && debt.paidMonths.includes(monthKey)) {
       restoreAmount = Number(getDebtRateForMonth(debt, monthKey) || 0);
@@ -11828,6 +11979,7 @@ function renderPots() {
             if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = JSON.parse(JSON.stringify(defaultState.appMeta));
             normalizeAppMeta();
             migrateKreiskasseToBennyPersonal();
+            migrateKreiskassePayrollPayment();
             syncAllReserveSelectionsToPots();
             normalizeAllPersonConfigs();
             normalizeAllPostConfigs();
@@ -12280,12 +12432,12 @@ function renderPots() {
   if (versionChip) {
     const params = new URLSearchParams(window.location.search);
     if (params.has('refresh')) {
-      versionChip.textContent = 'Update 2.04 geladen';
+      versionChip.textContent = 'Update 2.05 geladen';
       setTimeout(() => {
-        versionChip.textContent = 'Version 2.04 geladen';
+        versionChip.textContent = 'Version 2.05 geladen';
       }, 2500);
     } else {
-      versionChip.textContent = 'Version 2.04 geladen';
+      versionChip.textContent = 'Version 2.05 geladen';
     }
   }
 
