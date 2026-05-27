@@ -1,4 +1,4 @@
-    migrateConfirmedMayDebtProofsV206();
+    /*
     normalizeAppMeta();            migrateConfirmedMayDebtProofsV206();
             setCurrentMonth(dateToMonthKey(new Date()), false);  function migrateConfirmedMayDebtProofsV206() {
                   if (!state || !state.appMeta || state.appMeta.confirmedMayDebtProofsV206Done === true) return 0;
@@ -13,7 +13,7 @@
                   return repaired;
             }
 
-  function migrateKreiskassePayrollPayment() {/*
+  function migrateConfirmedMayDebtProofsV206() { if (!state || !state.appMeta || state.appMeta.confirmedMayDebtProofsV206Done === true) return 0; const confirmedPosts = new Set(['riverty az1', 'eos', 'kreiskasse opr']); let repaired = 0; (state.personalCosts || []).forEach((post) => { if (!post || !confirmedPosts.has(normalizeTextKey(post.name))) return; if (!isPostPaidForMonth(post, '2026-05')) return; if (repairMissingDebtPaymentFromPost(post, '2026-05', false)) repaired += 1; }); state.appMeta.confirmedMayDebtProofsV206Done = true; return repaired; } function migrateKreiskassePayrollPayment() {/*
  * Haushaltsplaner Developer Beta 2.06
  *
  * Diese Version verbessert Optik und Bedienung:
@@ -2008,7 +2008,7 @@
     });
   }
 
-  function migrateKreiskassePayrollPayment() {
+  function migrateConfirmedMayDebtProofsV206() { if (!state || !state.appMeta || state.appMeta.confirmedMayDebtProofsV206Done === true) return 0; const confirmedPosts = new Set(['riverty az1', 'eos', 'kreiskasse opr']); let repaired = 0; (state.personalCosts || []).forEach((post) => { if (!post || !confirmedPosts.has(normalizeTextKey(post.name))) return; if (!isPostPaidForMonth(post, '2026-05')) return; if (repairMissingDebtPaymentFromPost(post, '2026-05', false)) repaired += 1; }); state.appMeta.confirmedMayDebtProofsV206Done = true; return repaired; } function migrateKreiskassePayrollPayment() {
     if (!state || !state.appMeta || state.appMeta.kreiskassePayrollPaymentV205Done === true) return false;
     const post = (state.personalCosts || []).find((item) => item && item.personId === 'benny' && normalizeTextKey(item.name).includes('kreiskasse'));
     if (post && typeof post.paidWithIncome !== 'boolean') post.paidWithIncome = true;
