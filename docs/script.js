@@ -1,5 +1,20 @@
-/*
- * Haushaltsplaner Developer Beta 2.05
+    migrateConfirmedMayDebtProofsV206();
+    normalizeAppMeta();            migrateConfirmedMayDebtProofsV206();
+            setCurrentMonth(dateToMonthKey(new Date()), false);  function migrateConfirmedMayDebtProofsV206() {
+                  if (!state || !state.appMeta || state.appMeta.confirmedMayDebtProofsV206Done === true) return 0;
+                  const confirmedPosts = new Set(['riverty az1', 'eos', 'kreiskasse opr']);
+                  let repaired = 0;
+                  (state.personalCosts || []).forEach((post) => {
+                          if (!post || !confirmedPosts.has(normalizeTextKey(post.name))) return;
+                          if (!isPostPaidForMonth(post, '2026-05')) return;
+                          if (repairMissingDebtPaymentFromPost(post, '2026-05', false)) repaired += 1;
+                  });
+                  state.appMeta.confirmedMayDebtProofsV206Done = true;
+                  return repaired;
+            }
+
+  function migrateKreiskassePayrollPayment() {/*
+ * Haushaltsplaner Developer Beta 2.06
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -695,7 +710,7 @@
   let state;
   let stateLoadFailed = false;
   const STATE_STORAGE_KEY = 'budgetStateStable';
-  const CURRENT_VERSION_STORAGE_KEY = 'budgetStateV205';
+  const CURRENT_VERSION_STORAGE_KEY = 'budgetStateV206';
   const DEFAULT_TRANSACTION_MONTH = dateToMonthKey(new Date());
   const DEFAULT_SHARED_ACCOUNT_ID = 'account_shared_main';
   const savingsConfig = {
@@ -720,7 +735,7 @@
   // Ab 1.96 ist Stable die verbindliche Quelle. Alte Versions-Keys werden nur
   // einmalig zur Rettung genutzt, wenn noch kein gueltiger Stable-State existiert.
   const fallback = [
-    'budgetStateAutoBackup','budgetStateV204','budgetStateV203','budgetStateV202','budgetStateV201','budgetStateV200','budgetStateV199','budgetStateV198','budgetStateV197','budgetStateV196','budgetStateV195','budgetStateV194','budgetStateV193','budgetStateV192','budgetStateV191','budgetStateV190','budgetStateV189','budgetStateV188','budgetStateV187','budgetStateV186','budgetStateV185','budgetStateV184','budgetStateV183','budgetStateV182','budgetStateV181','budgetStateV180','budgetStateV179','budgetStateV178','budgetStateV177','budgetStateV176','budgetStateV175','budgetStateV174','budgetStateV173','budgetStateV172','budgetStateV171','budgetStateV170','budgetStateV169','budgetStateV168','budgetStateV167','budgetStateV166','budgetStateV165','budgetStateV164','budgetStateV163','budgetStateV162','budgetStateV161','budgetStateV160','budgetStateV159','budgetStateV158','budgetStateV156','budgetStateV155','budgetStateV153','budgetStateV152','budgetStateV151','budgetStateV150','budgetStateV149','budgetStateV148','budgetStateV146','budgetStateV145','budgetStateV144','budgetStateV143','budgetStateV142','budgetStateV140','budgetStateV139','budgetStateV136','budgetStateV135'
+    'budgetStateAutoBackup','budgetStateV205','budgetStateV204','budgetStateV203','budgetStateV202','budgetStateV201','budgetStateV200','budgetStateV199','budgetStateV198','budgetStateV197','budgetStateV196','budgetStateV195','budgetStateV194','budgetStateV193','budgetStateV192','budgetStateV191','budgetStateV190','budgetStateV189','budgetStateV188','budgetStateV187','budgetStateV186','budgetStateV185','budgetStateV184','budgetStateV183','budgetStateV182','budgetStateV181','budgetStateV180','budgetStateV179','budgetStateV178','budgetStateV177','budgetStateV176','budgetStateV175','budgetStateV174','budgetStateV173','budgetStateV172','budgetStateV171','budgetStateV170','budgetStateV169','budgetStateV168','budgetStateV167','budgetStateV166','budgetStateV165','budgetStateV164','budgetStateV163','budgetStateV162','budgetStateV161','budgetStateV160','budgetStateV159','budgetStateV158','budgetStateV156','budgetStateV155','budgetStateV153','budgetStateV152','budgetStateV151','budgetStateV150','budgetStateV149','budgetStateV148','budgetStateV146','budgetStateV145','budgetStateV144','budgetStateV143','budgetStateV142','budgetStateV140','budgetStateV139','budgetStateV136','budgetStateV135'
   ];
   const scoreStatePayload = (obj) => {
     if (!obj || typeof obj !== 'object') return -1;
@@ -12432,12 +12447,12 @@ function renderPots() {
   if (versionChip) {
     const params = new URLSearchParams(window.location.search);
     if (params.has('refresh')) {
-      versionChip.textContent = 'Update 2.05 geladen';
+      versionChip.textContent = 'Update 2.06 geladen';
       setTimeout(() => {
-        versionChip.textContent = 'Version 2.05 geladen';
+        versionChip.textContent = 'Version 2.06 geladen';
       }, 2500);
     } else {
-      versionChip.textContent = 'Version 2.05 geladen';
+      versionChip.textContent = 'Version 2.06 geladen';
     }
   }
 
