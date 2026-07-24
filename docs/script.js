@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.40
+ * Haushaltsplaner Developer Beta 2.41
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.40';
+  const APP_VERSION = '2.41';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -694,6 +694,7 @@
   let state;
   let stateLoadFailed = false;
   let stateLoadError = '';
+  let pendingBackupImportNotice = null;
   const STATE_STORAGE_KEY = 'budgetStateStable';
   const CURRENT_VERSION_STORAGE_KEY = `budgetStateV${APP_VERSION_STORAGE_SUFFIX}`;
   const DEFAULT_TRANSACTION_MONTH = dateToMonthKey(new Date());
@@ -750,10 +751,40 @@
     ].filter((key, index, list) => key && list.indexOf(key) === index);
   }
 
+  function cleanupLegacyStateStorageKeys() {
+    const legacyKeys = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key && /^budgetStateV\d+$/.test(key) && key !== CURRENT_VERSION_STORAGE_KEY) {
+        legacyKeys.push(key);
+      }
+    }
+    legacyKeys.forEach((key) => localStorage.removeItem(key));
+    return legacyKeys.length;
+  }
+
   function writeStatePayloadToStorage(payload) {
-    [STATE_STORAGE_KEY, 'budgetStateAutoBackup', CURRENT_VERSION_STORAGE_KEY].forEach((key) => {
-      localStorage.setItem(key, payload);
+    cleanupLegacyStateStorageKeys();
+    const storageKeys = [STATE_STORAGE_KEY, 'budgetStateAutoBackup', CURRENT_VERSION_STORAGE_KEY];
+    const previousValues = {};
+    storageKeys.forEach((key) => {
+      previousValues[key] = localStorage.getItem(key);
     });
+    try {
+      storageKeys.forEach((key) => {
+        localStorage.setItem(key, payload);
+      });
+    } catch (err) {
+      storageKeys.forEach((key) => {
+        try {
+          if (previousValues[key] === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, previousValues[key]);
+        } catch (rollbackErr) {
+          console.warn('Speicher-Rücksetzung fehlgeschlagen', key, rollbackErr);
+        }
+      });
+      throw err;
+    }
   }
 
   try {
@@ -13965,7 +13996,7 @@ function renderPots() {
     restoreCard.appendChild(restoreTitle);
 
     const restoreInfo = document.createElement('p');
-    restoreInfo.textContent = 'Wähle eine JSON-Backup-Datei aus und starte danach den Import. Auf dem Laptop ist das zuverlässiger als ein Sofort-Import direkt nach der Dateiauswahl.';
+    restoreInfo.textContent = 'Wähle deine JSON-Sicherung aus und starte den Import. Alte, nicht mehr benötigte Versionskopien werden automatisch aufgeräumt; dein bisheriger Stand bleibt zusätzlich als Rückfall-Sicherung erhalten.';
     restoreCard.appendChild(restoreInfo);
 
     const fileRow = document.createElement('div');
@@ -14006,9 +14037,15 @@ function renderPots() {
         statusTimeout = setTimeout(() => {
           statusBox.hidden = true;
           statusBox.textContent = '';
-        }, 4000);
+        }, 12000);
       }
     };
+
+    if (pendingBackupImportNotice) {
+      const notice = pendingBackupImportNotice;
+      pendingBackupImportNotice = null;
+      setInlineStatus(notice.message, notice.kind);
+    }
 
     const importBtn = document.createElement('button');
     importBtn.textContent = 'Backup jetzt importieren';
@@ -14039,6 +14076,9 @@ function renderPots() {
       importBtn.textContent = 'Import läuft ...';
       const reader = new FileReader();
       reader.onload = (ev) => {
+        let previousStatePayload = '';
+        let importStarted = false;
+        let importCommitted = false;
         const resetImportButton = () => {
           importBtn.disabled = false;
           importBtn.textContent = 'Backup jetzt importieren';
@@ -14068,7 +14108,16 @@ function renderPots() {
               safeImportedState[key] = importedState[key];
             }
           });
+          previousStatePayload = JSON.stringify(state);
+          cleanupLegacyStateStorageKeys();
+          try {
+            localStorage.setItem('budgetStateBeforeImport', previousStatePayload);
+            localStorage.setItem('budgetStateBeforeImportAt', new Date().toISOString());
+          } catch (recoveryErr) {
+            console.warn('Rückfall-Sicherung vor dem Import konnte nicht gespeichert werden', recoveryErr);
+          }
           state = Object.assign(JSON.parse(JSON.stringify(defaultState)), safeImportedState);
+          importStarted = true;
           sanitizeStateTextValues(state);
           const importedSelectedMonth = state.appMeta && isMonthKey(state.appMeta.selectedMonth) ? state.appMeta.selectedMonth : '';
           const importWarningsInternal = [];
@@ -14122,6 +14171,7 @@ function renderPots() {
 
           const saved = saveState();
           if (!saved) throw new Error('Die Daten konnten nach dem Import nicht gespeichert werden.');
+          importCommitted = true;
           // Zusätzlich in die relevanten Versionsschlüssel schreiben, damit ein Reload nicht wieder einen alten Stand nimmt.
           try {
             const payload = JSON.stringify(state);
@@ -14130,20 +14180,39 @@ function renderPots() {
             console.warn('Zusatzspeicherung nach Import fehlgeschlagen', storeErr);
           }
 
-          const importCheckItems = getDataCheckItems();
-          const importWarnings = importCheckItems.filter((item) => item.kind === 'warning' || item.kind === 'danger').length;
+          let importWarnings = 0;
+          try {
+            const importCheckItems = getDataCheckItems();
+            importWarnings = importCheckItems.filter((item) => item.kind === 'warning' || item.kind === 'danger').length;
+          } catch (checkErr) {
+            console.warn('Datencheck nach Import übersprungen', checkErr);
+            importWarningsInternal.push('Datencheck');
+          }
           importInput.value = '';
           selectedFile = null;
-          importBtn.textContent = 'Import erfolgreich';
+          const importedPostCount = (state.commonCosts?.length || 0)
+            + (state.personalCosts?.length || 0)
+            + (state.bufferExpenses?.length || 0)
+            + (state.taxRefunds?.length || 0);
           const extra = importWarningsInternal.length ? ` (${importWarningsInternal.length} technische Normalisierung(en) übersprungen, Daten wurden trotzdem übernommen.)` : '';
-          setInlineStatus(importWarnings > 0 ? `Import erfolgreich. ${importWarnings} Hinweis(e) im Datencheck gefunden.${extra}` : `Import erfolgreich. Datencheck ohne kritische Warnungen.${extra}`, importWarnings > 0 || importWarningsInternal.length ? 'warning' : 'success');
+          const summary = `${state.persons?.length || 0} Personen, ${importedPostCount} Posten und ${state.debts?.length || 0} Schulden wurden gespeichert.`;
+          pendingBackupImportNotice = {
+            message: importWarnings > 0
+              ? `Import abgeschlossen: ${summary} ${importWarnings} Hinweis(e) im Datencheck gefunden.${extra}`
+              : `Import abgeschlossen: ${summary} Die Sicherung bleibt auch nach einem Neuladen erhalten.${extra}`,
+            kind: importWarnings > 0 || importWarningsInternal.length ? 'warning' : 'success'
+          };
           render();
-          setTimeout(() => {
-            const saveLink = document.querySelector('[data-section="save"]');
-            if (saveLink) saveLink.click();
-          }, 0);
           return;
         } catch (err) {
+          if (importStarted && !importCommitted && previousStatePayload) {
+            try {
+              state = JSON.parse(previousStatePayload);
+              writeStatePayloadToStorage(previousStatePayload);
+            } catch (rollbackErr) {
+              console.error('Stand vor dem Import konnte nicht vollständig wiederhergestellt werden', rollbackErr);
+            }
+          }
           console.error('Backup-Import fehlgeschlagen', err);
           setInlineStatus('Fehler beim Import: ' + err.message, 'error');
           resetImportButton();

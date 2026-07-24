@@ -4217,7 +4217,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
-/* Developer Beta 2.40 - globaler Schnellzugriff und Fehlerkorrekturen */
+/* Developer Beta 2.41 - zuverlässiger Backup-Import und Speicherbereinigung */
 .runtime-issue-card {
   border: 1px solid rgba(220, 38, 38, 0.28) !important;
   background:
