@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.43
+ * Haushaltsplaner Developer Beta 2.44
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.43';
+  const APP_VERSION = '2.44';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -8491,9 +8491,9 @@
       accent: 'mint'
     }));
     kpiGrid.appendChild(createKpi({
-      label: 'Soll Gemeinschaftskonto',
-      value: euro(commonAccountTarget.dueTotal),
-      hint: `Noch offen ${euro(commonAccountTarget.openTotal)} · monatlich einzuzahlen ${euro(totalCommonRounded)}`,
+      label: 'Diesen Monat gemeinsam einzahlen',
+      value: euro(commonAccountTarget.monthlyTarget),
+      hint: `Jetzt noch für offene Abbuchungen nötig: ${euro(commonAccountTarget.openTotal)}`,
       icon: '👥',
       accent: 'blue'
     }));
@@ -9855,25 +9855,38 @@ function renderCommon() {
     card.appendChild(header);
 
     const target = getCommonAccountTargetSummary(currentMonth);
-    const shareMapping = target.shareMapping;
+    const contributionDetails = computeCommonAccountDetails(currentMonth);
 
     const targetCard = document.createElement('section');
     targetCard.className = 'common-account-target-card';
     targetCard.appendChild(createUiEl('div', 'common-account-target-eyebrow', `Gemeinschaftskonto · ${formatMonthLabel(currentMonth)}`));
-    targetCard.appendChild(createUiEl('h2', 'common-account-target-title', 'Soll auf dem Gemeinschaftskonto'));
-    targetCard.appendChild(createUiEl('div', 'common-account-target-value', euro(target.dueTotal)));
-    targetCard.appendChild(createUiEl('p', 'common-account-target-copy', 'Dieser Betrag muss zum Monatsstart für alle fälligen gemeinsamen Abbuchungen bereitliegen.'));
+    targetCard.appendChild(createUiEl('h2', 'common-account-target-title', 'Diesen Monat einzuzahlen'));
+    targetCard.appendChild(createUiEl('div', 'common-account-target-value', euro(target.monthlyTarget)));
+    targetCard.appendChild(createUiEl('p', 'common-account-target-copy', 'Diesen Betrag zahlt ihr im ausgewählten Monat auf das Gemeinschaftskonto. Monatsanteile für spätere jährliche oder vierteljährliche Zahlungen sind bereits enthalten.'));
+    const currentNeed = document.createElement('div');
+    currentNeed.className = `common-current-need ${target.openTotal > 0 ? 'is-open' : 'is-done'}`;
+    currentNeed.appendChild(createUiEl('div', 'common-current-need-label', 'Jetzt noch auf dem Konto benötigt'));
+    currentNeed.appendChild(createUiEl('strong', 'common-current-need-value', euro(target.openTotal)));
+    currentNeed.appendChild(createUiEl(
+      'div',
+      'small muted',
+      target.openTotal > 0
+        ? 'Summe der noch offenen gemeinsamen Abbuchungen. Der Wert sinkt automatisch bei „Bezahlt“.'
+        : 'Alle in diesem Monat fälligen gemeinsamen Abbuchungen sind als bezahlt markiert.'
+    ));
+    targetCard.appendChild(currentNeed);
     targetCard.appendChild(createSummaryMetrics([
       {
-        label: 'Noch nicht bezahlt',
-        value: euro(target.openTotal),
-        kind: target.openTotal > 0 ? 'warning' : 'success',
-        hint: target.paidTotal > 0 ? `${euro(target.paidTotal)} bereits als bezahlt markiert` : 'Noch keine Abbuchung als bezahlt markiert'
+        label: 'Bereits eingezahlt',
+        value: euro(contributionDetails.contributionsPaid),
+        kind: contributionDetails.contributionsPaid > 0 ? 'success' : '',
+        hint: 'Von euren Monatsanteilen'
       },
       {
-        label: 'Monatlich einzuzahlen',
-        value: euro(target.monthlyTarget),
-        hint: 'Enthält automatisch die Monatsanteile für spätere Zahlungen'
+        label: 'Noch einzuzahlen',
+        value: euro(contributionDetails.contributionsOpen),
+        kind: contributionDetails.contributionsOpen > 0 ? 'warning' : 'success',
+        hint: contributionDetails.contributionsOpen > 0 ? 'Noch nicht als eingezahlt markiert' : 'Alle Monatsanteile sind erledigt'
       }
     ]));
     card.appendChild(targetCard);
@@ -9883,15 +9896,39 @@ function renderCommon() {
     distTitle.textContent = 'Eure Monatsanteile';
     distBox.appendChild(distTitle);
     const distTable = document.createElement('table');
-    distTable.className = 'list-table';
+    distTable.className = 'list-table common-contribution-table';
     const distHead = document.createElement('thead');
-    distHead.innerHTML = '<tr><th>Person</th><th>Beitrag</th></tr>';
+    distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Eingezahlt?</th></tr>';
     distTable.appendChild(distHead);
     const distBody = document.createElement('tbody');
-    state.persons.forEach((p) => {
+    contributionDetails.persons.forEach((rowData) => {
       const row = document.createElement('tr');
-      const val = shareMapping[p.id] || 0;
-      row.innerHTML = `<td>${p.name}</td><td>${euro(val)}</td>`;
+      const nameCell = document.createElement('td');
+      nameCell.textContent = rowData.person.name;
+      const amountCell = document.createElement('td');
+      amountCell.textContent = euro(rowData.plannedAmount);
+      if (rowData.paid && Math.abs(Number(rowData.plannedAmount || 0) - Number(rowData.paidAmount || 0)) > 0.005) {
+        amountCell.appendChild(createUiEl('div', 'small muted', `${euro(rowData.paidAmount)} bereits eingezahlt`));
+      }
+      const statusCell = document.createElement('td');
+      statusCell.className = 'common-contribution-status';
+      const complete = Number(rowData.openAmount || 0) <= 0.005;
+      const statusButton = document.createElement('button');
+      statusButton.type = 'button';
+      statusButton.className = complete ? 'success' : 'primary';
+      statusButton.textContent = complete ? 'Eingezahlt ✓' : (rowData.paid ? 'Rest als eingezahlt' : 'Als eingezahlt markieren');
+      statusButton.title = complete
+        ? 'Klicken, um die Markierung für diesen Monat zurückzusetzen.'
+        : 'Markiert den Monatsbeitrag als eingezahlt. Es wird kein Kontostand verändert.';
+      statusButton.addEventListener('click', () => {
+        setCommonAccountContributionPaid(currentMonth, rowData.person.id, !complete, { amount: rowData.plannedAmount });
+        saveState();
+        render();
+      });
+      statusCell.appendChild(statusButton);
+      row.appendChild(nameCell);
+      row.appendChild(amountCell);
+      row.appendChild(statusCell);
       distBody.appendChild(row);
     });
     distTable.appendChild(distBody);
@@ -9899,7 +9936,7 @@ function renderCommon() {
     card.appendChild(distBox);
     const paymentHint = document.createElement('p');
     paymentHint.className = 'small muted';
-    paymentHint.textContent = 'Die App fragt keinen echten Kontostand ab und zeigt nur automatisch berechnete Sollbeträge. „Bezahlt“ ändert nur den Haushaltsstatus. Verknüpfte Rücklagen werden beim Markieren einmalig zurückgelegt.';
+    paymentHint.textContent = 'Ein echter Kontostand wird nicht abgefragt. „Jetzt noch benötigt“ wird ausschließlich aus den offenen gemeinsamen Abbuchungen berechnet und passt sich bei „Bezahlt“ automatisch an.';
     card.appendChild(paymentHint);
     card.appendChild(makeSearchFilterBar(commonSearch, commonFilter, (v) => { commonSearch = v; }, (v) => { commonFilter = v; }, [['all','Alle'],['due','Fällig'],['open','Offen'],['paid','Bezahlt'],['linked','Mit Schuld verknüpft'],['reserve','Mit Rücklage']]));
 

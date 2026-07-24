@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Developer Beta 2.43
+  Haushaltsplaner Developer Beta 2.44
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,9 +12,9 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
-  Aktualisierung Developer&nbsp;Beta&nbsp;2.43: Das Gemeinschaftskonto zeigt
-  nur noch den automatisch berechneten Sollbetrag. Echte Kontostände werden
-  weder abgefragt noch angezeigt.
+  Aktualisierung Developer&nbsp;Beta&nbsp;2.44: Das Gemeinschaftskonto zeigt
+  den im ausgewählten Monat einzuzahlenden Betrag und den aktuell noch für
+  offene Abbuchungen benötigten Betrag. Beide Zahlungsstände passen sich an.
 -->
 
 <!DOCTYPE html>
@@ -23,12 +23,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
-    <title>Haushaltsplaner Developer Beta 2.43</title>
-    <link rel="stylesheet" href="style.css?v=2.43">
-    <link rel="manifest" href="manifest.json?v=2.43">
+    <title>Haushaltsplaner Developer Beta 2.44</title>
+    <link rel="stylesheet" href="style.css?v=2.44">
+    <link rel="manifest" href="manifest.json?v=2.44">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.43">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.43">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.44">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.44">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -103,7 +103,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.43 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.44 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -131,9 +131,9 @@
           <section id="buffer" class="tab-section"></section>
           <section id="taxrefund" class="tab-section"></section>
         </main>
-        <footer>Developer&nbsp;Beta&nbsp;2.43</footer>
+        <footer>Developer&nbsp;Beta&nbsp;2.44</footer>
       </div>
     </div>
-    <script src="script.js?v=2.43"></script>
+    <script src="script.js?v=2.44"></script>
   </body>
 </html>

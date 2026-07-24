@@ -4265,7 +4265,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
-/* Developer Beta 2.43 - Gemeinschaftskonto nur noch als Sollbetrag */
+/* Developer Beta 2.44 - monatliche Einzahlung statt Soll-Kontostand */
 .common-account-target-card {
   margin: 1rem 0;
   padding: clamp(1rem, 3vw, 1.45rem);
@@ -4311,9 +4311,50 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   margin: 0;
 }
 
+.common-current-need {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(69, 111, 87, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.common-current-need.is-open {
+  border-color: rgba(217, 119, 6, 0.22);
+  background: rgba(255, 251, 235, 0.88);
+}
+
+.common-current-need.is-done {
+  border-color: rgba(34, 197, 94, 0.2);
+  background: rgba(240, 253, 244, 0.88);
+}
+
+.common-current-need-label {
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.common-current-need-value {
+  color: #173628;
+  font-size: clamp(1.5rem, 5vw, 2.1rem);
+  line-height: 1.1;
+}
+
+.common-contribution-status button {
+  min-width: 170px;
+}
+
 @media (max-width: 640px) {
   .common-account-target-card {
     border-radius: 20px;
+  }
+
+  .common-contribution-status button {
+    width: 100%;
+    min-width: 0;
   }
 }
 
