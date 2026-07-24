@@ -4265,6 +4265,58 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
+/* Developer Beta 2.43 - Gemeinschaftskonto nur noch als Sollbetrag */
+.common-account-target-card {
+  margin: 1rem 0;
+  padding: clamp(1rem, 3vw, 1.45rem);
+  overflow: hidden;
+  border: 1px solid rgba(69, 111, 87, 0.18);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 94% 8%, rgba(142, 182, 155, 0.24), transparent 34%),
+    linear-gradient(145deg, rgba(244, 250, 246, 0.98), rgba(255, 255, 255, 0.98));
+}
+
+.common-account-target-eyebrow {
+  margin-bottom: 0.3rem;
+  color: #456f57;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.common-account-target-title {
+  margin: 0;
+  color: #1f3f31;
+  font-size: clamp(1.25rem, 4vw, 1.8rem);
+}
+
+.common-account-target-value {
+  margin: 0.3rem 0 0.15rem;
+  color: #173628;
+  font-size: clamp(2.4rem, 8vw, 4rem);
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.common-account-target-copy {
+  max-width: 680px;
+  margin: 0.65rem 0 1rem;
+  color: var(--muted-color, #64748b);
+}
+
+.common-account-target-card .metric-grid {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .common-account-target-card {
+    border-radius: 20px;
+  }
+}
+
 /* Developer Beta 2.41 - zuverlässiger Backup-Import und Speicherbereinigung */
 .runtime-issue-card {
   border: 1px solid rgba(220, 38, 38, 0.28) !important;

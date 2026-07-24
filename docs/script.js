@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.42
+ * Haushaltsplaner Developer Beta 2.43
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.42';
+  const APP_VERSION = '2.43';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -8367,6 +8367,7 @@
     overviewSection.innerHTML = '';
 
     const details = computeMonthDetails(currentMonth);
+    const commonAccountTarget = getCommonAccountTargetSummary(currentMonth);
     const personsData = details.personsData;
     const totalIncome = details.totalIncome;
     const totalCommonRounded = details.totalCommonRounded;
@@ -8490,9 +8491,9 @@
       accent: 'mint'
     }));
     kpiGrid.appendChild(createKpi({
-      label: 'Gemeinsame Kosten',
-      value: euro(totalCommonRounded),
-      hint: `${percent(totalCommonRounded, totalIncome)} des Nettoeinkommens`,
+      label: 'Soll Gemeinschaftskonto',
+      value: euro(commonAccountTarget.dueTotal),
+      hint: `Noch offen ${euro(commonAccountTarget.openTotal)} · monatlich einzuzahlen ${euro(totalCommonRounded)}`,
       icon: '👥',
       accent: 'blue'
     }));
@@ -9799,6 +9800,38 @@
     sharedAccountSection.appendChild(card);
   }
 
+  function getCommonAccountTargetSummary(monthKey = currentMonth) {
+    let monthlyRaw = 0;
+    let dueTotal = 0;
+    let paidTotal = 0;
+
+    (state.commonCosts || []).forEach((cost) => {
+      if (isPostActiveInMonth(cost, monthKey)) {
+        monthlyRaw += Number(getCommonMonthlyShare(cost, monthKey) || 0);
+      }
+      if (isDue(cost, monthKey)) {
+        const amount = Number(getEffectiveAmountForMonth(cost, monthKey) || 0);
+        dueTotal += amount;
+        if (isPostPaidForMonth(cost, monthKey)) paidTotal += amount;
+      }
+    });
+
+    const shareMapping = computeRoundedCommonShares(
+      monthlyRaw,
+      state.persons.map((person) => ({ person, income: getPersonNet(person, monthKey) })),
+      monthKey
+    );
+    const monthlyTarget = roundMoney(Object.values(shareMapping).reduce((sum, value) => sum + Number(value || 0), 0));
+
+    return {
+      dueTotal: roundMoney(dueTotal),
+      paidTotal: roundMoney(paidTotal),
+      openTotal: roundMoney(Math.max(dueTotal - paidTotal, 0)),
+      monthlyTarget,
+      shareMapping
+    };
+  }
+
   // Rendert den Bereich „Gemeinsame Kosten“
 
 function renderCommon() {
@@ -9821,30 +9854,29 @@ function renderCommon() {
     header.appendChild(addBtn);
     card.appendChild(header);
 
-    let totalMonthly = 0;
-    let dueSum = 0;
-    let paidSum = 0;
-    state.commonCosts.forEach((c) => {
-      if (isPostActiveInMonth(c, currentMonth)) totalMonthly += getCommonMonthlyShare(c, currentMonth);
-      if (isDue(c, currentMonth)) {
-        dueSum += getEffectiveAmountForMonth(c, currentMonth);
-        if (c.paidMonths && c.paidMonths.includes(currentMonth)) paidSum += getEffectiveAmountForMonth(c, currentMonth);
-      }
-    });
-    const shareMapping = computeRoundedCommonShares(
-      totalMonthly,
-      state.persons.map((p) => ({ person: p, income: getPersonNet(p, currentMonth) })),
-      currentMonth
-    );
-    const roundedSum = Object.values(shareMapping).reduce((sum, val) => sum + val, 0);
+    const target = getCommonAccountTargetSummary(currentMonth);
+    const shareMapping = target.shareMapping;
 
-    card.appendChild(createSummaryMetrics([
-      { label: 'Monatlicher Bedarf', value: `${euro(totalMonthly)}` },
-      { label: 'Monatsanteile gerundet', value: `${euro(roundedSum)}` },
-      { label: 'Diesen Monat fällig', value: `${euro(dueSum)}`, kind: dueSum > 0 ? 'warning' : '' },
-      { label: 'Bereits markiert', value: `${euro(paidSum)}`, kind: paidSum > 0 ? 'success' : '' },
-      { label: 'Noch offen', value: `${euro((dueSum - paidSum))}`, kind: dueSum - paidSum > 0 ? 'danger' : 'success' }
+    const targetCard = document.createElement('section');
+    targetCard.className = 'common-account-target-card';
+    targetCard.appendChild(createUiEl('div', 'common-account-target-eyebrow', `Gemeinschaftskonto · ${formatMonthLabel(currentMonth)}`));
+    targetCard.appendChild(createUiEl('h2', 'common-account-target-title', 'Soll auf dem Gemeinschaftskonto'));
+    targetCard.appendChild(createUiEl('div', 'common-account-target-value', euro(target.dueTotal)));
+    targetCard.appendChild(createUiEl('p', 'common-account-target-copy', 'Dieser Betrag muss zum Monatsstart für alle fälligen gemeinsamen Abbuchungen bereitliegen.'));
+    targetCard.appendChild(createSummaryMetrics([
+      {
+        label: 'Noch nicht bezahlt',
+        value: euro(target.openTotal),
+        kind: target.openTotal > 0 ? 'warning' : 'success',
+        hint: target.paidTotal > 0 ? `${euro(target.paidTotal)} bereits als bezahlt markiert` : 'Noch keine Abbuchung als bezahlt markiert'
+      },
+      {
+        label: 'Monatlich einzuzahlen',
+        value: euro(target.monthlyTarget),
+        hint: 'Enthält automatisch die Monatsanteile für spätere Zahlungen'
+      }
     ]));
+    card.appendChild(targetCard);
     const distBox = document.createElement('div');
     distBox.className = 'sub-card';
     const distTitle = document.createElement('h3');
@@ -9867,7 +9899,7 @@ function renderCommon() {
     card.appendChild(distBox);
     const paymentHint = document.createElement('p');
     paymentHint.className = 'small muted';
-    paymentHint.textContent = 'Bezahlt markiert nur den Haushaltsstatus. Verknüpfte Rücklagen werden beim Markieren einmalig zurückgelegt. Nur Rücklagen-Posten, die hier bei Gemeinsame Kosten stehen, zählen in den gemeinsamen Monatsanteil.';
+    paymentHint.textContent = 'Die App fragt keinen echten Kontostand ab und speichert keinen Bankstand. „Bezahlt“ ändert nur den Haushaltsstatus. Verknüpfte Rücklagen werden beim Markieren einmalig zurückgelegt.';
     card.appendChild(paymentHint);
     card.appendChild(makeSearchFilterBar(commonSearch, commonFilter, (v) => { commonSearch = v; }, (v) => { commonFilter = v; }, [['all','Alle'],['due','Fällig'],['open','Offen'],['paid','Bezahlt'],['linked','Mit Schuld verknüpft'],['reserve','Mit Rücklage']]));
 
