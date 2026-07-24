@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.44
+ * Haushaltsplaner Developer Beta 2.45
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.44';
+  const APP_VERSION = '2.45';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -2860,9 +2860,13 @@
       if (options.fullPayoffOnly) return null;
     }
 
+    // Für die Weitergabe einer ausgelaufenen Standardrate zählt immer die kleinste
+    // passende offene Ratenschuld. Eine kurze Restlaufzeit darf den Vorschlag nicht
+    // unterdrücken oder hinter eine größere Schuld verschieben.
+    if (options.fallbackToShortTerm) return candidates[0];
     const longRunning = candidates.filter((debt) => !isShortTermSnowballTarget(debt, month, snowballConfig.shortTermSkipMonths));
     if (longRunning.length) return longRunning[0];
-    return options.fallbackToShortTerm ? candidates[0] : null;
+    return null;
   }
 
   function getDynamicSnowballExtraForMonth(monthKey, monthDetailsFn) {
@@ -2909,6 +2913,30 @@
     };
   }
 
+  function getDebtFreedStandardRate(debt, completedMonth) {
+    if (!debt || debt.paymentType !== 'installment' || !isMonthKey(completedMonth)) return 0;
+    return roundMoney(Math.max(0, Number(getDebtRateForMonth(debt, completedMonth) || debt.monthlyRate || 0)));
+  }
+
+  function getHistoricalDebtRollover(startMonth) {
+    if (!isMonthKey(startMonth)) return 0;
+    return roundMoney((state.debts || []).reduce((sum, debt) => {
+      ensureDebtConfig(debt);
+      const completedMonth = getDebtCompletedMonth(debt);
+      if (!completedMonth || monthDiff(completedMonth, startMonth) <= 0) return sum;
+      return sum + getDebtFreedStandardRate(debt, completedMonth);
+    }, 0));
+  }
+
+  function getDebtStandardRatesCompletedInMonth(monthKey) {
+    if (!isMonthKey(monthKey)) return 0;
+    return roundMoney((state.debts || []).reduce((sum, debt) => {
+      ensureDebtConfig(debt);
+      if (getDebtCompletedMonth(debt) !== monthKey) return sum;
+      return sum + getDebtFreedStandardRate(debt, monthKey);
+    }, 0));
+  }
+
   function buildSnowballPlan(startMonth = currentMonth, maxMonths = 72, options = {}) {
     const sourceDebts = (state.debts || []).map((debt) => {
       ensureDebtConfig(debt);
@@ -2934,10 +2962,10 @@
     const noRate = sourceDebts.filter((debt) => debt.excludeReason && debt.paymentType !== 'one_time');
     const scheduledOneTime = sourceDebts.filter((debt) => debt.paymentType === 'one_time' && debt.open > 0 && isMonthKey(debt.scheduledMonth));
     const active = sourceDebts.filter((debt) => debt.snowballEligible);
-    const monthDetailsFn = typeof options.monthDetailsFn === 'function' ? options.monthDetailsFn : computeMonthDetails;
     const rows = [];
     const events = [];
-    let rollover = 0;
+    const rolloverStart = getHistoricalDebtRollover(startMonth);
+    let rollover = rolloverStart;
     let month = startMonth;
     let debtFreeMonth = '';
 
@@ -2956,6 +2984,14 @@
       const dueDebts = active
         .filter((debt) => debt.open > 0 && monthDiff(debt.nextDueMonth, month) >= 0)
         .sort((a, b) => a.open - b.open || a.name.localeCompare(b.name));
+      // Der gesamte Schulden-Pool bleibt erhalten: laufende Standardraten plus bereits
+      // in früheren Monaten frei gewordene Standardraten. Eine kleinere Schlussrate
+      // reduziert diesen reservierten Monatsbetrag nicht.
+      const debtPool = roundMoney(
+        rollover
+        + dueDebts.reduce((sum, debt) => sum + Math.max(0, Number(debt.rate || 0)), 0)
+        + (i === 0 ? getDebtStandardRatesCompletedInMonth(month) : 0)
+      );
 
       dueDebts.forEach((debt) => {
         const pay = Math.min(debt.open, debt.rate);
@@ -2968,16 +3004,15 @@
         if (debt.open <= 0.005) {
           debt.open = 0;
           newlyFreed += debt.rate;
-          events.push({ month, type: 'completed', sourceDebt: debt.name, amount: debt.rate, targetDebt: '', transferMonth: nextMonth(month), text: `${debt.name} abbezahlt – ab ${formatMonthLabel(nextMonth(month))} gehen ${euro(debt.rate)} auf die kleinste offene Schuld.` });
         }
       });
 
       if (rollover > 0) {
         let extraBudget = rollover;
         while (extraBudget > 0.005) {
-          const target = chooseSnowballTarget(active, month, extraBudget, { allowFullPayoff: false, fallbackToShortTerm: false });
+          const target = chooseSnowballTarget(active, month, extraBudget, { allowFullPayoff: false, fallbackToShortTerm: true });
           if (!target) {
-            notes.push(`${euro(extraBudget)} frei werdende Rate geparkt: übrige Ziele sind in ≤ ${snowballConfig.shortTermSkipMonths} Monaten erledigt.`);
+            notes.push(`${euro(extraBudget)} aus abgeschlossenen Standardraten bleibt frei, weil keine passende Ratenschuld offen ist.`);
             break;
           }
           const pay = Math.min(target.open, extraBudget);
@@ -2989,56 +3024,12 @@
           if (target.open <= 0.005) {
             target.open = 0;
             newlyFreed += target.rate;
-            events.push({
-              month,
-              type: 'completed_by_snowball',
-              sourceDebt: target.name,
-              amount: target.rate,
-              targetDebt: '',
-              transferMonth: nextMonth(month),
-              text: `${target.name} durch Schneeball abbezahlt – ab ${formatMonthLabel(nextMonth(month))} kommen ${euro(target.rate)} zusätzlich dazu.`
-            });
-          }
-        }
-      }
-
-      const dynamicInfo = getDynamicSnowballExtraForProjectedMonth(month, base + extra, monthDetailsFn);
-      const dynamicExtra = Number(dynamicInfo.amount || 0);
-      let dynamicExtraUsed = 0;
-      if (dynamicExtra > 0) {
-        let extraBudget = dynamicExtra;
-        notes.push(`frei nach simulierten Schulden: ${euro(Number(dynamicInfo.projectedFreeBeforeDynamic || 0))}`);
-        while (extraBudget > 0.005) {
-          const target = chooseSnowballTarget(active, month, extraBudget, { allowFullPayoff: true, fullPayoffOnly: true, fallbackToShortTerm: false });
-          if (!target) {
-            notes.push(`${euro(extraBudget)} Zusatz frei, aber keine Schuld kann damit vollständig getilgt werden.`);
-            break;
-          }
-          const pay = target.open;
-          target.open = Math.max(0, target.open - pay);
-          extra += pay;
-          dynamicExtraUsed += pay;
-          extraBudget -= pay;
-          notes.push(`${target.name} +${euro(pay)} dynamisch`);
-          payments.push({ type: 'dynamic', debt: target.name, amount: pay, originalRate: target.rate, remainingAfter: Math.max(0, target.open), completed: target.open <= 0.005, note: target.open <= 0.005 ? 'durch Zusatztilgung erledigt' : 'dynamische Zusatztilgung' });
-          if (target.open <= 0.005) {
-            target.open = 0;
-            newlyFreed += target.rate;
-            events.push({
-              month,
-              type: 'completed_by_dynamic_extra',
-              sourceDebt: target.name,
-              amount: target.rate,
-              targetDebt: '',
-              transferMonth: nextMonth(month),
-              text: `${target.name} durch dynamische Zusatztilgung abbezahlt – ab ${formatMonthLabel(nextMonth(month))} werden ${euro(target.rate)} frei.`
-            });
           }
         }
       }
 
       const remaining = active.reduce((sum, debt) => sum + Math.max(0, debt.open), 0);
-      const nextTarget = chooseSnowballTarget(active, nextMonth(month), rollover + newlyFreed, { allowFullPayoff: false, fallbackToShortTerm: false });
+      const nextTarget = chooseSnowballTarget(active, nextMonth(month), rollover + newlyFreed, { allowFullPayoff: false, fallbackToShortTerm: true });
       const rolloverNext = rollover + newlyFreed;
       const freedThisMonth = active
         .filter((debt) => debt.open === 0 && debt.rate > 0)
@@ -3055,7 +3046,7 @@
           text: `${entry.sourceDebt} ausgelaufen – ${euro(entry.amount)} gehen ab ${formatMonthLabel(entry.transferMonth)} auf ${entry.targetDebt || 'keine weitere Schuld'}.`
         });
       });
-      rows.push({ month, base, extra, dynamicExtra: dynamicExtraUsed || 0, total: base + extra, rolloverNext, remaining, targetNext: nextTarget ? nextTarget.name : '', freedTransfers: freedThisMonth, payments: payments.slice(), notes: notes.slice(0, 5).join(' · ') });
+      rows.push({ month, base, extra, dynamicExtra: 0, total: base + extra, pool: debtPool, rolloverNext, remaining, targetNext: nextTarget ? nextTarget.name : '', freedTransfers: freedThisMonth, payments: payments.slice(), notes: notes.slice(0, 5).join(' · ') });
       if (remaining <= 0.005) {
         debtFreeMonth = month;
         break;
@@ -3063,7 +3054,37 @@
       rollover += newlyFreed;
       month = nextMonth(month);
     }
-    return { rows, events, noRate, scheduledOneTime, debtFreeMonth };
+    return { rows, events, noRate, scheduledOneTime, debtFreeMonth, rolloverStart };
+  }
+
+  function getDebtRolloverSuggestionsForMonth(monthKey, plan = null) {
+    if (!isMonthKey(monthKey)) return [];
+    const activePlan = plan || buildSnowballPlan(monthKey, 120);
+    const row = (activePlan.rows || []).find((entry) => entry.month === monthKey);
+    const suggestions = (row && Array.isArray(row.freedTransfers) ? row.freedTransfers : [])
+      .map((entry) => ({ ...entry, status: 'planned' }));
+    const knownSources = new Set(suggestions.map((entry) => entry.sourceDebt));
+    const nextPlan = buildSnowballPlan(nextMonth(monthKey), 1);
+    const nextSnowballPayment = ((nextPlan.rows || [])[0]?.payments || [])
+      .find((payment) => payment.type === 'snowball');
+
+    (state.debts || []).forEach((debt) => {
+      ensureDebtConfig(debt);
+      if (debt.paymentType !== 'installment') return;
+      if (getDebtCompletedMonth(debt) !== monthKey) return;
+      if (knownSources.has(debt.name)) return;
+      const amount = getDebtFreedStandardRate(debt, monthKey);
+      if (!(amount > 0)) return;
+      suggestions.push({
+        month: monthKey,
+        sourceDebt: debt.name || 'Schuld',
+        amount,
+        targetDebt: nextSnowballPayment ? nextSnowballPayment.debt : '',
+        transferMonth: nextMonth(monthKey),
+        status: 'completed'
+      });
+    });
+    return suggestions;
   }
 
   function findCriticalMonths(startMonth = currentMonth) {
@@ -9031,13 +9052,13 @@
     const projectionMap = buildDebtForecastProjection(currentMonth, forecastHorizon, { monthDetailsFn: hasScenario ? computeMonthDetailsWithScenario : computeMonthDetails });
     const debtInfo = document.createElement('div');
     debtInfo.className = 'notice success';
-    debtInfo.textContent = 'Vorschau und Simulation berücksichtigen das Auslaufen der Schulden, die 6-Monats-Schutzregel und die dynamische Zusatztilgung. Die sichere freie Summe wird jeden Monat neu mit den dann noch offenen Schulden und offenen sonstigen Ausgaben berechnet; erst ab mindestens 600 € frei wird der Betrag oberhalb von 500 € zusätzlich investiert.';
+    debtInfo.textContent = 'Die Vorschau hält den heutigen Schulden-Pool fest: Jede Standardrate bleibt bis zur Schlusszahlung bei ihrer Schuld und wechselt erst im Folgemonat auf die kleinste passende offene Ratenschuld. Zusätzliche freie Monatsbeträge werden nicht automatisch eingesetzt.';
     card.appendChild(debtInfo);
     card.appendChild(renderForecastTimelineCard(months, hasScenario, projectionMap));
 
     const table = document.createElement('table');
     table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Monat</th><th>Netto gesamt</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon Schneeball</th><th>dynamisch extra</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Sicher verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Monat</th><th>Netto gesamt</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon übernommene Raten</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Sicher verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
     const tbody = document.createElement('tbody');
     months.forEach(({ key, label }) => {
       const rawDetails = hasScenario ? computeMonthDetailsWithScenario(key) : computeMonthDetails(key);
@@ -9045,7 +9066,7 @@
       const free = details.free;
       const distributable = details.distributable;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro((details.debtDynamicExtra || 0))}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
+      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -9195,7 +9216,7 @@
     receipt.appendChild(createReceiptRow('Gemeinsame Kosten', `− ${euro(details.totalCommonRounded)}`));
     receipt.appendChild(createReceiptRow('Persönliche Ausgaben', `− ${euro(details.totalPersonal)}`));
     receipt.appendChild(createReceiptRow('Davon Schulden in den Kosten', euro(details.debtPlanned || 0)));
-    receipt.appendChild(createReceiptRow('davon Schneeball/Extra', euro((details.debtSnowballExtra || 0) + (details.debtDynamicExtra || 0))));
+    receipt.appendChild(createReceiptRow('davon übernommene Standardraten', euro(details.debtSnowballExtra || 0)));
     receipt.appendChild(createReceiptRow('Sonstige bezahlt', `− ${euro(details.miscPaid)}`));
     receipt.appendChild(createReceiptRow('Sonstige offen geplant', `− ${euro(details.miscOpen || 0)}`));
     receipt.appendChild(createReceiptRow('Sicher verfügbar', euro(details.free), details.free >= 0 ? 'success' : 'danger'));
@@ -11982,11 +12003,6 @@ function showPersonalEditor(personId, editPost) {
     const firstRow = rows[0] || null;
     const monthsToDebtFree = debtFreeMonth ? Math.max(0, monthDiff(monthKey, debtFreeMonth)) + 1 : null;
     const totalOpen = (state.debts || []).reduce((sum, debt) => sum + Math.max(0, Number(debt.amountOpen || 0)), 0);
-    const totalBase = rows.reduce((sum, row) => sum + Number(row.base || 0), 0);
-    const totalSnowball = rows.reduce((sum, row) => sum + Math.max(0, Number(row.extra || 0) - Number(row.dynamicExtra || 0)), 0);
-    const totalDynamic = rows.reduce((sum, row) => sum + Number(row.dynamicExtra || 0), 0);
-    const nextDynamic = rows.find((row) => Number(row.dynamicExtra || 0) > 0);
-    const nextCompleted = (plan.events || []).find((event) => String(event.type || '').includes('completed'));
 
     const hero = document.createElement('div');
     hero.className = 'debt-free-forecast-hero';
@@ -12001,10 +12017,10 @@ function showPersonalEditor(personId, editPost) {
     [
       ['Offen aktuell', euro(totalOpen)],
       ['Plan aktueller Monat', firstRow ? euro(firstRow.total || 0) : '0,00 €'],
-      ['davon Extra gesamt', euro(totalDynamic)],
-      ['nächste komplette Extra-Tilgung', nextDynamic ? `${formatMonthLabel(nextDynamic.month)} · ${euro(nextDynamic.dynamicExtra || 0)}` : 'keine geplant'],
-      ['nächstes Auslaufen', nextCompleted ? `${formatMonthLabel(nextCompleted.month)} · ${nextCompleted.sourceDebt}` : 'noch keines'],
-      ['Schneeball-Zusatz gesamt', euro(totalSnowball)]
+      ['Fester Schulden-Pool', firstRow ? euro(firstRow.pool || firstRow.total || 0) : '0,00 €'],
+      ['Standardraten im Monat', firstRow ? euro(firstRow.base || 0) : '0,00 €'],
+      ['Bereits übernommene Raten', euro(Number(plan.rolloverStart || 0))],
+      ['Weitergabe', 'erst ab dem Folgemonat']
     ].forEach(([label, value]) => {
       const item = document.createElement('div');
       item.className = 'debt-free-fact';
@@ -12051,7 +12067,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Diese Prognose nutzt den dynamischen Schneeball, die 6-Monats-Regel, deine 500-€-Reserve und Extra-Zahlungen nur dann, wenn dadurch eine Schuld vollständig getilgt werden kann. Kreiskasse bleibt als Extra-Ziel ausgeschlossen.';
+    note.textContent = 'Jede Standardrate bleibt bis einschließlich der Schlusszahlung bei ihrer bisherigen Schuld. Erst ab dem Folgemonat wird sie auf die kleinste passende offene Ratenschuld gelegt. Der gesamte Schulden-Pool bleibt dadurch reserviert; zusätzliche freie Monatsbeträge werden nicht automatisch verwendet. Kreiskasse bleibt als Ziel für zusätzliche Zahlungen ausgeschlossen.';
     card.appendChild(note);
     return card;
   }
@@ -12286,24 +12302,22 @@ function showPersonalEditor(personId, editPost) {
       currentSnowballRow.payments.forEach((payment) => {
         const name = payment.debt || 'Unbekannt';
         if (!currentDebtPlan.has(name)) {
-          currentDebtPlan.set(name, { rate: 0, snowball: 0, dynamic: 0, planned: 0, notes: [] });
+          currentDebtPlan.set(name, { rate: 0, snowball: 0, planned: 0, notes: [] });
         }
         const item = currentDebtPlan.get(name);
         const amount = Number(payment.amount || 0);
         item.planned += amount;
         if (payment.type === 'rate') item.rate += amount;
         else if (payment.type === 'snowball') item.snowball += amount;
-        else if (payment.type === 'dynamic') item.dynamic += amount;
         if (payment.note) item.notes.push(payment.note);
       });
     }
 
-    // Bezahlte Schuldzahlungen bleiben für den Monat fest. Der dynamische Plan wird
+    // Bezahlte Schuldzahlungen bleiben für den Monat fest. Der offene Plan wird
     // danach nur noch für offene Schulden gewertet. So wird ein bereits bezahlter
     // Betrag nicht bei späteren Änderungen an Lohn/Kosten/Rücklagen rückwirkend verändert.
     let currentOpenPlannedDebtTotal = 0;
     let currentSnowballTotal = 0;
-    let currentDynamicTotal = 0;
     (state.debts || []).forEach((d) => {
       ensureDebtConfig(d);
       if (Number(d.amountOpen || 0) <= 0) return;
@@ -12314,7 +12328,6 @@ function showPersonalEditor(personId, editPost) {
       const planned = Number(planItem && planItem.planned || 0) || fallbackRate;
       currentOpenPlannedDebtTotal += planned;
       currentSnowballTotal += Number(planItem && planItem.snowball || 0);
-      currentDynamicTotal += Number(planItem && planItem.dynamic || 0);
     });
     const currentPlannedDebtTotal = paidSum + currentOpenPlannedDebtTotal;
     if (currentPlannedDebtTotal > 0) {
@@ -12323,12 +12336,12 @@ function showPersonalEditor(personId, editPost) {
     }
     if (snowball.rows.length > 0) {
       card.appendChild(createSummaryMetrics([
-        { label: 'Schneeball frei ab', value: snowball.events[0] ? formatMonthLabel(nextMonth(snowball.events[0].month)) : '-' },
-        { label: 'Umlage-Regel', value: '6-Monats-Regel + kleinste passende Schuld' },
+        { label: 'Fester Schulden-Pool', value: `${euro(currentSnowballRow && (currentSnowballRow.pool || currentSnowballRow.total) || currentPlannedDebtTotal)}` },
+        { label: 'Regel', value: 'Standardrate wechselt erst im Folgemonat' },
         { label: 'Plan aktueller Monat', value: `${euro(currentPlannedDebtTotal)}` },
-        { label: 'davon Schneeball', value: `${euro(currentSnowballTotal)}` },
-        { label: 'davon extra', value: `${euro(currentDynamicTotal)}` },
-        { label: 'Schuldenfrei mit Schneeball', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : 'offen' }
+        { label: 'davon übernommene Raten', value: `${euro(currentSnowballTotal)}` },
+        { label: 'Ziel', value: 'kleinste passende offene Ratenschuld' },
+        { label: 'Schuldenfrei mit Ratenwechsel', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : 'offen' }
       ]));
     }
     card.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
@@ -12355,7 +12368,7 @@ function showPersonalEditor(personId, editPost) {
       const table = document.createElement('table');
       table.className = 'list-table';
       const thead = document.createElement('thead');
-      thead.innerHTML = `<tr><th>Name</th><th class="account-only">Konto</th><th>Offen</th><th>Mindestrate</th><th>+ Schneeball</th><th>+ Extra</th><th>Geplant diesen Monat</th><th>Nächste Fälligkeit</th><th>Vorauss. Ende</th><th>Fortschritt</th><th>Status</th><th>Bezahlt?</th><th>Aktion</th></tr>`;
+      thead.innerHTML = `<tr><th>Name</th><th class="account-only">Konto</th><th>Offen</th><th>Standardrate</th><th>+ übernommene Rate</th><th>Geplant diesen Monat</th><th>Nächste Fälligkeit</th><th>Vorauss. Ende</th><th>Fortschritt</th><th>Status</th><th>Bezahlt?</th><th>Aktion</th></tr>`;
       table.appendChild(thead);
 
       const tbody = document.createElement('tbody');
@@ -12384,19 +12397,18 @@ function showPersonalEditor(personId, editPost) {
 
         const typeClass = d.paymentType === 'installment' ? 'success' : (d.paymentType === 'one_time' ? '' : 'warning');
         const typeHtml = `<span class="pill ${typeClass}">${getDebtPaymentTypeLabel(d.paymentType)}</span>`;
-        const planItem = currentDebtPlan.get(d.name) || { rate: 0, snowball: 0, dynamic: 0, planned: 0 };
+        const planItem = currentDebtPlan.get(d.name) || { rate: 0, snowball: 0, planned: 0 };
         const minRate = Number(getDebtRateForMonth(d, currentMonth) || 0);
         const isFixedPaidThisMonth = paidNow;
         const plannedRate = isFixedPaidThisMonth ? Math.min(minRate, paidAmount) : (Number(planItem.rate || 0) || (dueNow ? Math.min(minRate, Number(d.amountOpen || 0)) : 0));
         const plannedSnowball = isFixedPaidThisMonth ? 0 : Number(planItem.snowball || 0);
-        const plannedDynamic = isFixedPaidThisMonth ? 0 : Number(planItem.dynamic || 0);
         const plannedTotal = isFixedPaidThisMonth ? paidAmount : (Number(planItem.planned || 0) || plannedRate);
         const plannedHtml = plannedTotal > 0
           ? `<strong>${euro(plannedTotal)}</strong><div class="small muted">${isFixedPaidThisMonth ? 'fest bezahlt' : 'Rate ' + euro(plannedRate)}</div>`
           : '-';
-        tr.innerHTML = `<td class="debt-name-cell"><strong>${d.name}</strong></td><td class="account-only">${getAccountName(d.accountId)}</td><td>${euro(Number(d.amountOpen || 0))}</td><td>${euro(minRate)}</td><td>${plannedSnowball > 0 ? '<span class="snowball-pill">+' + euro(plannedSnowball) + '</span>' : '-'}</td><td>${plannedDynamic > 0 ? '<span class="dynamic-pill">+' + euro(plannedDynamic) + '</span>' : '-'}</td><td class="${plannedSnowball > 0 || plannedDynamic > 0 ? 'amount-highlight' : ''}">${plannedHtml}</td><td>${d.nextDueMonth || '-'}</td><td>${estimatedEnd || '-'}</td><td>${progressHtml}</td><td>${statusHtml}</td><td></td><td></td>`;
+        tr.innerHTML = `<td class="debt-name-cell"><strong>${d.name}</strong></td><td class="account-only">${getAccountName(d.accountId)}</td><td>${euro(Number(d.amountOpen || 0))}</td><td>${euro(minRate)}</td><td>${plannedSnowball > 0 ? '<span class="snowball-pill">+' + euro(plannedSnowball) + '</span>' : '-'}</td><td class="${plannedSnowball > 0 ? 'amount-highlight' : ''}">${plannedHtml}</td><td>${d.nextDueMonth || '-'}</td><td>${estimatedEnd || '-'}</td><td>${progressHtml}</td><td>${statusHtml}</td><td></td><td></td>`;
 
-        const payCell = tr.children[11];
+        const payCell = tr.children[10];
         if (Number(d.amountOpen || 0) <= 0) {
           const done = document.createElement('div');
           const completedMonth = getDebtCompletedMonth(d);
@@ -12411,14 +12423,14 @@ function showPersonalEditor(personId, editPost) {
           btn.textContent = 'Geplante Zahlung bezahlen';
           btn.className = 'success';
           btn.addEventListener('click', () => {
-            markDebtPaid(d, plannedTotal, { rate: plannedRate, snowball: plannedSnowball, dynamic: plannedDynamic });
+            markDebtPaid(d, plannedTotal, { rate: plannedRate, snowball: plannedSnowball });
           });
           payCell.appendChild(btn);
         } else {
           payCell.textContent = '-';
         }
 
-        const actionCell = tr.children[12];
+        const actionCell = tr.children[11];
         const editBtn = document.createElement('button');
         editBtn.textContent = 'Bearbeiten';
         editBtn.className = 'primary';
@@ -12482,7 +12494,7 @@ function showPersonalEditor(personId, editPost) {
 
       const info = document.createElement('p');
       info.className = 'small muted';
-      info.innerHTML = `<strong>Monatsplan inkl. fest bezahlter Beträge + offene Dynamik:</strong> ${euro(dueSum)} · <strong>davon Schneeball:</strong> ${euro(currentSnowballTotal)} · <strong>davon Extra:</strong> ${euro(currentDynamicTotal)} · <strong>Bereits bezahlt:</strong> ${euro(paidSum)} · <strong>Noch zu bezahlen:</strong> ${euro(openThisMonth)}`;
+      info.innerHTML = `<strong>Monatsplan inklusive fest bezahlter Beträge:</strong> ${euro(dueSum)} · <strong>davon übernommene Standardraten:</strong> ${euro(currentSnowballTotal)} · <strong>Bereits bezahlt:</strong> ${euro(paidSum)} · <strong>Noch zu bezahlen:</strong> ${euro(openThisMonth)}`;
       card.appendChild(info);
     }
 
@@ -12601,67 +12613,43 @@ function showPersonalEditor(personId, editPost) {
 
   function renderSnowballPlanCard(monthKey) {
     const plan = buildSnowballPlan(monthKey, 120);
+    const suggestions = getDebtRolloverSuggestionsForMonth(monthKey, plan);
+    if (!suggestions.length) return null;
+
     const card = document.createElement('div');
-    card.className = 'sub-card snowball-card';
+    card.className = 'sub-card debt-rollover-card';
     const h = document.createElement('h3');
-    h.textContent = 'Schulden-Schneeball';
+    h.textContent = 'Standardrate wird ab dem Folgemonat frei';
     card.appendChild(h);
     const p = document.createElement('p');
     p.className = 'small muted';
-    p.textContent = 'Berücksichtigt werden nur echte laufende Ratenzahlungen. Die 6-Monats-Regel überspringt Schulden, die ohne Hilfe in den nächsten 6 Folgemonaten sowieso erledigt wären. Zusätzlich wird jeden Monat dynamisch neu gerechnet: erst wenn nach den simulierten Schuldenzahlungen mindestens 600 € frei sind, wird der Betrag oberhalb von 500 € nur dann investiert, wenn damit eine Schuld vollständig getilgt werden kann.';
+    p.textContent = 'Die Schlussrate bleibt noch vollständig in diesem Monat bei ihrer bisherigen Schuld. Erst im folgenden Monat wird die Standardrate auf eine andere Schuld gelegt. So bleibt dein fester Schulden-Pool erhalten.';
     card.appendChild(p);
-    if (plan.noRate.length > 0) {
-      const warn = document.createElement('div');
-      warn.className = 'notice warning';
-      warn.textContent = `Nicht im Schneeball enthalten: ${plan.noRate.map((d) => `${d.name} (${d.excludeReason})`).join(', ')}`;
-      card.appendChild(warn);
-    }
-    if (plan.rows.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'small muted';
-      empty.textContent = 'Kein Schneeball-Plan möglich, weil keine aktive Schuld mit Monatsrate offen ist.';
-      card.appendChild(empty);
-      return card;
-    }
+    const list = document.createElement('div');
+    list.className = 'debt-rollover-list';
+    suggestions.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'debt-rollover-row';
+      const source = document.createElement('div');
+      source.appendChild(createUiEl('span', 'pill success', entry.status === 'completed' ? 'Schlussrate bezahlt' : 'Letzte Rate in diesem Monat'));
+      source.appendChild(createUiEl('strong', '', entry.sourceDebt || 'Schuld'));
+      source.appendChild(createUiEl('small', 'muted', `Standardrate: ${euro(Number(entry.amount || 0))}`));
 
-    const activeOpenTotal = (state.debts || []).reduce((sum, debt) => sum + Math.max(0, Number(debt.amountOpen || 0)), 0);
-    const firstRow = plan.rows[0] || {};
-    const nextEvent = plan.events[0] ? plan.events[0].text : 'Noch keine Rate wird im sichtbaren Zeitraum frei.';
-    const summary = document.createElement('div');
-    summary.className = 'snowball-hero-grid';
-    [
-      ['Schuldenfrei voraussichtlich', plan.debtFreeMonth ? formatMonthLabel(plan.debtFreeMonth) : 'nicht im Zeitraum'],
-      ['Aktuelle offene Summe', euro(activeOpenTotal)],
-      ['Rate im Startmonat', euro(firstRow.total || 0)],
-      ['Nächstes Ereignis', nextEvent]
-    ].forEach(([label, value]) => {
-      const item = document.createElement('div');
-      item.className = 'snowball-hero-item';
-      item.appendChild(createUiEl('span', '', label));
-      item.appendChild(createUiEl('strong', '', value));
-      summary.appendChild(item);
+      const transfer = document.createElement('div');
+      transfer.appendChild(createUiEl('span', 'debt-rollover-arrow', '→'));
+      transfer.appendChild(createUiEl('strong', '', `Frei ab ${formatMonthLabel(entry.transferMonth)}`));
+      transfer.appendChild(createUiEl(
+        'small',
+        'muted',
+        entry.targetDebt
+          ? `Vorschlag: ${euro(Number(entry.amount || 0))} monatlich auf „${entry.targetDebt}“ legen.`
+          : 'Keine passende Ratenschuld offen – der Betrag bleibt im Schulden-Pool frei.'
+      ));
+      row.appendChild(source);
+      row.appendChild(transfer);
+      list.appendChild(row);
     });
-    card.appendChild(summary);
-
-    const chips = document.createElement('div');
-    chips.className = 'status-chip-list';
-    plan.events.slice(0, 5).forEach((event) => {
-      const chip = document.createElement('span');
-      chip.className = 'pill success';
-      chip.textContent = event.text;
-      chips.appendChild(chip);
-    });
-    if (plan.events.length === 0) {
-      const chip = document.createElement('span');
-      chip.className = 'pill';
-      chip.textContent = 'Noch keine frei werdende Rate im sichtbaren Plan.';
-      chips.appendChild(chip);
-    }
-    card.appendChild(chips);
-
-    const compactNotice = createUiEl('p', 'small muted', 'Für die Übersicht werden hier nur die nächsten 6 Monate angezeigt. Alle Details sind in einer einzigen kompakten Tabelle zusammengeführt. Die Berechnung läuft intern weiter bis schuldenfrei.');
-    card.appendChild(compactNotice);
-    card.appendChild(renderGroupedDebtPaymentPlanCard(plan, 6));
+    card.appendChild(list);
     return card;
   }
 
@@ -12680,13 +12668,12 @@ function showPersonalEditor(personId, editPost) {
     }
     const sourceParts = ['Schuldenbereich'];
     if (Number(breakdown.rate || 0) > 0) sourceParts.push(`Rate ${euro(Number(breakdown.rate || 0))}`);
-    if (Number(breakdown.snowball || 0) > 0) sourceParts.push(`Schneeball ${euro(Number(breakdown.snowball || 0))}`);
-    if (Number(breakdown.dynamic || 0) > 0) sourceParts.push(`Extra ${euro(Number(breakdown.dynamic || 0))}`);
+    if (Number(breakdown.snowball || 0) > 0) sourceParts.push(`übernommene Standardrate ${euro(Number(breakdown.snowball || 0))}`);
     if (addDebtPayment(debt, {
       month: paidMonth,
       amount,
       source: sourceParts.join(' · '),
-      note: 'Geplante Monatszahlung festgeschrieben. Offene Schulden bleiben dynamisch.',
+      note: 'Geplante Monatszahlung festgeschrieben. Der feste Schulden-Pool bleibt erhalten.',
       markAsMonthly: true
     })) {
       saveState();
@@ -12912,7 +12899,7 @@ function showPersonalEditor(personId, editPost) {
 
     const hint = document.createElement('p');
     hint.className = 'small muted';
-    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Zahlungsart steuert den Schneeball: Nur Ratenzahlungen zählen mit. Bei MKK ist die Rate auf jährliche Anpassung zum 01.05. begrenzt.';
+    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Nur laufende Ratenzahlungen gehören zum festen Schulden-Pool; ihre Standardrate wechselt erst nach der Schlussrate im Folgemonat. Bei MKK ist die Rate auf jährliche Anpassung zum 01.05. begrenzt.';
     content.appendChild(hint);
 
     showModal(editDebt ? 'Schuld bearbeiten' : 'Neue Schuld anlegen', content, [

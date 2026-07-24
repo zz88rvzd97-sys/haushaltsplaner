@@ -4842,3 +4842,39 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   overflow-y: auto !important;
   z-index: 10050 !important;
 }
+
+/* Developer Beta 2.45 – Standardraten wechseln erst nach der Schlussrate */
+.debt-rollover-card {
+  border-color: rgba(35, 79, 58, .24);
+  background: linear-gradient(145deg, rgba(239, 250, 244, .96), rgba(255, 255, 255, .98));
+}
+.debt-rollover-list {
+  display: grid;
+  gap: .7rem;
+  margin-top: .8rem;
+}
+.debt-rollover-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: .8rem;
+  align-items: center;
+  padding: .85rem;
+  border: 1px solid rgba(35, 79, 58, .14);
+  border-radius: .9rem;
+  background: rgba(255, 255, 255, .82);
+}
+.debt-rollover-row > div {
+  display: grid;
+  gap: .28rem;
+  min-width: 0;
+}
+.debt-rollover-arrow {
+  color: #234f3a;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+@media (max-width: 720px) {
+  .debt-rollover-row {
+    grid-template-columns: 1fr;
+  }
+}
