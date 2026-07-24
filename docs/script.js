@@ -9899,7 +9899,7 @@ function renderCommon() {
     card.appendChild(distBox);
     const paymentHint = document.createElement('p');
     paymentHint.className = 'small muted';
-    paymentHint.textContent = 'Die App fragt keinen echten Kontostand ab und speichert keinen Bankstand. „Bezahlt“ ändert nur den Haushaltsstatus. Verknüpfte Rücklagen werden beim Markieren einmalig zurückgelegt.';
+    paymentHint.textContent = 'Die App fragt keinen echten Kontostand ab und zeigt nur automatisch berechnete Sollbeträge. „Bezahlt“ ändert nur den Haushaltsstatus. Verknüpfte Rücklagen werden beim Markieren einmalig zurückgelegt.';
     card.appendChild(paymentHint);
     card.appendChild(makeSearchFilterBar(commonSearch, commonFilter, (v) => { commonSearch = v; }, (v) => { commonFilter = v; }, [['all','Alle'],['due','Fällig'],['open','Offen'],['paid','Bezahlt'],['linked','Mit Schuld verknüpft'],['reserve','Mit Rücklage']]));
 
