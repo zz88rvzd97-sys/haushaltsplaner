@@ -500,6 +500,10 @@ body, input, select, button, textarea, th, td, p, label, h1, h2, h3 {
   backdrop-filter: blur(6px);
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 .app-modal {
   width: min(760px, 100%);
   max-height: 92vh;
@@ -509,6 +513,11 @@ body, input, select, button, textarea, th, td, p, label, h1, h2, h3 {
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: var(--shadow-strong);
   padding: 1rem;
+}
+
+.app-modal :focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.42);
+  outline-offset: 2px;
 }
 
 .app-modal-header,
@@ -4208,7 +4217,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
-/* Developer Beta 2.39 - globaler Schnellzugriff */
+/* Developer Beta 2.40 - globaler Schnellzugriff und Fehlerkorrekturen */
 .runtime-issue-card {
   border: 1px solid rgba(220, 38, 38, 0.28) !important;
   background:

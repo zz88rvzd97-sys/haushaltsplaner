@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Developer Beta 2.39
+  Haushaltsplaner Developer Beta 2.40
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,24 +12,26 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
-  Aktualisierung Developer&nbsp;Beta&nbsp;2.39: „Schnell erfassen“ ist jetzt global erreichbar. Häufige Eingaben können aus jedem Bereich direkt geöffnet werden, ohne zurück zur Übersicht zu wechseln.
+  Aktualisierung Developer&nbsp;Beta&nbsp;2.40: Fehlerprüfung, deutsche
+  Betragsformatierung und barrierefreie Formulare/Dialoge.
 -->
 
 <!DOCTYPE html>
 <html lang="de">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Haushaltsplaner Developer Beta 2.39</title>
-    <link rel="stylesheet" href="style.css?v=2.39" />
-    <link rel="manifest" href="manifest.json?v=2.39" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
+    <title>Haushaltsplaner Developer Beta 2.40</title>
+    <link rel="stylesheet" href="style.css?v=2.40">
+    <link rel="manifest" href="manifest.json?v=2.40">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.39" />
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.39" />
-    <meta name="theme-color" content="#456f57" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Planerengel" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.40">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.40">
+    <meta name="theme-color" content="#456f57">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Planerengel">
   </head>
   <body>
     <div class="app-shell">
@@ -41,7 +43,7 @@
             <span>Benny &amp; Madeleine</span>
           </div>
         </div>
-        <div id="globalMonthBar" class="global-month-bar sidebar-month-widget" aria-label="Monatsauswahl"></div>
+        <div id="globalMonthBar" class="global-month-bar sidebar-month-widget" role="group" aria-label="Monatsauswahl"></div>
         <button id="quickCaptureButton" class="quick-capture-action" type="button"><span aria-hidden="true">+</span> Schnell erfassen</button>
         <div class="nav-bar mobile-nav">
           <select id="sectionSelect" aria-label="Bereich auswählen">
@@ -59,7 +61,7 @@
             <option value="pots">Töpfe</option>
             <option value="monthclose">Monatsabschluss</option>
             <option value="datacheck">Datencheck</option>
-            <option value="forecast">Vorschau & Simulation</option>
+            <option value="forecast">Vorschau &amp; Simulation</option>
             <option value="save">Sichern</option>
             <option value="buffer">Sonstige Ausgaben</option>
             <option value="taxrefund">Steuererstattung</option>
@@ -85,7 +87,7 @@
             <button type="button" class="side-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/><path d="M9 13h6"/></svg></span><b>Einkaufsgeld</b></button>
           </div>
           <div class="side-nav-group">
-            <div class="side-nav-heading">Schulden & Rücklagen</div>
+            <div class="side-nav-heading">Schulden &amp; Rücklagen</div>
             <button type="button" class="side-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/><path d="M16 15h2"/></svg></span><b>Schulden</b></button>
             <button type="button" class="side-nav-link" data-section="savings"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12c0-4 3-7 7-7h2a5 5 0 0 1 5 5v3a5 5 0 0 1-5 5h-1l-2 3-2-3H9a3 3 0 0 1-3-3z"/><path d="M10 10h.01"/><path d="M14 9h2"/><path d="M3 13h3"/></svg></span><b>Rücklagen &amp; Sparen</b></button>
             <button type="button" class="side-nav-link" data-section="pots"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M7 7l1 13h8l1-13"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/><path d="M10 12h4"/></svg></span><b>Töpfe</b></button>
@@ -100,7 +102,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.39 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.40 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -128,9 +130,9 @@
           <section id="buffer" class="tab-section"></section>
           <section id="taxrefund" class="tab-section"></section>
         </main>
-        <footer>Developer&nbsp;Beta&nbsp;2.39</footer>
+        <footer>Developer&nbsp;Beta&nbsp;2.40</footer>
       </div>
     </div>
-    <script src="script.js?v=2.39"></script>
+    <script src="script.js?v=2.40"></script>
   </body>
 </html>

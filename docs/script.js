@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.39
+ * Haushaltsplaner Developer Beta 2.40
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.39';
+  const APP_VERSION = '2.40';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -305,14 +305,14 @@
   function getDebtRateTimelineText(debt) {
     normalizeDebtRateTimeline(debt);
     if (!debt.rateTimeline.length) return '';
-    return debt.rateTimeline.map((entry) => `ab ${formatMonthLabel(entry.month)}: ${Number(entry.amount || 0).toFixed(2)} €`).join(' · ');
+    return debt.rateTimeline.map((entry) => `ab ${formatMonthLabel(entry.month)}: ${euro(Number(entry.amount || 0))}`).join(' · ');
   }
 
   function getNextDebtRateChangeText(debt, fromMonth = currentMonth) {
     normalizeDebtRateTimeline(debt);
     const next = debt.rateTimeline.find((entry) => monthDiff(fromMonth, entry.month) > 0);
     if (!next) return '';
-    return `Nächste Änderung: ab ${formatMonthLabel(next.month)} → ${Number(next.amount || 0).toFixed(2)} €`;
+    return `Nächste Änderung: ab ${formatMonthLabel(next.month)} → ${euro(Number(next.amount || 0))}`;
   }
 
   function getDebtAnnualRateRule(debt) {
@@ -420,7 +420,7 @@
       setDebtRateFromMonth(debt, effectiveMonth, targetAmount);
     }
     if (!options.silent) {
-      addChangeLog('Schulden', `${debt.name}: Rate automatisch aus ${post.name || 'verknüpftem Posten'} auf ${targetAmount.toFixed(2)} € ab ${formatMonthLabel(effectiveMonth)} gesetzt`, effectiveMonth);
+      addChangeLog('Schulden', `${debt.name}: Rate automatisch aus ${post.name || 'verknüpftem Posten'} auf ${euro(targetAmount)} ab ${formatMonthLabel(effectiveMonth)} gesetzt`, effectiveMonth);
     }
     return true;
   }
@@ -449,7 +449,7 @@
           if (!setDebtRateFromMonth(debt, month, amount)) continue;
           changes += 1;
           if (!options.silent) {
-            addChangeLog('Schulden', `${debt.name}: Rate aus verknüpftem Posten ${post.name || ''} auf ${amount.toFixed(2)} € ab ${formatMonthLabel(month)} synchronisiert`, month);
+            addChangeLog('Schulden', `${debt.name}: Rate aus verknüpftem Posten ${post.name || ''} auf ${euro(amount)} ab ${formatMonthLabel(month)} synchronisiert`, month);
           }
         }
       }
@@ -717,6 +717,32 @@
     keepFreeBuffer: 500
   };
 
+  function sanitizeStateTextValues(value, seen = new WeakSet()) {
+    if (typeof value === 'string') {
+      return value
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+        .replace(/</g, '‹')
+        .replace(/>/g, '›');
+    }
+    if (!value || typeof value !== 'object') return value;
+    if (seen.has(value)) return value;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        value[index] = sanitizeStateTextValues(entry, seen);
+      });
+      return value;
+    }
+    Object.keys(value).forEach((key) => {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        delete value[key];
+        return;
+      }
+      value[key] = sanitizeStateTextValues(value[key], seen);
+    });
+    return value;
+  }
+
   function getStateStorageFallbackKeys() {
     return [
       'budgetStateAutoBackup', CURRENT_VERSION_STORAGE_KEY, 'budgetStateV225', 'budgetStateV224', 'budgetStateV223', 'budgetStateV222', 'budgetStateV221', 'budgetStateV220', 'budgetStateV219', 'budgetStateV218', 'budgetStateV217', 'budgetStateV216', 'budgetStateV215', 'budgetStateV214', 'budgetStateV213', 'budgetStateV212',
@@ -776,6 +802,7 @@
     writeStatePayloadToStorage(saved);
   }
   state = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(defaultState));
+    sanitizeStateTextValues(state);
     // Falls das neue Flag für Rücklagen‑Bestätigungen fehlt, initialisiere es
     if (!state.reservesSavedMonths) state.reservesSavedMonths = [];
     if (!state.tankCalc) {
@@ -835,6 +862,7 @@
 
   function saveState() {
     try {
+      sanitizeStateTextValues(state);
       const payload = JSON.stringify(state);
       writeStatePayloadToStorage(payload);
       const savedAt = new Date().toISOString();
@@ -2539,8 +2567,16 @@
     return monthKeyToDate(monthKey).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
   }
 
+  const euroFormatter = new Intl.NumberFormat('de-DE', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
   function euro(value) {
-    return `${Number(value || 0).toFixed(2)} €`;
+    const amount = Number(value || 0);
+    return euroFormatter.format(Number.isFinite(amount) ? amount : 0);
   }
 
   function estimateDebtPaidOffMonth(debt) {
@@ -2663,7 +2699,7 @@
         if (amount > 0) {
           map[debt.nextDueMonth].planned += amount;
           map[debt.nextDueMonth].base += amount;
-          map[debt.nextDueMonth].notes.push(`${debt.name || 'Schuld'}: ${amount.toFixed(2)} € einmalig`);
+          map[debt.nextDueMonth].notes.push(`${debt.name || 'Schuld'}: ${euro(amount)} einmalig`);
         }
       }
     });
@@ -2835,13 +2871,13 @@
         debt.open = Math.max(0, debt.open - pay);
         base += pay;
         if (pay > 0) {
-          notes.push(`${debt.name}: ${pay.toFixed(2)} €`);
+          notes.push(`${debt.name}: ${euro(pay)}`);
           payments.push({ type: 'rate', debt: debt.name, amount: pay, originalRate: debt.rate, remainingAfter: Math.max(0, debt.open), completed: debt.open <= 0.005, note: debt.open <= 0.005 ? 'Schlussrate / läuft aus' : 'normale Rate' });
         }
         if (debt.open <= 0.005) {
           debt.open = 0;
           newlyFreed += debt.rate;
-          events.push({ month, type: 'completed', sourceDebt: debt.name, amount: debt.rate, targetDebt: '', transferMonth: nextMonth(month), text: `${debt.name} abbezahlt – ab ${formatMonthLabel(nextMonth(month))} gehen ${debt.rate.toFixed(2)} € auf die kleinste offene Schuld.` });
+          events.push({ month, type: 'completed', sourceDebt: debt.name, amount: debt.rate, targetDebt: '', transferMonth: nextMonth(month), text: `${debt.name} abbezahlt – ab ${formatMonthLabel(nextMonth(month))} gehen ${euro(debt.rate)} auf die kleinste offene Schuld.` });
         }
       });
 
@@ -2850,14 +2886,14 @@
         while (extraBudget > 0.005) {
           const target = chooseSnowballTarget(active, month, extraBudget, { allowFullPayoff: false, fallbackToShortTerm: false });
           if (!target) {
-            notes.push(`${extraBudget.toFixed(2)} € frei werdende Rate geparkt: übrige Ziele sind in ≤ ${snowballConfig.shortTermSkipMonths} Monaten erledigt.`);
+            notes.push(`${euro(extraBudget)} frei werdende Rate geparkt: übrige Ziele sind in ≤ ${snowballConfig.shortTermSkipMonths} Monaten erledigt.`);
             break;
           }
           const pay = Math.min(target.open, extraBudget);
           target.open = Math.max(0, target.open - pay);
           extra += pay;
           extraBudget -= pay;
-          notes.push(`${target.name} +${pay.toFixed(2)} € Schneeball`);
+          notes.push(`${target.name} +${euro(pay)} Schneeball`);
           payments.push({ type: 'snowball', debt: target.name, amount: pay, originalRate: target.rate, remainingAfter: Math.max(0, target.open), completed: target.open <= 0.005, note: target.open <= 0.005 ? 'durch Schneeball erledigt' : 'frei gewordene Rate' });
           if (target.open <= 0.005) {
             target.open = 0;
@@ -2869,7 +2905,7 @@
               amount: target.rate,
               targetDebt: '',
               transferMonth: nextMonth(month),
-              text: `${target.name} durch Schneeball abbezahlt – ab ${formatMonthLabel(nextMonth(month))} kommen ${target.rate.toFixed(2)} € zusätzlich dazu.`
+              text: `${target.name} durch Schneeball abbezahlt – ab ${formatMonthLabel(nextMonth(month))} kommen ${euro(target.rate)} zusätzlich dazu.`
             });
           }
         }
@@ -2880,11 +2916,11 @@
       let dynamicExtraUsed = 0;
       if (dynamicExtra > 0) {
         let extraBudget = dynamicExtra;
-        notes.push(`frei nach simulierten Schulden: ${Number(dynamicInfo.projectedFreeBeforeDynamic || 0).toFixed(2)} €`);
+        notes.push(`frei nach simulierten Schulden: ${euro(Number(dynamicInfo.projectedFreeBeforeDynamic || 0))}`);
         while (extraBudget > 0.005) {
           const target = chooseSnowballTarget(active, month, extraBudget, { allowFullPayoff: true, fullPayoffOnly: true, fallbackToShortTerm: false });
           if (!target) {
-            notes.push(`${extraBudget.toFixed(2)} € Zusatz frei, aber keine Schuld kann damit vollständig getilgt werden.`);
+            notes.push(`${euro(extraBudget)} Zusatz frei, aber keine Schuld kann damit vollständig getilgt werden.`);
             break;
           }
           const pay = target.open;
@@ -2892,7 +2928,7 @@
           extra += pay;
           dynamicExtraUsed += pay;
           extraBudget -= pay;
-          notes.push(`${target.name} +${pay.toFixed(2)} € dynamisch`);
+          notes.push(`${target.name} +${euro(pay)} dynamisch`);
           payments.push({ type: 'dynamic', debt: target.name, amount: pay, originalRate: target.rate, remainingAfter: Math.max(0, target.open), completed: target.open <= 0.005, note: target.open <= 0.005 ? 'durch Zusatztilgung erledigt' : 'dynamische Zusatztilgung' });
           if (target.open <= 0.005) {
             target.open = 0;
@@ -2904,7 +2940,7 @@
               amount: target.rate,
               targetDebt: '',
               transferMonth: nextMonth(month),
-              text: `${target.name} durch dynamische Zusatztilgung abbezahlt – ab ${formatMonthLabel(nextMonth(month))} werden ${target.rate.toFixed(2)} € frei.`
+              text: `${target.name} durch dynamische Zusatztilgung abbezahlt – ab ${formatMonthLabel(nextMonth(month))} werden ${euro(target.rate)} frei.`
             });
           }
         }
@@ -2925,7 +2961,7 @@
           amount: entry.amount,
           targetDebt: entry.targetDebt,
           transferMonth: entry.transferMonth,
-          text: `${entry.sourceDebt} ausgelaufen – ${entry.amount.toFixed(2)} € gehen ab ${formatMonthLabel(entry.transferMonth)} auf ${entry.targetDebt || 'keine weitere Schuld'}.`
+          text: `${entry.sourceDebt} ausgelaufen – ${euro(entry.amount)} gehen ab ${formatMonthLabel(entry.transferMonth)} auf ${entry.targetDebt || 'keine weitere Schuld'}.`
         });
       });
       rows.push({ month, base, extra, dynamicExtra: dynamicExtraUsed || 0, total: base + extra, rolloverNext, remaining, targetNext: nextTarget ? nextTarget.name : '', freedTransfers: freedThisMonth, payments: payments.slice(), notes: notes.slice(0, 5).join(' · ') });
@@ -2947,7 +2983,7 @@
   }
 
   function getFinanceStatus(free) {
-    if (free < 0) return { label: 'Kritisch', kind: 'danger', text: `Der Monat ist mit ${Math.abs(free).toFixed(2)} € im Minus.` };
+    if (free < 0) return { label: 'Kritisch', kind: 'danger', text: `Der Monat ist mit ${euro(Math.abs(free))} im Minus.` };
     if (free < 100) return { label: 'Sehr eng', kind: 'danger', text: 'Der freie Rest liegt unter 100 €.' };
     if (free < 300) return { label: 'Eng', kind: 'warning', text: 'Der freie Rest liegt unter 300 €.' };
     return { label: 'Stabil', kind: 'success', text: 'Der Monat hat genug Luft.' };
@@ -3841,8 +3877,8 @@
     if (unpaidCommon > 0) warnings.push({ kind: 'warning', text: `${unpaidCommon} gemeinsame Zahlung(en) noch offen` });
     if (unpaidPersonal > 0) warnings.push({ kind: 'warning', text: `${unpaidPersonal} persönliche Zahlung(en) noch offen` });
     if (unpaidDebts > 0) warnings.push({ kind: 'danger', text: `${unpaidDebts} Schuld(en) diesen Monat noch offen` });
-    if (miscOpen > 0) warnings.push({ kind: 'warning', text: `Sonstige Ausgaben offen geplant: ${miscOpen.toFixed(2)} €` });
-    if (free < 0) warnings.push({ kind: 'danger', text: `Monat rechnerisch im Minus: ${free.toFixed(2)} €` });
+    if (miscOpen > 0) warnings.push({ kind: 'warning', text: `Sonstige Ausgaben offen geplant: ${euro(miscOpen)}` });
+    if (free < 0) warnings.push({ kind: 'danger', text: `Monat rechnerisch im Minus: ${euro(free)}` });
     if (!state.monthlyClosings || !state.monthlyClosings[monthKey]) warnings.push({ kind: 'info', text: 'Monatsabschluss noch offen' });
     return warnings;
   }
@@ -4047,6 +4083,10 @@
       btn.classList.toggle('active', btn.dataset.section === currentSection);
     });
     render();
+    requestAnimationFrame(() => {
+      const main = document.querySelector('.app-content main');
+      if (main) main.scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
   }
   if (sectionSelect) {
     sectionSelect.addEventListener('change', (e) => switchSection(e.target.value));
@@ -5552,34 +5592,6 @@
   function getDueBadgeHtml(dueNow) {
     return `<span class="due-badge ${dueNow ? 'due-yes' : 'due-no'}">${dueNow ? 'Ja' : 'Nein'}</span>`;
   }
-  function promptForPostType(existingPost) {
-    const selection = prompt(
-      `Zahlungsart wählen:
-1 = einmalige Zahlung
-2 = laufender Posten`,
-      existingPost && isOneTimePost(existingPost) ? '1' : '2'
-    );
-    if (selection == null) return null;
-    const normalized = String(selection).trim().toLowerCase();
-    if (normalized === '1' || normalized === 'einmalig' || normalized === 'einmalige zahlung') return 'once';
-    if (normalized === '2' || normalized === 'laufend' || normalized === 'regelmäßig' || normalized === 'wiederkehrend') return 'recurring';
-    alert('Bitte 1 für „einmalige Zahlung“ oder 2 für „laufender Posten“ eingeben.');
-    return null;
-  }
-  function promptForPostLimit(existingPost) {
-    const selection = prompt(
-      `Soll der Posten befristet sein?
-1 = ja, bis zu einem Endmonat
-2 = nein, unbegrenzt`,
-      existingPost && !isOneTimePost(existingPost) && existingPost.endMonth ? '1' : '2'
-    );
-    if (selection == null) return null;
-    const normalized = String(selection).trim().toLowerCase();
-    if (normalized === '1' || normalized === 'ja' || normalized === 'befristet') return true;
-    if (normalized === '2' || normalized === 'nein' || normalized === 'unbegrenzt') return false;
-    alert('Bitte 1 für „ja, befristet“ oder 2 für „nein, unbegrenzt“ eingeben.');
-    return null;
-  }
   function validateScheduleSettings(schedule) {
     if (!schedule || !isMonthKey(schedule.startMonth)) {
       return { ok: false, message: 'Startmonat muss im Format JJJJ-MM vorliegen.' };
@@ -5673,19 +5685,16 @@
     }
     return false;
   }
-  function askAmountChangeMode(month) {
-    const selection = prompt(
-      `Betrag für ${formatMonthLabel(month)} ändern:
-1 = nur dieser Monat
-2 = ab diesem Monat dauerhaft`,
-      '1'
-    );
-    if (selection == null) return null;
-    const normalized = String(selection).trim().toLowerCase();
-    if (normalized === '1' || normalized === 'einmalig' || normalized === 'monat') return 'once';
-    if (normalized === '2' || normalized === 'dauerhaft' || normalized === 'ab jetzt') return 'future';
-    alert('Bitte 1 für „nur dieser Monat“ oder 2 für „ab diesem Monat dauerhaft“ eingeben.');
-    return null;
+  function appendAmountChangeModeField(container, refs, existingPost) {
+    if (!existingPost || isOneTimePost(existingPost)) {
+      refs.amountChangeModeSelect = { value: 'future' };
+      return;
+    }
+    const select = document.createElement('select');
+    select.innerHTML = '<option value="once">Nur in diesem Monat</option><option value="future">Ab diesem Monat dauerhaft</option>';
+    select.value = 'once';
+    refs.amountChangeModeSelect = select;
+    container.appendChild(createLabelInput(`Geänderten Betrag für ${formatMonthLabel(currentMonth)} anwenden`, select));
   }
   function isMonthKey(value) {
     return /^\d{4}-\d{2}$/.test(String(value || ''));
@@ -6530,9 +6539,9 @@
     const targetMonth = currentIsPaid ? nextMonth(monthKey) : monthKey;
     setPostAmountForMonth(existing, targetMonth, calculated, 'future');
     if (currentIsPaid) {
-      addChangeLog('Tankgeld', `${existing.name}: aktueller Monat ist bezahlt, neuer Betrag ${calculated.toFixed(2)} € gilt ab ${formatMonthLabel(targetMonth)}`, targetMonth);
+      addChangeLog('Tankgeld', `${existing.name}: aktueller Monat ist bezahlt, neuer Betrag ${euro(calculated)} gilt ab ${formatMonthLabel(targetMonth)}`, targetMonth);
     } else {
-      addChangeLog('Tankgeld', `${existing.name}: automatisch auf ${calculated.toFixed(2)} € aktualisiert`, monthKey);
+      addChangeLog('Tankgeld', `${existing.name}: automatisch auf ${euro(calculated)} aktualisiert`, monthKey);
     }
     return true;
   }
@@ -7130,7 +7139,7 @@
               kind: 'warning',
               area,
               title: `Rate weicht ab: ${post.name}`,
-              detail: `${formatMonthLabel(checkMonth)}: Posten ${postAmount.toFixed(2)} € · Schuld ${debtRate.toFixed(2)} €. Über „Daten reparieren“ bzw. Speichern wird die Schuld synchronisiert.`
+              detail: `${formatMonthLabel(checkMonth)}: Posten ${euro(postAmount)} · Schuld ${euro(debtRate)}. Über „Daten reparieren“ bzw. Speichern wird die Schuld synchronisiert.`
             });
           }
         });
@@ -7208,7 +7217,7 @@
           debtId: debt.id || '',
           amountOpen: Number(debt.amountOpen || 0),
           title: `Ratenplan offen: ${debt.name}`,
-          detail: `Es ist noch ${Number(debt.amountOpen || 0).toFixed(2)} € offen, aber keine Monatsrate hinterlegt.`
+          detail: `Es ist noch ${euro(Number(debt.amountOpen || 0))} offen, aber keine Monatsrate hinterlegt.`
         });
       }
       const annualRule = getDebtAnnualRateRule(debt);
@@ -7241,7 +7250,7 @@
             kind: 'warning',
             area: 'Schulden',
             title: 'MKK-Restschuld prüfen',
-            detail: `Laut MKK-Ratenplan startet die Forderung mit 3.208,32 €. Bei bisher gespeicherten Zahlungen von ${paidTotal.toFixed(2)} € müsste offen ${expectedOpen.toFixed(2)} € sein; gespeichert sind ${Number(debt.amountOpen || 0).toFixed(2)} €.`
+            detail: `Laut MKK-Ratenplan startet die Forderung mit 3.208,32 €. Bei bisher gespeicherten Zahlungen von ${euro(paidTotal)} müsste offen ${euro(expectedOpen)} sein; gespeichert sind ${euro(Number(debt.amountOpen || 0))}.`
           });
         }
       }
@@ -8266,9 +8275,6 @@
     const miscPlanned = details.miscPlanned;
     const totalAvail = details.free;
 
-    function euro(value) {
-      return `${Number(value || 0).toFixed(2)} €`;
-    }
     function percent(value, base) {
       if (!base) return '0,0 %';
       return `${((Number(value || 0) / Number(base || 1)) * 100).toFixed(1).replace('.', ',')} %`;
@@ -8426,7 +8432,7 @@
       criticalMonths.forEach((item) => {
         const chip = document.createElement('span');
         chip.className = 'pill danger';
-        chip.textContent = `${item.label}: ${item.free.toFixed(2)} €`;
+        chip.textContent = `${item.label}: ${euro(item.free)}`;
         financeChips.appendChild(chip);
       });
     } else {
@@ -8936,7 +8942,7 @@
       const free = details.free;
       const distributable = details.distributable;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${label}</td><td>${details.totalIncome.toFixed(2)} €</td><td>${details.totalCommonRounded.toFixed(2)} €</td><td>${details.totalPersonal.toFixed(2)} €</td><td title="Bisher in Fixkosten verknüpft: ${details.linkedDebtCosts.toFixed(2)} €">${details.debtPlanned.toFixed(2)} €</td><td>${details.debtSnowballExtra.toFixed(2)} €</td><td>${(details.debtDynamicExtra || 0).toFixed(2)} €</td><td>${details.miscPaid.toFixed(2)} €</td><td>${Number(details.miscOpen || 0).toFixed(2)} €</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${free.toFixed(2)} €</span></td><td>${details.reserves.toFixed(2)} €</td><td>${details.savings.toFixed(2)} €</td>`;
+      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro((details.debtDynamicExtra || 0))}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -9067,13 +9073,13 @@
     const closedSnapshot = closed && state.monthlyClosings ? state.monthlyClosings[currentMonth] : null;
     const details = closedSnapshot ? { ...liveDetails, ...closedSnapshot } : liveDetails;
     card.appendChild(createSummaryMetrics([
-      { label: 'Sicher verfügbar am Monatsende', value: `${details.free.toFixed(2)} €`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : '' },
-      { label: 'In Töpfe verteilbar', value: `${details.distributable.toFixed(2)} €`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
-      { label: 'Rücklagen 70 % über Puffer', value: `${details.reserves.toFixed(2)} €` },
-      { label: 'Sparen 30 % über Puffer', value: `${details.savings.toFixed(2)} €` },
-      { label: 'Schulden im Monat', value: `${Number(details.debtPlanned || 0).toFixed(2)} €`, hint: 'Bereits in Gemeinsame/Persönliche Kosten enthalten.' },
-      { label: 'Sonstige bezahlt', value: `${details.miscPaid.toFixed(2)} €` },
-      { label: 'Sonstige offen geplant', value: `${Number(details.miscOpen || 0).toFixed(2)} €`, kind: Number(details.miscOpen || 0) > 0 ? 'warning' : 'success' },
+      { label: 'Sicher verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : '' },
+      { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
+      { label: 'Rücklagen 70 % über Puffer', value: `${euro(details.reserves)}` },
+      { label: 'Sparen 30 % über Puffer', value: `${euro(details.savings)}` },
+      { label: 'Schulden im Monat', value: `${euro(Number(details.debtPlanned || 0))}`, hint: 'Bereits in Gemeinsame/Persönliche Kosten enthalten.' },
+      { label: 'Sonstige bezahlt', value: `${euro(details.miscPaid)}` },
+      { label: 'Sonstige offen geplant', value: `${euro(Number(details.miscOpen || 0))}`, kind: Number(details.miscOpen || 0) > 0 ? 'warning' : 'success' },
       { label: 'Status', value: closed ? '<span class="pill success">Abgeschlossen</span>' : '<span class="pill warning">Offen</span>' }
     ]));
 
@@ -9134,7 +9140,7 @@
     const wizard = document.createElement('div');
     wizard.className = 'month-wizard';
     const distributionText = details.distributable > 0
-      ? `${details.reserves.toFixed(2)} € Rücklagen · ${details.savings.toFixed(2)} € Sparen`
+      ? `${euro(details.reserves)} Rücklagen · ${euro(details.savings)} Sparen`
       : `${euro(Math.max(0, details.free || 0))} bleibt als Puffer · unter ${euro(savingsConfig.minFree)} keine Verteilung`;
     wizard.innerHTML = `<div><strong>1. Prüfen</strong><span>Offene Zahlungen und Hinweise kontrollieren</span></div><div><strong>2. Verteilen</strong><span>${distributionText}</span></div><div><strong>3. Abschließen</strong><span>${closed ? 'Monat ist abgeschlossen' : 'Beleg speichern'}</span></div>`;
     card.appendChild(wizard);
@@ -9164,11 +9170,11 @@
     Object.entries(savingsConfig.reservePotShares).forEach(([name, share]) => {
       const amount = details.reserves * share;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${name}</td><td>${(share * 100).toFixed(0)} %</td><td>${amount.toFixed(2)} €</td>`;
+      tr.innerHTML = `<td>${name}</td><td>${(share * 100).toFixed(0)} %</td><td>${euro(amount)}</td>`;
       tbody.appendChild(tr);
     });
     const saveRow = document.createElement('tr');
-    saveRow.innerHTML = `<td>Sparen</td><td>30 % vom Betrag über ${euro(savingsConfig.minFree)}</td><td>${details.savings.toFixed(2)} €</td>`;
+    saveRow.innerHTML = `<td>Sparen</td><td>30 % vom Betrag über ${euro(savingsConfig.minFree)}</td><td>${euro(details.savings)}</td>`;
     tbody.appendChild(saveRow);
     table.appendChild(tbody);
     card.appendChild(table);
@@ -9231,10 +9237,10 @@
     const paid = getBufferExpenseSumForMonth(currentMonth);
     const open = getBufferExpenseOpenSumForMonth(currentMonth);
     card.appendChild(createSummaryMetrics([
-      { label: `Geplant fällig ${formatMonthLabel(currentMonth)}`, value: `${planned.toFixed(2)} €`, kind: planned > 0 ? 'warning' : '' },
-      { label: 'Bereits bezahlt', value: `${paid.toFixed(2)} €`, kind: paid > 0 ? 'warning' : 'success' },
-      { label: 'Noch offen', value: `${open.toFixed(2)} €`, kind: open > 0 ? 'warning' : 'success' },
-      { label: 'Reduziert sicher frei um', value: `${planned.toFixed(2)} €`, kind: planned > 0 ? 'warning' : 'success' }
+      { label: `Geplant fällig ${formatMonthLabel(currentMonth)}`, value: `${euro(planned)}`, kind: planned > 0 ? 'warning' : '' },
+      { label: 'Bereits bezahlt', value: `${euro(paid)}`, kind: paid > 0 ? 'warning' : 'success' },
+      { label: 'Noch offen', value: `${euro(open)}`, kind: open > 0 ? 'warning' : 'success' },
+      { label: 'Reduziert sicher frei um', value: `${euro(planned)}`, kind: planned > 0 ? 'warning' : 'success' }
     ]));
 
     const hint = document.createElement('p');
@@ -9275,7 +9281,7 @@
           : (dueNow ? '<span class="pill warning">Offen</span>' : '<span class="pill">Nicht fällig</span>');
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${post.name}</td>
-          <td>${amount.toFixed(2)} €</td>
+          <td>${euro(amount)}</td>
           <td>${getDisplayInterval(post)}</td>
           <td>${post.startMonth}</td>
           <td>${getDisplayEndMonth(post)}</td>
@@ -9731,11 +9737,11 @@ function renderCommon() {
     const roundedSum = Object.values(shareMapping).reduce((sum, val) => sum + val, 0);
 
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatlicher Bedarf', value: `${totalMonthly.toFixed(2)} €` },
-      { label: 'Monatsanteile gerundet', value: `${roundedSum.toFixed(2)} €` },
-      { label: 'Diesen Monat fällig', value: `${dueSum.toFixed(2)} €`, kind: dueSum > 0 ? 'warning' : '' },
-      { label: 'Bereits markiert', value: `${paidSum.toFixed(2)} €`, kind: paidSum > 0 ? 'success' : '' },
-      { label: 'Noch offen', value: `${(dueSum - paidSum).toFixed(2)} €`, kind: dueSum - paidSum > 0 ? 'danger' : 'success' }
+      { label: 'Monatlicher Bedarf', value: `${euro(totalMonthly)}` },
+      { label: 'Monatsanteile gerundet', value: `${euro(roundedSum)}` },
+      { label: 'Diesen Monat fällig', value: `${euro(dueSum)}`, kind: dueSum > 0 ? 'warning' : '' },
+      { label: 'Bereits markiert', value: `${euro(paidSum)}`, kind: paidSum > 0 ? 'success' : '' },
+      { label: 'Noch offen', value: `${euro((dueSum - paidSum))}`, kind: dueSum - paidSum > 0 ? 'danger' : 'success' }
     ]));
     const distBox = document.createElement('div');
     distBox.className = 'sub-card';
@@ -9751,7 +9757,7 @@ function renderCommon() {
     state.persons.forEach((p) => {
       const row = document.createElement('tr');
       const val = shareMapping[p.id] || 0;
-      row.innerHTML = `<td>${p.name}</td><td>${val.toFixed(2)} €</td>`;
+      row.innerHTML = `<td>${p.name}</td><td>${euro(val)}</td>`;
       distBody.appendChild(row);
     });
     distTable.appendChild(distBody);
@@ -9804,11 +9810,11 @@ function renderCommon() {
         const balanceDebitedNow = !!getPostAccountBalanceDebit(c, currentMonth);
         const linkedDebtName = getLinkedDebtName(c);
         tr.innerHTML = `<td>${c.name}</td>
-          <td>${currentAmount.toFixed(2)} €</td>
+          <td>${euro(currentAmount)}</td>
           <td>${getDisplayInterval(c)}</td>
           <td>${c.startMonth}</td>
           <td>${getDisplayEndMonth(c)}</td>
-          <td>${monthlyShare.toFixed(2)} €</td>
+          <td>${euro(monthlyShare)}</td>
           <td>${getDueBadgeHtml(dueNow)}</td>
           <td>${linkedSavingsGoalName || '-'}</td>
           <td>${linkedDebtName || '-'}</td>
@@ -9918,6 +9924,7 @@ function showCommonEditor(editCost) {
     row1.appendChild(createLabelInput('Betrag in €', refs.amountInput));
     baseSection.appendChild(row1);
     content.appendChild(baseSection);
+    appendAmountChangeModeField(content, refs, editCost);
 
     const scheduleSection = createGuidedFormSection('2. Wann zählt der Posten?', 'Einmalig für genau einen Monat oder laufend mit verständlichem Rhythmus.');
     const row2 = document.createElement('div');
@@ -9973,7 +9980,7 @@ function showCommonEditor(editCost) {
     const hint = document.createElement('p');
     hint.className = 'small muted';
     hint.textContent = editCost
-      ? 'Wenn sich der Betrag ändert, fragt die App wie bisher, ob die Änderung nur für diesen Monat oder ab jetzt dauerhaft gilt.'
+      ? 'Wenn sich der Betrag ändert, kannst du oben wählen, ob er nur für diesen Monat oder dauerhaft gilt.'
       : 'Neue Posten werden direkt mit ihren Laufzeitregeln gespeichert. Du kannst entweder eine Schuld oder eine Rücklage verknüpfen.';
     content.appendChild(hint);
 
@@ -10017,8 +10024,9 @@ function showCommonEditor(editCost) {
             const previousAmount = getEffectiveAmountForMonth(editCost, currentMonth);
             let mode = null;
             if (Math.abs(previousAmount - amount) > 0.000001) {
-              mode = isOneTimePost(editCost) || scheduleValidation.value.oneTime ? 'future' : askAmountChangeMode(currentMonth);
-              if (!mode) return;
+              mode = isOneTimePost(editCost) || scheduleValidation.value.oneTime
+                ? 'future'
+                : refs.amountChangeModeSelect.value;
             }
             editCost.name = name;
             editCost.startMonth = startMonth;
@@ -10122,11 +10130,11 @@ function renderPersonal() {
     summaryTitle.textContent = 'Persönliche Ausgaben gesamt';
     summaryCard.appendChild(summaryTitle);
     summaryCard.appendChild(createSummaryMetrics([
-      { label: 'Monatlich geplant', value: `${overallMonthly.toFixed(2)} €` },
-      { label: 'Anteil gemeinsame Kosten', value: `${overallCommonShare.toFixed(2)} €`, kind: overallCommonShare > 0 ? 'warning' : '' },
-      { label: 'Fällig inkl. Anteil', value: `${overallDueWithCommon.toFixed(2)} €`, kind: overallDueWithCommon > 0 ? 'warning' : '' },
-      { label: 'Bereits markiert inkl. Anteil', value: `${overallPaidWithCommon.toFixed(2)} €`, kind: overallPaidWithCommon > 0 ? 'success' : '' },
-      { label: 'Noch offen inkl. Anteil', value: `${overallOpenWithCommon.toFixed(2)} €`, kind: overallOpenWithCommon > 0 ? 'danger' : 'success' }
+      { label: 'Monatlich geplant', value: `${euro(overallMonthly)}` },
+      { label: 'Anteil gemeinsame Kosten', value: `${euro(overallCommonShare)}`, kind: overallCommonShare > 0 ? 'warning' : '' },
+      { label: 'Fällig inkl. Anteil', value: `${euro(overallDueWithCommon)}`, kind: overallDueWithCommon > 0 ? 'warning' : '' },
+      { label: 'Bereits markiert inkl. Anteil', value: `${euro(overallPaidWithCommon)}`, kind: overallPaidWithCommon > 0 ? 'success' : '' },
+      { label: 'Noch offen inkl. Anteil', value: `${euro(overallOpenWithCommon)}`, kind: overallOpenWithCommon > 0 ? 'danger' : 'success' }
     ]));
     personalSection.appendChild(summaryCard);
     const personalFilterCard = document.createElement('div');
@@ -10173,18 +10181,18 @@ function renderPersonal() {
       const openWithCommon = Math.max(dueWithCommon - paidWithCommon, 0);
       const commonShareDiff = roundMoney(commonShare - commonSharePaidAmount);
       card.appendChild(createSummaryMetrics([
-        { label: 'Persönlich geplant', value: `${monthlySum.toFixed(2)} €` },
-        { label: 'Anteil gemeinsame Kosten', value: `${(commonSharePaid ? commonSharePaidAmount : commonShare).toFixed(2)} €`, kind: commonSharePaid && commonShareDiff <= 0.005 ? 'success' : (commonShare > 0 ? 'warning' : '') , hint: commonSharePaid ? (Math.abs(commonShareDiff) > 0.005 ? `Fixiert; aktueller Soll-Anteil ${euro(commonShare)}.` : 'Bereits als bezahlt fixiert.') : 'Noch als Monatsanteil offen.' },
-        { label: 'Fällig inkl. Anteil', value: `${dueWithCommon.toFixed(2)} €`, kind: dueWithCommon > 0 ? 'warning' : '' },
-        { label: 'Bereits markiert inkl. Anteil', value: `${paidWithCommon.toFixed(2)} €`, kind: paidWithCommon > 0 ? 'success' : '' },
-        { label: 'Noch offen inkl. Anteil', value: `${openWithCommon.toFixed(2)} €`, kind: openWithCommon > 0 ? 'danger' : 'success' }
+        { label: 'Persönlich geplant', value: `${euro(monthlySum)}` },
+        { label: 'Anteil gemeinsame Kosten', value: `${euro((commonSharePaid ? commonSharePaidAmount : commonShare))}`, kind: commonSharePaid && commonShareDiff <= 0.005 ? 'success' : (commonShare > 0 ? 'warning' : '') , hint: commonSharePaid ? (Math.abs(commonShareDiff) > 0.005 ? `Fixiert; aktueller Soll-Anteil ${euro(commonShare)}.` : 'Bereits als bezahlt fixiert.') : 'Noch als Monatsanteil offen.' },
+        { label: 'Fällig inkl. Anteil', value: `${euro(dueWithCommon)}`, kind: dueWithCommon > 0 ? 'warning' : '' },
+        { label: 'Bereits markiert inkl. Anteil', value: `${euro(paidWithCommon)}`, kind: paidWithCommon > 0 ? 'success' : '' },
+        { label: 'Noch offen inkl. Anteil', value: `${euro(openWithCommon)}`, kind: openWithCommon > 0 ? 'danger' : 'success' }
       ]));
 
       const commonShareInfo = document.createElement('div');
       commonShareInfo.className = commonSharePaid && commonShareDiff <= 0.005 ? 'notice success personal-common-share' : 'notice warning personal-common-share';
       commonShareInfo.innerHTML = commonSharePaid
         ? `<strong>Anteil gemeinsame Kosten:</strong> ${euro(commonSharePaidAmount)} ist als bezahlt fixiert.${Math.abs(commonShareDiff) > 0.005 ? ` Aktueller Soll-Anteil: ${euro(commonShare)}.` : ''}`
-        : `<strong>Anteil gemeinsame Kosten:</strong> ${commonShare.toFixed(2)} € ist noch nicht als bezahlt markiert.`;
+        : `<strong>Anteil gemeinsame Kosten:</strong> ${euro(commonShare)} ist noch nicht als bezahlt markiert.`;
       card.appendChild(commonShareInfo);
 
       if (posts.length === 0) {
@@ -10211,7 +10219,7 @@ function renderPersonal() {
           const balanceDebitedNow = !!getPostAccountBalanceDebit(pc, currentMonth);
           const paidWithIncomeHint = pc.paidWithIncome === true ? '<div class="small muted">Lohnabzug · automatisch bei Lohn-Eingang</div>' : '';
           tr.innerHTML = `<td>${pc.name}${paidWithIncomeHint}</td>
-            <td>${currentAmount.toFixed(2)} €</td>
+            <td>${euro(currentAmount)}</td>
             <td>${getDisplayInterval(pc)}</td>
             <td>${pc.startMonth}</td>
             <td>${getDisplayEndMonth(pc)}</td>
@@ -10316,6 +10324,7 @@ function showPersonalEditor(personId, editPost) {
     row1.appendChild(createLabelInput('Betrag in €', refs.amountInput));
     baseSection.appendChild(row1);
     content.appendChild(baseSection);
+    appendAmountChangeModeField(content, refs, editPost);
 
     const scheduleSection = createGuidedFormSection('2. Wann zählt der Posten?', 'Einmalig für den Monat oder laufend für wiederkehrende Ausgaben.');
     const row2 = document.createElement('div');
@@ -10383,7 +10392,7 @@ function showPersonalEditor(personId, editPost) {
     const hint = document.createElement('p');
     hint.className = 'small muted';
     hint.textContent = editPost
-      ? 'Wenn sich der Betrag ändert, fragt die App wie bisher nach „nur dieser Monat“ oder „ab jetzt dauerhaft“.'
+      ? 'Wenn sich der Betrag ändert, kannst du oben „nur dieser Monat“ oder „ab jetzt dauerhaft“ wählen.'
       : 'Neue persönliche Posten kannst du hier kompakt anlegen. Du kannst entweder eine Schuld oder eine Rücklage verknüpfen.';
     content.appendChild(hint);
 
@@ -10427,8 +10436,9 @@ function showPersonalEditor(personId, editPost) {
             const previousAmount = getEffectiveAmountForMonth(editPost, currentMonth);
             let mode = null;
             if (Math.abs(previousAmount - amount) > 0.000001) {
-              mode = isOneTimePost(editPost) || scheduleValidation.value.oneTime ? 'future' : askAmountChangeMode(currentMonth);
-              if (!mode) return;
+              mode = isOneTimePost(editPost) || scheduleValidation.value.oneTime
+                ? 'future'
+                : refs.amountChangeModeSelect.value;
             }
             editPost.name = name;
             editPost.startMonth = startMonth;
@@ -10507,6 +10517,7 @@ function showPersonalEditor(personId, editPost) {
     row1.appendChild(createLabelInput('Betrag in €', refs.amountInput));
     baseSection.appendChild(row1);
     content.appendChild(baseSection);
+    appendAmountChangeModeField(content, refs, editPost);
 
     const scheduleSection = createGuidedFormSection('2. Zeitraum', 'Sonstige Ausgaben sind standardmäßig einmalig. Für wiederkehrende Ausgaben kannst du „laufend“ wählen.');
     const row2 = document.createElement('div');
@@ -10588,8 +10599,9 @@ function showPersonalEditor(personId, editPost) {
             const previousAmount = getEffectiveAmountForMonth(editPost, currentMonth);
             let mode = null;
             if (Math.abs(previousAmount - amount) > 0.000001) {
-              mode = isOneTimePost(editPost) || scheduleValidation.value.oneTime ? 'future' : askAmountChangeMode(currentMonth);
-              if (!mode) return;
+              mode = isOneTimePost(editPost) || scheduleValidation.value.oneTime
+                ? 'future'
+                : refs.amountChangeModeSelect.value;
             }
             editPost.name = name;
             editPost.startMonth = startMonth;
@@ -10832,7 +10844,7 @@ function showPersonalEditor(personId, editPost) {
         note: inputs.note.value
       });
       syncAllTankgeldExpenses({ silent: true });
-      addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · ${receipt.liters.toFixed(2)} l · netto ${receipt.netCost.toFixed(2)} €`, receipt.month);
+      addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · ${receipt.liters.toFixed(2)} l · netto ${euro(receipt.netCost)}`, receipt.month);
       saveState();
       render();
     });
@@ -11451,10 +11463,10 @@ function showPersonalEditor(personId, editPost) {
     const bennyShare = getTankForecastShare('benny', currentMonth);
     const madeleineShare = getTankForecastShare('madeleine', currentMonth);
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatsbudget gesamt', value: `${householdTankStats.roundedBudget.toFixed(2)} €`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
+      { label: 'Monatsbudget gesamt', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
       { label: 'Basis', value: householdTankStats.projectedCount > 0 ? `${householdTankStats.realCount} echt + ${householdTankStats.projectedCount} Prognose` : '12 echte Monate' },
-      { label: 'Smart-Anteil', value: `${bennyBudget.toFixed(2)} €`, hint: `${(bennyShare * 100).toFixed(1)} % der Kilometerbasis` },
-      { label: 'Seat-Anteil', value: `${madeleineBudget.toFixed(2)} €`, hint: `${(madeleineShare * 100).toFixed(1)} % der Kilometerbasis` },
+      { label: 'Smart-Anteil', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % der Kilometerbasis` },
+      { label: 'Seat-Anteil', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % der Kilometerbasis` },
       { label: 'API-Key', value: state.tankCalc.apiKey ? 'Gespeichert' : 'Fehlt', kind: state.tankCalc.apiKey ? 'success' : 'warning' }
     ]));
 
@@ -11598,7 +11610,7 @@ function showPersonalEditor(personId, editPost) {
         { label: 'Kilometer / Monat', value: `${Number(cfg.kmPerMonth || 0).toFixed(0)} km` },
         { label: 'Berechnungsbasis', value: tankBudget.source || '—', kind: tankBudget.rounded > 0 ? 'success' : 'warning' },
         { label: 'Preis genutzt', value: tankBudget.priceUsed ? `${tankBudget.priceUsed.toFixed(3)} €/l` : (tankBudget.avgStats && tankBudget.avgStats.count ? 'echter Schnitt' : '—'), kind: tankBudget.rounded > 0 ? 'success' : 'warning' },
-        { label: 'Prognose', value: `${tankBudget.rounded.toFixed(2)} €`, kind: tankBudget.rounded > 0 ? 'success' : 'warning' }
+        { label: 'Prognose', value: `${euro(tankBudget.rounded)}`, kind: tankBudget.rounded > 0 ? 'success' : 'warning' }
       ]));
 
       renderTankMonthlyTracking(sub, personKey, labelText);
@@ -11609,7 +11621,7 @@ function showPersonalEditor(personId, editPost) {
       if (linkedTankPost) {
         const paidText = isPostPaidForMonth(linkedTankPost, currentMonth) ? 'bezahlt/fest' : 'offen';
         const activeAmount = getEffectiveAmountForMonth(linkedTankPost, currentMonth);
-        linkInfo.textContent = `Verknüpfter Ausgabenposten: ${linkedTankPost.name} · ${activeAmount.toFixed(2)} € · ${paidText}`;
+        linkInfo.textContent = `Verknüpfter Ausgabenposten: ${linkedTankPost.name} · ${euro(activeAmount)} · ${paidText}`;
       } else {
         linkInfo.textContent = 'Noch kein Tankgeld-Posten gefunden. Beim Synchronisieren wird er automatisch angelegt.';
       }
@@ -11742,7 +11754,7 @@ function showPersonalEditor(personId, editPost) {
     if (markAsMonthly) {
       advanceDebtNextDueMonthAfterPayment(debt, month);
     }
-    addChangeLog('Schulden', `${debt.name || 'Schuld'}: ${paymentAmount.toFixed(2)} € bezahlt`, month);
+    addChangeLog('Schulden', `${debt.name || 'Schuld'}: ${euro(paymentAmount)} bezahlt`, month);
     return true;
   }
 
@@ -11780,7 +11792,7 @@ function showPersonalEditor(personId, editPost) {
     if (removesMonthlyStatus && (!debt.nextDueMonth || monthDiff(monthKey, debt.nextDueMonth) > 0)) {
       debt.nextDueMonth = monthKey;
     }
-    if (restoreAmount > 0) addChangeLog('Schulden', `${debt.name || 'Schuld'}: Zahlung ${restoreAmount.toFixed(2)} € zurückgesetzt`, monthKey);
+    if (restoreAmount > 0) addChangeLog('Schulden', `${debt.name || 'Schuld'}: Zahlung ${euro(restoreAmount)} zurückgesetzt`, monthKey);
     return restoreAmount > 0;
   }
 
@@ -11928,10 +11940,10 @@ function showPersonalEditor(personId, editPost) {
       .sort()
       .pop() || '-';
     card.appendChild(createSummaryMetrics([
-      { label: 'Restschuld gesamt', value: `${totalDebtSum.toFixed(2)} €`, kind: totalDebtSum > 0 ? 'danger' : 'success' },
-      { label: 'Plan diesen Monat', value: `${dueSum.toFixed(2)} €`, kind: dueSum > 0 ? 'warning' : '' },
-      { label: 'Bereits bezahlt', value: `${paidSum.toFixed(2)} €`, kind: paidSum > 0 ? 'success' : '' },
-      { label: 'Noch offen', value: `${openThisMonth.toFixed(2)} €`, kind: openThisMonth > 0 ? 'danger' : 'success' },
+      { label: 'Restschuld gesamt', value: `${euro(totalDebtSum)}`, kind: totalDebtSum > 0 ? 'danger' : 'success' },
+      { label: 'Plan diesen Monat', value: `${euro(dueSum)}`, kind: dueSum > 0 ? 'warning' : '' },
+      { label: 'Bereits bezahlt', value: `${euro(paidSum)}`, kind: paidSum > 0 ? 'success' : '' },
+      { label: 'Noch offen', value: `${euro(openThisMonth)}`, kind: openThisMonth > 0 ? 'danger' : 'success' },
       { label: 'Aktive Schulden', value: String(activeDebts) },
       { label: 'Schuldenfrei grob', value: estimatedDebtFree === '-' ? '-' : formatMonthLabel(estimatedDebtFree) }
     ]));
@@ -11984,9 +11996,9 @@ function showPersonalEditor(personId, editPost) {
       card.appendChild(createSummaryMetrics([
         { label: 'Schneeball frei ab', value: snowball.events[0] ? formatMonthLabel(nextMonth(snowball.events[0].month)) : '-' },
         { label: 'Umlage-Regel', value: '6-Monats-Regel + kleinste passende Schuld' },
-        { label: 'Plan aktueller Monat', value: `${currentPlannedDebtTotal.toFixed(2)} €` },
-        { label: 'davon Schneeball', value: `${currentSnowballTotal.toFixed(2)} €` },
-        { label: 'davon extra', value: `${currentDynamicTotal.toFixed(2)} €` },
+        { label: 'Plan aktueller Monat', value: `${euro(currentPlannedDebtTotal)}` },
+        { label: 'davon Schneeball', value: `${euro(currentSnowballTotal)}` },
+        { label: 'davon extra', value: `${euro(currentDynamicTotal)}` },
         { label: 'Schuldenfrei mit Schneeball', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : 'offen' }
       ]));
     }
@@ -12051,9 +12063,9 @@ function showPersonalEditor(personId, editPost) {
         const plannedDynamic = isFixedPaidThisMonth ? 0 : Number(planItem.dynamic || 0);
         const plannedTotal = isFixedPaidThisMonth ? paidAmount : (Number(planItem.planned || 0) || plannedRate);
         const plannedHtml = plannedTotal > 0
-          ? `<strong>${plannedTotal.toFixed(2)} €</strong><div class="small muted">${isFixedPaidThisMonth ? 'fest bezahlt' : 'Rate ' + plannedRate.toFixed(2) + ' €'}</div>`
+          ? `<strong>${euro(plannedTotal)}</strong><div class="small muted">${isFixedPaidThisMonth ? 'fest bezahlt' : 'Rate ' + euro(plannedRate)}</div>`
           : '-';
-        tr.innerHTML = `<td class="debt-name-cell"><strong>${d.name}</strong></td><td class="account-only">${getAccountName(d.accountId)}</td><td>${Number(d.amountOpen || 0).toFixed(2)} €</td><td>${minRate.toFixed(2)} €</td><td>${plannedSnowball > 0 ? '<span class="snowball-pill">+' + plannedSnowball.toFixed(2) + ' €</span>' : '-'}</td><td>${plannedDynamic > 0 ? '<span class="dynamic-pill">+' + plannedDynamic.toFixed(2) + ' €</span>' : '-'}</td><td class="${plannedSnowball > 0 || plannedDynamic > 0 ? 'amount-highlight' : ''}">${plannedHtml}</td><td>${d.nextDueMonth || '-'}</td><td>${estimatedEnd || '-'}</td><td>${progressHtml}</td><td>${statusHtml}</td><td></td><td></td>`;
+        tr.innerHTML = `<td class="debt-name-cell"><strong>${d.name}</strong></td><td class="account-only">${getAccountName(d.accountId)}</td><td>${euro(Number(d.amountOpen || 0))}</td><td>${euro(minRate)}</td><td>${plannedSnowball > 0 ? '<span class="snowball-pill">+' + euro(plannedSnowball) + '</span>' : '-'}</td><td>${plannedDynamic > 0 ? '<span class="dynamic-pill">+' + euro(plannedDynamic) + '</span>' : '-'}</td><td class="${plannedSnowball > 0 || plannedDynamic > 0 ? 'amount-highlight' : ''}">${plannedHtml}</td><td>${d.nextDueMonth || '-'}</td><td>${estimatedEnd || '-'}</td><td>${progressHtml}</td><td>${statusHtml}</td><td></td><td></td>`;
 
         const payCell = tr.children[11];
         if (Number(d.amountOpen || 0) <= 0) {
@@ -12063,7 +12075,7 @@ function showPersonalEditor(personId, editPost) {
           payCell.appendChild(done);
         } else if (paidNow) {
           const done = document.createElement('div');
-          done.innerHTML = `<span class="pill success">Bezahlt</span><div class="small muted">${paidAmount.toFixed(2)} €</div>`;
+          done.innerHTML = `<span class="pill success">Bezahlt</span><div class="small muted">${euro(paidAmount)}</div>`;
           payCell.appendChild(done);
         } else if (dueNow && plannedTotal > 0) {
           const btn = document.createElement('button');
@@ -12139,7 +12151,7 @@ function showPersonalEditor(personId, editPost) {
 
       const info = document.createElement('p');
       info.className = 'small muted';
-      info.innerHTML = `<strong>Monatsplan inkl. fest bezahlter Beträge + offene Dynamik:</strong> ${dueSum.toFixed(2)} € · <strong>davon Schneeball:</strong> ${currentSnowballTotal.toFixed(2)} € · <strong>davon Extra:</strong> ${currentDynamicTotal.toFixed(2)} € · <strong>Bereits bezahlt:</strong> ${paidSum.toFixed(2)} € · <strong>Noch zu bezahlen:</strong> ${openThisMonth.toFixed(2)} €`;
+      info.innerHTML = `<strong>Monatsplan inkl. fest bezahlter Beträge + offene Dynamik:</strong> ${euro(dueSum)} · <strong>davon Schneeball:</strong> ${euro(currentSnowballTotal)} · <strong>davon Extra:</strong> ${euro(currentDynamicTotal)} · <strong>Bereits bezahlt:</strong> ${euro(paidSum)} · <strong>Noch zu bezahlen:</strong> ${euro(openThisMonth)}`;
       card.appendChild(info);
     }
 
@@ -12192,7 +12204,7 @@ function showPersonalEditor(personId, editPost) {
       const transferNotes = new Map();
       (Array.isArray(row.freedTransfers) ? row.freedTransfers : []).forEach((entry) => {
         const target = entry.targetDebt || 'keine weitere Schuld / wird frei';
-        const txt = `${entry.sourceDebt} läuft aus: ${Number(entry.amount || 0).toFixed(2)} € ab ${formatMonthLabel(entry.transferMonth)} → ${target}`;
+        const txt = `${entry.sourceDebt} läuft aus: ${euro(Number(entry.amount || 0))} ab ${formatMonthLabel(entry.transferMonth)} → ${target}`;
         const key = entry.targetDebt || '__free__';
         if (!transferNotes.has(key)) transferNotes.set(key, []);
         transferNotes.get(key).push(txt);
@@ -12207,7 +12219,7 @@ function showPersonalEditor(personId, editPost) {
 
       if (items.length === 0 && transferNotes.size === 0) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${formatMonthLabel(row.month)}</td><td>keine Schuldenzahlung</td><td>0,00 €</td><td>-</td><td>-</td><td>0,00 €</td><td>${Number(row.remaining || 0).toFixed(2)} €</td><td>-</td>`;
+        tr.innerHTML = `<td>${formatMonthLabel(row.month)}</td><td>keine Schuldenzahlung</td><td>0,00 €</td><td>-</td><td>-</td><td>0,00 €</td><td>${euro(Number(row.remaining || 0))}</td><td>-</td>`;
         tbody.appendChild(tr);
         rendered += 1;
         return;
@@ -12223,11 +12235,11 @@ function showPersonalEditor(personId, editPost) {
         tr.innerHTML = `
           <td>${index === 0 ? formatMonthLabel(row.month) : ''}</td>
           <td><strong>${item.debt}</strong></td>
-          <td>${Number(item.regular || 0).toFixed(2)} €</td>
-          <td>${Number(item.snowball || 0) > 0 ? '<span class="snowball-pill">+' + Number(item.snowball || 0).toFixed(2) + ' €</span>' : '-'}</td>
-          <td>${Number(item.dynamic || 0) > 0 ? '<span class="dynamic-pill">+' + Number(item.dynamic || 0).toFixed(2) + ' €</span>' : '-'}</td>
-          <td class="${hasExtra ? 'amount-highlight' : ''}"><strong>${Number(item.planned || 0).toFixed(2)} €</strong></td>
-          <td>${Number(item.remainingAfter || 0).toFixed(2)} €</td>
+          <td>${euro(Number(item.regular || 0))}</td>
+          <td>${Number(item.snowball || 0) > 0 ? '<span class="snowball-pill">+' + euro(Number(item.snowball || 0)) + '</span>' : '-'}</td>
+          <td>${Number(item.dynamic || 0) > 0 ? '<span class="dynamic-pill">+' + euro(Number(item.dynamic || 0)) + '</span>' : '-'}</td>
+          <td class="${hasExtra ? 'amount-highlight' : ''}"><strong>${euro(Number(item.planned || 0))}</strong></td>
+          <td>${euro(Number(item.remainingAfter || 0))}</td>
           <td>${notes.length ? notes.join('<br>') : '-'}</td>`;
         tbody.appendChild(tr);
         rendered += 1;
@@ -12237,7 +12249,7 @@ function showPersonalEditor(personId, editPost) {
         transferNotes.get('__free__').forEach((txt, idx) => {
           const tr = document.createElement('tr');
           tr.className = 'soft-row';
-          tr.innerHTML = `<td>${items.length === 0 && idx === 0 ? formatMonthLabel(row.month) : ''}</td><td><strong>frei werdend</strong></td><td>-</td><td>-</td><td>-</td><td>0,00 €</td><td>${Number(row.remaining || 0).toFixed(2)} €</td><td>${txt}</td>`;
+          tr.innerHTML = `<td>${items.length === 0 && idx === 0 ? formatMonthLabel(row.month) : ''}</td><td><strong>frei werdend</strong></td><td>-</td><td>-</td><td>-</td><td>0,00 €</td><td>${euro(Number(row.remaining || 0))}</td><td>${txt}</td>`;
           tbody.appendChild(tr);
           rendered += 1;
         });
@@ -12334,9 +12346,9 @@ function showPersonalEditor(personId, editPost) {
       return;
     }
     const sourceParts = ['Schuldenbereich'];
-    if (Number(breakdown.rate || 0) > 0) sourceParts.push(`Rate ${Number(breakdown.rate || 0).toFixed(2)} €`);
-    if (Number(breakdown.snowball || 0) > 0) sourceParts.push(`Schneeball ${Number(breakdown.snowball || 0).toFixed(2)} €`);
-    if (Number(breakdown.dynamic || 0) > 0) sourceParts.push(`Extra ${Number(breakdown.dynamic || 0).toFixed(2)} €`);
+    if (Number(breakdown.rate || 0) > 0) sourceParts.push(`Rate ${euro(Number(breakdown.rate || 0))}`);
+    if (Number(breakdown.snowball || 0) > 0) sourceParts.push(`Schneeball ${euro(Number(breakdown.snowball || 0))}`);
+    if (Number(breakdown.dynamic || 0) > 0) sourceParts.push(`Extra ${euro(Number(breakdown.dynamic || 0))}`);
     if (addDebtPayment(debt, {
       month: paidMonth,
       amount,
@@ -12358,7 +12370,7 @@ function showPersonalEditor(personId, editPost) {
     const info = document.createElement('p');
     info.className = 'small muted';
     const currentRate = getDebtRateForMonth(debt, currentMonth);
-    info.innerHTML = `<strong>${debt.name}</strong><br>Aktuelle Rate in ${formatMonthLabel(currentMonth)}: <strong>${currentRate.toFixed(2)} €</strong>${getNextDebtRateChangeText(debt) ? `<br>${getNextDebtRateChangeText(debt)}` : ''}`;
+    info.innerHTML = `<strong>${debt.name}</strong><br>Aktuelle Rate in ${formatMonthLabel(currentMonth)}: <strong>${euro(currentRate)}</strong>${getNextDebtRateChangeText(debt) ? `<br>${getNextDebtRateChangeText(debt)}` : ''}`;
     content.appendChild(info);
 
     const row1 = document.createElement('div');
@@ -12419,10 +12431,10 @@ function showPersonalEditor(personId, editPost) {
           const oldRate = getDebtRateForMonth(debt, month);
           if (refs.modeSelect.value === 'single_month') {
             if (!setDebtRateOnlyForMonth(debt, month, amount)) return alert('Die Rate konnte für diesen Monat nicht geändert werden.');
-            addChangeLog('Schulden', `${debt.name}: Rate nur ${formatMonthLabel(month)} von ${oldRate.toFixed(2)} € auf ${amount.toFixed(2)} € geändert`, month);
+            addChangeLog('Schulden', `${debt.name}: Rate nur ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert`, month);
           } else {
             if (!setDebtRateFromMonth(debt, month, amount)) return alert('Die Rate konnte ab diesem Monat nicht geändert werden.');
-            addChangeLog('Schulden', `${debt.name}: Rate ab ${formatMonthLabel(month)} von ${oldRate.toFixed(2)} € auf ${amount.toFixed(2)} € geändert`, month);
+            addChangeLog('Schulden', `${debt.name}: Rate ab ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert`, month);
           }
           if (debt.paymentType === 'open_plan' && amount > 0) debt.paymentType = 'installment';
           saveState();
@@ -12441,7 +12453,7 @@ function showPersonalEditor(personId, editPost) {
 
     const info = document.createElement('p');
     info.className = 'small muted';
-    info.innerHTML = `<strong>${debt.name}</strong> · Offen: ${Number(debt.amountOpen || 0).toFixed(2)} € · Rate: ${Number(getDebtRateForMonth(debt, currentMonth) || 0).toFixed(2)} €`;
+    info.innerHTML = `<strong>${debt.name}</strong> · Offen: ${euro(Number(debt.amountOpen || 0))} · Rate: ${euro(Number(getDebtRateForMonth(debt, currentMonth) || 0))}`;
     content.appendChild(info);
 
     const row1 = document.createElement('div');
@@ -12638,8 +12650,8 @@ function showPersonalEditor(personId, editPost) {
     const totalActiveIncome = state.persons.reduce((sum, p) => sum + getPersonNet(p, currentMonth), 0);
     const adjustedPersons = state.persons.filter((p) => p.netOverrides && p.netOverrides[currentMonth] != null).length;
     card.appendChild(createSummaryMetrics([
-      { label: 'Grundlohn gesamt', value: `${totalBaseIncome.toFixed(2)} €` },
-      { label: `Verwendet in ${formatMonthLabel(currentMonth)}`, value: `${totalActiveIncome.toFixed(2)} €`, kind: 'success' },
+      { label: 'Grundlohn gesamt', value: `${euro(totalBaseIncome)}` },
+      { label: `Verwendet in ${formatMonthLabel(currentMonth)}`, value: `${euro(totalActiveIncome)}`, kind: 'success' },
       { label: 'Ist-Auszahlungen erfasst', value: String(adjustedPersons), kind: adjustedPersons > 0 ? 'success' : '' },
       { label: 'Personen gesamt', value: String(state.persons.length) }
     ]));
@@ -12678,9 +12690,9 @@ function showPersonalEditor(personId, editPost) {
       personCard.appendChild(headRow);
 
       personCard.appendChild(createSummaryMetrics([
-        { label: 'Grundlohn / Basis', value: `${Number(p.net || 0).toFixed(2)} €` },
-        { label: `Verwendet in ${formatMonthLabel(currentMonth)}`, value: `${getPersonNet(p, currentMonth).toFixed(2)} €`, kind: sourceKind },
-        { label: hasShiftOverride ? 'Verschiebung nur Monat' : 'Verschiebung', value: `${activeShift.toFixed(2)} €`, kind: hasShiftOverride ? 'warning' : '' },
+        { label: 'Grundlohn / Basis', value: `${euro(Number(p.net || 0))}` },
+        { label: `Verwendet in ${formatMonthLabel(currentMonth)}`, value: `${euro(getPersonNet(p, currentMonth))}`, kind: sourceKind },
+        { label: hasShiftOverride ? 'Verschiebung nur Monat' : 'Verschiebung', value: `${euro(activeShift)}`, kind: hasShiftOverride ? 'warning' : '' },
         { label: 'Quelle', value: sourceLabel, kind: sourceKind }
       ]));
 
@@ -12693,7 +12705,7 @@ function showPersonalEditor(personId, editPost) {
       const timelineHint = document.createElement('p');
       timelineHint.className = 'small muted';
       if (nextTimeline && nextTimeline.month !== currentMonth) {
-        timelineHint.textContent = `Nächster bekannter Planwert: ${nextTimeline.amount.toFixed(2)} € ab ${formatMonthLabel(nextTimeline.month)}.`;
+        timelineHint.textContent = `Nächster bekannter Planwert: ${euro(nextTimeline.amount)} ab ${formatMonthLabel(nextTimeline.month)}.`;
       } else if (getActiveNetTimelineEntry(p, currentMonth)) {
         timelineHint.textContent = `Ein Planwert ist hinterlegt; die tatsächliche Auszahlung kannst du monatlich im Einkommen-Bereich eintragen.`;
       } else {
@@ -13061,12 +13073,107 @@ function renderSavings() {
     savingsSection.appendChild(card);
   }
 
+  function showPotEditor() {
+    const content = document.createElement('div');
+    content.className = 'modal-form';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'z. B. Urlaub oder Auto';
+    const amountInput = createMoneyField(0);
+    content.appendChild(createLabelInput('Name des Topfs', nameInput));
+    content.appendChild(createLabelInput('Startbetrag in €', amountInput));
+    showModal('Neuen Topf anlegen', content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: 'Anlegen',
+        className: 'primary',
+        onClick: (close) => {
+          const name = nameInput.value.trim();
+          const initial = parseMoneyInput(amountInput.value);
+          if (!name) return alert('Bitte einen Namen für den Topf eingeben.');
+          if (!Number.isFinite(initial)) return alert('Bitte einen gültigen Startbetrag eingeben.');
+          const pot = { id: generateId(), name, balance: initial, transactions: [] };
+          if (!Array.isArray(state.pots)) state.pots = [];
+          state.pots.push(pot);
+          selectedPotId = pot.id;
+          addChangeLog('Töpfe', `${name} mit ${euro(initial)} angelegt`, currentMonth);
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
+  function showPotTransactionEditor(pot, type) {
+    if (!pot) return;
+    const isWithdrawal = type === 'withdraw';
+    const content = document.createElement('div');
+    content.className = 'modal-form';
+    const info = document.createElement('p');
+    info.className = 'small muted';
+    info.textContent = `${pot.name} · aktueller Saldo ${euro(pot.balance)}`;
+    content.appendChild(info);
+    const amountInput = createMoneyField('');
+    const descriptionInput = document.createElement('input');
+    descriptionInput.type = 'text';
+    descriptionInput.placeholder = isWithdrawal ? 'z. B. Reparatur' : 'z. B. monatliche Rücklage';
+    content.appendChild(createLabelInput(isWithdrawal ? 'Ausgabe in €' : 'Einzahlung in €', amountInput));
+    content.appendChild(createLabelInput('Beschreibung (optional)', descriptionInput));
+
+    let allowOverdraftCheck = null;
+    if (isWithdrawal) {
+      const allowOverdraftLabel = document.createElement('label');
+      allowOverdraftLabel.className = 'checkbox-row';
+      allowOverdraftCheck = document.createElement('input');
+      allowOverdraftCheck.type = 'checkbox';
+      allowOverdraftLabel.appendChild(allowOverdraftCheck);
+      allowOverdraftLabel.appendChild(document.createTextNode(' Überziehung erlauben, falls die Ausgabe größer als der Saldo ist'));
+      content.appendChild(allowOverdraftLabel);
+    }
+
+    showModal(isWithdrawal ? `Aus ${pot.name} ausgeben` : `In ${pot.name} einzahlen`, content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: isWithdrawal ? 'Ausgabe buchen' : 'Einzahlung buchen',
+        className: isWithdrawal ? 'danger' : 'success',
+        onClick: (close) => {
+          const amount = parseMoneyInput(amountInput.value);
+          if (!Number.isFinite(amount) || amount <= 0) return alert('Bitte einen positiven Betrag eingeben.');
+          if (isWithdrawal && amount > Number(pot.balance || 0) && !allowOverdraftCheck.checked) {
+            return alert('Der Betrag ist größer als der Saldo. Aktiviere „Überziehung erlauben“, wenn du trotzdem fortfahren möchtest.');
+          }
+          const signedAmount = isWithdrawal ? -amount : amount;
+          pot.balance = Number(pot.balance || 0) + signedAmount;
+          if (!Array.isArray(pot.transactions)) pot.transactions = [];
+          pot.transactions.push({
+            date: currentMonth,
+            type: isWithdrawal ? 'withdraw' : 'deposit',
+            amount: signedAmount,
+            description: descriptionInput.value.trim()
+          });
+          addChangeLog('Töpfe', `${pot.name}: ${isWithdrawal ? 'Ausgabe' : 'Einzahlung'} ${euro(amount)} gebucht`, currentMonth);
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
   // Rendert den neuen Bereich „Töpfe“ mit allen Rücklagen-Töpfen und Summen
   
 function renderPots() {
     potsSection.innerHTML = '';
     const card = document.createElement('div');
     card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Töpfe';
+    card.appendChild(title);
+    const intro = document.createElement('p');
+    intro.textContent = 'Verwalte Rücklagen, Einzahlungen und Ausgaben. Beträge können mit Komma oder Punkt eingegeben werden.';
+    card.appendChild(intro);
 
     const header = document.createElement('div');
     header.className = 'row';
@@ -13077,6 +13184,7 @@ function renderPots() {
     });
 
     const potSelect = document.createElement('select');
+    potSelect.setAttribute('aria-label', 'Topf auswählen');
     const allOpt = document.createElement('option');
     allOpt.value = '';
     allOpt.textContent = 'Alle Töpfe';
@@ -13095,20 +13203,10 @@ function renderPots() {
     });
 
     const addBtn = document.createElement('button');
+    addBtn.type = 'button';
     addBtn.textContent = '+ Neuer Topf';
     addBtn.className = 'primary';
-    addBtn.addEventListener('click', () => {
-      const name = prompt('Name des Topfs:');
-      if (name == null) return;
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      const initialStr = prompt('Startbetrag (in €):', '0');
-      let initial = parseFloat(initialStr);
-      if (isNaN(initial)) initial = 0;
-      state.pots.push({ id: generateId(), name: trimmed, balance: initial, transactions: [] });
-      saveState();
-      render();
-    });
+    addBtn.addEventListener('click', showPotEditor);
 
     header.appendChild(monthSelect);
     header.appendChild(potSelect);
@@ -13132,10 +13230,10 @@ function renderPots() {
       });
     });
     card.appendChild(createSummaryMetrics([
-      { label: 'Gesamt in Töpfen', value: `${totalManual.toFixed(2)} €`, kind: totalManual > 0 ? 'success' : '' },
-      { label: 'Plan 12 Monate', value: `${totalReservePlan.toFixed(2)} €` },
-      { label: `Einzahlungen ${formatMonthLabel(currentMonth)}`, value: `${monthDeposits.toFixed(2)} €`, kind: monthDeposits > 0 ? 'success' : '' },
-      { label: `Ausgaben ${formatMonthLabel(currentMonth)}`, value: `${monthWithdrawals.toFixed(2)} €`, kind: monthWithdrawals > 0 ? 'warning' : '' },
+      { label: 'Gesamt in Töpfen', value: `${euro(totalManual)}`, kind: totalManual > 0 ? 'success' : '' },
+      { label: 'Plan 12 Monate', value: `${euro(totalReservePlan)}` },
+      { label: `Einzahlungen ${formatMonthLabel(currentMonth)}`, value: `${euro(monthDeposits)}`, kind: monthDeposits > 0 ? 'success' : '' },
+      { label: `Ausgaben ${formatMonthLabel(currentMonth)}`, value: `${euro(monthWithdrawals)}`, kind: monthWithdrawals > 0 ? 'warning' : '' },
       { label: 'Anzahl Töpfe', value: String(state.pots.length) }
     ]));
 
@@ -13156,45 +13254,12 @@ function renderPots() {
         autoSum += pot.name === 'Sparen' ? getSavingsContribution(m.key) : getReserveContributionForPot(pot.name, m.key);
       });
 
-      tr.innerHTML = `<td>${pot.name}</td><td>${pot.balance.toFixed(2)} €</td><td>${autoSum.toFixed(2)} €</td><td></td>`;
+      tr.innerHTML = `<td>${pot.name}</td><td>${euro(pot.balance)}</td><td>${euro(autoSum)}</td><td></td>`;
       const act = tr.children[3];
 
-      const dep = document.createElement('button');
-      dep.textContent = 'Einzahlen';
-      dep.className = 'success';
-      dep.addEventListener('click', () => {
-        const amountStr = prompt(`Betrag zum Einzahlen in "${pot.name}":`, '0');
-        if (amountStr == null) return;
-        let amount = parseFloat(amountStr);
-        if (isNaN(amount) || amount <= 0) return alert('Bitte einen positiven Betrag eingeben.');
-        const desc = prompt('Beschreibung (optional):', 'Einzahlung');
-        pot.balance += amount;
-        pot.transactions.push({ date: currentMonth, type: 'deposit', amount: amount, description: desc || '' });
-        saveState();
-        render();
-      });
-
-      const wit = document.createElement('button');
-      wit.textContent = 'Ausgeben';
-      wit.className = 'danger';
-      wit.addEventListener('click', () => {
-        const amountStr = prompt(`Betrag zum Ausgeben aus "${pot.name}":`, '0');
-        if (amountStr == null) return;
-        let amount = parseFloat(amountStr);
-        if (isNaN(amount) || amount <= 0) return alert('Bitte einen positiven Betrag eingeben.');
-        if (amount > pot.balance) {
-          if (!confirm('Der Betrag ist größer als der Saldo. Trotzdem fortfahren?')) return;
-        }
-        const desc = prompt('Beschreibung (optional):', 'Ausgabe');
-        pot.balance -= amount;
-        pot.transactions.push({ date: currentMonth, type: 'withdraw', amount: -amount, description: desc || '' });
-        saveState();
-        render();
-      });
-
       act.appendChild(createActionMenu([
-        { label: 'Einzahlen', className: 'success', onClick: () => dep.click() },
-        { label: 'Ausgeben', className: 'danger', onClick: () => wit.click() }
+        { label: 'Einzahlen', className: 'success', onClick: () => showPotTransactionEditor(pot, 'deposit') },
+        { label: 'Ausgeben', className: 'danger', onClick: () => showPotTransactionEditor(pot, 'withdraw') }
       ]));
       tbody.appendChild(tr);
     });
@@ -13229,7 +13294,7 @@ function renderPots() {
             }
           });
           const dRow = document.createElement('tr');
-          dRow.innerHTML = `<td>${m.label}</td><td>${autoVal.toFixed(2)} €</td><td>${dep.toFixed(2)} €</td><td>${wit.toFixed(2)} €</td>`;
+          dRow.innerHTML = `<td>${m.label}</td><td>${euro(autoVal)}</td><td>${euro(dep)}</td><td>${euro(wit)}</td>`;
           dBody.appendChild(dRow);
         });
 
@@ -13241,7 +13306,7 @@ function renderPots() {
           sumAuto += pot.name === 'Sparen' ? getSavingsContribution(m.key) : getReserveContributionForPot(pot.name, m.key);
         });
         const summaryDetail = document.createElement('p');
-        summaryDetail.innerHTML = `<strong>Plan-Gesamt für 12 Monate:</strong> ${sumAuto.toFixed(2)} €`;
+        summaryDetail.innerHTML = `<strong>Plan-Gesamt für 12 Monate:</strong> ${euro(sumAuto)}`;
         detailCard.appendChild(summaryDetail);
         card.appendChild(detailCard);
       }
@@ -13570,7 +13635,7 @@ function renderPots() {
           if (isNew) state.taxRefunds.push(item);
           selectedTaxRefundYear = item.year;
           normalizeAllTaxRefunds();
-          addChangeLog('Steuererstattung', `${isNew ? 'Erstattung eingetragen' : 'Erstattung geändert'}: ${item.year} / ${amount.toFixed(2)} €`, currentMonth);
+          addChangeLog('Steuererstattung', `${isNew ? 'Erstattung eingetragen' : 'Erstattung geändert'}: ${item.year} / ${euro(amount)}`, currentMonth);
           saveState();
           render();
           close();
@@ -13626,7 +13691,7 @@ function renderPots() {
           item.note = noteInput.value || '';
           if (isNew) refund.purchases.push(item);
           normalizeAllTaxRefunds();
-          addChangeLog('Steuererstattung', `${isNew ? 'Kauf eingetragen' : 'Kauf geändert'}: ${name} / ${amount.toFixed(2)} € – als Verwendung dokumentiert`, currentMonth);
+          addChangeLog('Steuererstattung', `${isNew ? 'Kauf eingetragen' : 'Kauf geändert'}: ${name} / ${euro(amount)} – als Verwendung dokumentiert`, currentMonth);
           saveState();
           render();
           close();
@@ -13912,6 +13977,8 @@ function renderPots() {
     const importInput = document.createElement('input');
     importInput.type = 'file';
     importInput.accept = '.json,application/json';
+    importInput.id = 'backupFileInput';
+    restoreLabel.htmlFor = importInput.id;
     fileWrap.appendChild(restoreLabel);
     fileWrap.appendChild(importInput);
     fileRow.appendChild(fileWrap);
@@ -13995,7 +14062,14 @@ function renderPots() {
 
           // Wichtig: Import zuerst vollständig übernehmen und dann erst normalisieren.
           // Dadurch werden ältere Sicherungen nicht abgelehnt, nur weil neuere Felder fehlen.
-          state = Object.assign(JSON.parse(JSON.stringify(defaultState)), importedState);
+          const safeImportedState = {};
+          Object.keys(importedState).forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(defaultState, key)) {
+              safeImportedState[key] = importedState[key];
+            }
+          });
+          state = Object.assign(JSON.parse(JSON.stringify(defaultState)), safeImportedState);
+          sanitizeStateTextValues(state);
           const importedSelectedMonth = state.appMeta && isMonthKey(state.appMeta.selectedMonth) ? state.appMeta.selectedMonth : '';
           const importWarningsInternal = [];
           const runImportStep = (label, fn) => {
@@ -14298,28 +14372,45 @@ function renderPots() {
     return wrap;
   }
 
+  let formFieldSequence = 0;
+
   function createLabelInput(labelText, inputEl) {
     const wrapper = document.createElement('div');
     const lbl = document.createElement('label');
     lbl.textContent = labelText;
+    const labelTarget = inputEl && inputEl.matches && inputEl.matches('input, select, textarea, button')
+      ? inputEl
+      : null;
+    if (labelTarget) {
+      formFieldSequence += 1;
+      if (!labelTarget.id) labelTarget.id = `form-field-${formFieldSequence}`;
+      lbl.htmlFor = labelTarget.id;
+    }
     wrapper.appendChild(lbl);
     wrapper.appendChild(inputEl);
     return wrapper;
   }
 
   function showModal(title, contentEl, buttons = []) {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const overlay = document.createElement('div');
     overlay.className = 'app-modal-overlay';
     const panel = document.createElement('div');
     panel.className = 'app-modal';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
     const header = document.createElement('div');
     header.className = 'app-modal-header';
     const heading = document.createElement('h3');
+    const headingId = `modal-title-${generateId()}`;
+    heading.id = headingId;
     heading.textContent = title;
+    panel.setAttribute('aria-labelledby', headingId);
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'secondary app-modal-close';
     closeBtn.textContent = '×';
+    closeBtn.setAttribute('aria-label', 'Dialog schließen');
     header.appendChild(heading);
     header.appendChild(closeBtn);
 
@@ -14336,11 +14427,34 @@ function renderPots() {
     overlay.appendChild(panel);
 
     const close = () => {
+      if (!overlay.isConnected) return;
       document.removeEventListener('keydown', onKeyDown);
       overlay.remove();
+      if (!document.querySelector('.app-modal-overlay')) document.body.classList.remove('modal-open');
+      if (previouslyFocused && previouslyFocused.isConnected) {
+        setTimeout(() => previouslyFocused.focus(), 0);
+      }
     };
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(panel.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
 
     closeBtn.addEventListener('click', close);
@@ -14361,10 +14475,12 @@ function renderPots() {
     });
 
     document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
     document.addEventListener('keydown', onKeyDown);
 
-    const firstField = panel.querySelector('input, select, textarea');
-    if (firstField) setTimeout(() => firstField.focus(), 0);
+    const initialFocus = panel.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), .app-modal-body button:not([disabled])')
+      || closeBtn;
+    setTimeout(() => initialFocus.focus(), 0);
     return { overlay, panel, body, footer, close };
   }
 
@@ -14379,7 +14495,7 @@ function renderPots() {
 
     const currentInfo = document.createElement('p');
     currentInfo.className = 'small';
-    currentInfo.innerHTML = `<strong>Verwendet in ${formatMonthLabel(currentMonth)}:</strong> ${activeNetForMonth.toFixed(2)} € <span class="muted">(${sourceLabel})</span>`;
+    currentInfo.innerHTML = `<strong>Verwendet in ${formatMonthLabel(currentMonth)}:</strong> ${euro(activeNetForMonth)} <span class="muted">(${sourceLabel})</span>`;
     content.appendChild(currentInfo);
 
     const identityRow = document.createElement('div');
@@ -14508,7 +14624,10 @@ function renderPots() {
   }
 
   function generateId() {
-    return Math.random().toString(36).substring(2, 10);
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
   }
   
   // Kleine Versionsanzeige oben aktualisieren. Wenn per Neu-Laden ein Refresh-Parameter gesetzt wurde,
