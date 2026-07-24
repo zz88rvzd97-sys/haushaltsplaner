@@ -1,9 +1,9 @@
 /*
- * Haushaltsplaner Developer Beta 2.45
+ * Haushaltsplaner Developer Beta 2.46
  *
- * Diese Version verbessert Optik und Bedienung:
- * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
- * Monatsabschluss als Beleg und eine visuelle Prognose-Zeitleiste.
+ * Diese Version ergänzt eine freiwillige dynamische Sonderzahlungs-Empfehlung:
+ * Der feste Schulden-Pool bleibt unverändert, während sicher freies Geld
+ * oberhalb des geschützten Puffers neu berechnet und sinnvoll vorgeschlagen wird.
  */
 
 (() => {
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.45';
+  const APP_VERSION = '2.46';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -2869,15 +2869,6 @@
     return null;
   }
 
-  function getDynamicSnowballExtraForMonth(monthKey, monthDetailsFn) {
-    const resolver = typeof monthDetailsFn === 'function' ? monthDetailsFn : computeMonthDetails;
-    const details = resolver(monthKey);
-    const free = Number(details && details.free || 0);
-    if (free + 0.005 < snowballConfig.extraInvestTrigger) return 0;
-    return Math.max(0, free - snowballConfig.keepFreeBuffer);
-  }
-
-
   function getNonSnowballDebtPaymentForMonth(monthKey) {
     let total = 0;
     (state.debts || []).forEach((debt) => {
@@ -2893,23 +2884,93 @@
     return total;
   }
 
-  function getDynamicSnowballExtraForProjectedMonth(monthKey, plannedDebtPayment, monthDetailsFn) {
-    const resolver = typeof monthDetailsFn === 'function' ? monthDetailsFn : computeMonthDetails;
-    const details = resolver(monthKey);
+  function isDebtAllowedAsDynamicExtraTarget(debt) {
+    const rule = getDebtCreditorRule(debt);
+    return isDebtExtraPaymentAllowed(debt) && !(rule && rule.allowDynamicExtra === false);
+  }
+
+  function getFixedDebtPoolForMonth(monthKey) {
+    if (!isMonthKey(monthKey)) return 0;
+    return roundMoney((state.debts || []).reduce((sum, debt) => {
+      ensureDebtConfig(debt);
+      if (debt.paymentType !== 'installment') return sum;
+      const completedMonth = getDebtCompletedMonth(debt);
+      if (completedMonth && completedMonth <= monthKey) {
+        return sum + getDebtFreedStandardRate(debt, completedMonth);
+      }
+      const rate = Math.max(0, Number(getDebtRateForMonth(debt, monthKey) || 0));
+      const covered = getDebtCoveredAmountForMonth(debt, monthKey);
+      const dueInMonth = !isMonthKey(debt.nextDueMonth) || debt.nextDueMonth <= monthKey;
+      if (Number(debt.amountOpen || 0) > 0 && rate > 0 && (covered > 0 || dueInMonth)) {
+        return sum + rate;
+      }
+      return sum;
+    }, 0));
+  }
+
+  function getDynamicDebtSpecialPaymentSuggestion(monthKey = currentMonth, plan = null) {
+    if (!isMonthKey(monthKey) || isMonthClosed(monthKey)) return null;
+    const activePlan = plan || buildSnowballPlan(monthKey, 1);
+    const currentPlanRow = (activePlan.rows || []).find((row) => row.month === monthKey);
+    const alreadyFinishing = new Set(
+      (currentPlanRow && Array.isArray(currentPlanRow.payments) ? currentPlanRow.payments : [])
+        .filter((payment) => payment.completed)
+        .map((payment) => payment.debt)
+    );
+    const candidates = (state.debts || [])
+      .filter((debt) => {
+        ensureDebtConfig(debt);
+        const dueOneTimePayment = debt.paymentType === 'one_time' && isMonthKey(debt.nextDueMonth) && debt.nextDueMonth <= monthKey;
+        return Number(debt.amountOpen || 0) > 0
+          && !dueOneTimePayment
+          && !alreadyFinishing.has(debt.name)
+          && isDebtAllowedAsDynamicExtraTarget(debt);
+      })
+      .sort((a, b) => Number(a.amountOpen || 0) - Number(b.amountOpen || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de'));
+    if (!candidates.length) return null;
+
+    const details = computeMonthDetails(monthKey);
     const linkedDebtCosts = getLinkedDebtCostTotalForMonth(monthKey);
-    // Dynamisch heißt hier: Der Monat wird mit den bis dahin simulierten Restschulden neu bewertet.
-    // Statt der starren verknüpften Kostenposten zählt die Zahlung, die der Schneeballplan für genau
-    // diesen Monat tatsächlich vorsieht (normale Rate + bereits frei gewordene Umlegung).
-    const nonSnowballDebtDue = getNonSnowballDebtPaymentForMonth(monthKey);
-    const projectedFreeBeforeDynamic = Number(details && details.free || 0)
+    const fixedPool = getFixedDebtPoolForMonth(monthKey);
+    const nonInstallmentDebtDue = getNonSnowballDebtPaymentForMonth(monthKey);
+    const extraAlreadyPaid = getDebtSpecialPaymentAmountForMonth(monthKey);
+    const safelyFree = roundMoney(
+      Number(details.free || 0)
       + Number(linkedDebtCosts || 0)
-      - Number(plannedDebtPayment || 0)
-      - Number(nonSnowballDebtDue || 0);
-    if (projectedFreeBeforeDynamic + 0.005 < snowballConfig.extraInvestTrigger) return { amount: 0, projectedFreeBeforeDynamic, nonSnowballDebtDue };
+      - fixedPool
+      - nonInstallmentDebtDue
+      - extraAlreadyPaid
+    );
+    const available = roundMoney(Math.max(0, safelyFree - snowballConfig.keepFreeBuffer));
+    const target = candidates[0];
+    if (safelyFree + 0.005 < snowballConfig.extraInvestTrigger || !(available > 0)) {
+      return {
+        month: monthKey,
+        safelyFree,
+        buffer: snowballConfig.keepFreeBuffer,
+        available: 0,
+        amount: 0,
+        target,
+        closesTarget: false,
+        fixedPool,
+        extraAlreadyPaid,
+        neededForSuggestion: roundMoney(Math.max(0, snowballConfig.extraInvestTrigger - safelyFree)),
+        reason: 'not_enough_free'
+      };
+    }
+
+    const amount = roundMoney(Math.min(available, Number(target.amountOpen || 0)));
+    if (!(amount > 0)) return null;
     return {
-      amount: Math.max(0, projectedFreeBeforeDynamic - snowballConfig.keepFreeBuffer),
-      projectedFreeBeforeDynamic,
-      nonSnowballDebtDue
+      month: monthKey,
+      safelyFree,
+      buffer: snowballConfig.keepFreeBuffer,
+      available,
+      amount,
+      target,
+      closesTarget: amount + 0.005 >= Number(target.amountOpen || 0),
+      fixedPool,
+      extraAlreadyPaid
     };
   }
 
@@ -11864,6 +11925,17 @@ function showPersonalEditor(personId, editPost) {
     return paid;
   }
 
+  function getDebtSpecialPaymentAmountForMonth(monthKey) {
+    if (!isMonthKey(monthKey)) return 0;
+    return roundMoney((state.debts || []).reduce((sum, debt) => {
+      ensureDebtConfig(debt);
+      return sum + (debt.paymentHistory || [])
+        .filter((entry) => entry.month === monthKey)
+        .filter((entry) => /sonderzahlung|\bextra\b/i.test(String(entry.source || '')))
+        .reduce((entrySum, entry) => entrySum + Number(entry.amount || 0), 0);
+    }, 0));
+  }
+
   function getDebtPaymentAccountId(debt, options = {}) {
     if (options.accountId && getAccountById(options.accountId)) return options.accountId;
     if (debt && debt.accountId && getAccountById(debt.accountId)) return debt.accountId;
@@ -12069,6 +12141,73 @@ function showPersonalEditor(personId, editPost) {
     note.className = 'small muted';
     note.textContent = 'Jede Standardrate bleibt bis einschließlich der Schlusszahlung bei ihrer bisherigen Schuld. Erst ab dem Folgemonat wird sie auf die kleinste passende offene Ratenschuld gelegt. Der gesamte Schulden-Pool bleibt dadurch reserviert; zusätzliche freie Monatsbeträge werden nicht automatisch verwendet. Kreiskasse bleibt als Ziel für zusätzliche Zahlungen ausgeschlossen.';
     card.appendChild(note);
+    return card;
+  }
+
+  function renderDynamicDebtSpecialPaymentCard(monthKey, plan = null) {
+    const suggestion = getDynamicDebtSpecialPaymentSuggestion(monthKey, plan);
+    if (!suggestion) return null;
+
+    const card = document.createElement('div');
+    card.className = 'sub-card dynamic-debt-extra-card';
+    const head = document.createElement('div');
+    head.className = 'dynamic-debt-extra-head';
+    const titleWrap = document.createElement('div');
+    const hasSuggestion = Number(suggestion.amount || 0) > 0;
+    titleWrap.appendChild(createUiEl('span', hasSuggestion ? 'pill success' : 'pill', hasSuggestion ? 'Freiwilliger Vorschlag' : 'Aktuell nicht empfohlen'));
+    titleWrap.appendChild(createUiEl('h3', '', 'Dynamische Sonderzahlung'));
+    titleWrap.appendChild(createUiEl(
+      'p',
+      'small muted',
+      hasSuggestion
+        ? 'Dieser Betrag wird jeden Monat neu berechnet und gehört nicht zur festen Rate oder zum festen Schulden-Pool.'
+        : 'Die Prüfung läuft automatisch jeden Monat. Aktuell bleibt das Geld im Haushalt, weil der Sicherheitspuffer noch nicht erreicht ist.'
+    ));
+    head.appendChild(titleWrap);
+    head.appendChild(createUiEl('strong', 'dynamic-debt-extra-amount', hasSuggestion ? euro(suggestion.amount) : '–'));
+    card.appendChild(head);
+
+    const metrics = hasSuggestion
+      ? [
+          { label: 'Sicher frei vor Sonderzahlung', value: euro(suggestion.safelyFree), kind: 'success' },
+          { label: 'Sicherheitspuffer bleibt', value: euro(suggestion.buffer) },
+          { label: 'Vorgeschlagene Schuld', value: suggestion.target.name || 'Schuld' },
+          { label: 'Wirkung', value: suggestion.closesTarget ? 'Schuld wäre vollständig bezahlt' : `Rest danach ca. ${euro(Math.max(0, Number(suggestion.target.amountOpen || 0) - suggestion.amount))}` }
+        ]
+      : [
+          { label: 'Sicher frei nach allen Plänen', value: euro(suggestion.safelyFree), kind: suggestion.safelyFree >= 0 ? 'warning' : 'danger' },
+          { label: 'Geschützter Puffer', value: euro(suggestion.buffer) },
+          { label: 'Vorschlag erscheint ab', value: euro(snowballConfig.extraInvestTrigger) },
+          { label: 'Bis dahin fehlen', value: euro(suggestion.neededForSuggestion || 0) }
+        ];
+    card.appendChild(createSummaryMetrics(metrics));
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'dynamic-debt-extra-actions';
+    const info = createUiEl(
+      'p',
+      'small muted',
+      hasSuggestion
+        ? `Die App lässt ${euro(suggestion.buffer)} unangetastet. Du kannst den Betrag im nächsten Schritt noch ändern oder ganz darauf verzichten.`
+        : `Sobald mindestens ${euro(snowballConfig.extraInvestTrigger)} sicher frei sind, wird nur der Teil oberhalb von ${euro(suggestion.buffer)} als Sonderzahlung vorgeschlagen.`
+    );
+    actionRow.appendChild(info);
+    if (hasSuggestion) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'success';
+      button.textContent = 'Sonderzahlung vorbereiten';
+      button.addEventListener('click', () => {
+        showDebtPaymentEditor(suggestion.target, {
+          month: monthKey,
+          amount: suggestion.amount,
+          mode: 'extra',
+          note: `Dynamischer Vorschlag für ${formatMonthLabel(monthKey)}`
+        });
+      });
+      actionRow.appendChild(button);
+    }
+    card.appendChild(actionRow);
     return card;
   }
 
@@ -12344,6 +12483,8 @@ function showPersonalEditor(personId, editPost) {
         { label: 'Schuldenfrei mit Ratenwechsel', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : 'offen' }
       ]));
     }
+    const dynamicExtraCard = renderDynamicDebtSpecialPaymentCard(currentMonth, snowball);
+    if (dynamicExtraCard) card.appendChild(dynamicExtraCard);
     card.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
 
     let visibleDebts = state.debts.filter((d) => shouldShowDebtInMonth(d, currentMonth));
@@ -12765,7 +12906,7 @@ function showPersonalEditor(personId, editPost) {
     ]);
   }
 
-  function showDebtPaymentEditor(debt) {
+  function showDebtPaymentEditor(debt, defaults = {}) {
     ensureDebtConfig(debt);
     const refs = {};
     const content = document.createElement('div');
@@ -12780,8 +12921,11 @@ function showPersonalEditor(personId, editPost) {
     row1.className = 'row';
     refs.monthInput = document.createElement('input');
     refs.monthInput.type = 'month';
-    refs.monthInput.value = isMonthKey(debt.nextDueMonth) ? debt.nextDueMonth : currentMonth;
-    refs.amountInput = createMoneyField(Number(getDebtRateForMonth(debt, currentMonth) || 0) > 0 ? Number(getDebtRateForMonth(debt, currentMonth) || 0) : '');
+    refs.monthInput.value = isMonthKey(defaults.month)
+      ? defaults.month
+      : (isMonthKey(debt.nextDueMonth) ? debt.nextDueMonth : currentMonth);
+    const defaultRate = Number(getDebtRateForMonth(debt, currentMonth) || 0);
+    refs.amountInput = createMoneyField(Number(defaults.amount || 0) > 0 ? Number(defaults.amount) : (defaultRate > 0 ? defaultRate : ''));
     row1.appendChild(createLabelInput('Zahlungsmonat', refs.monthInput));
     row1.appendChild(createLabelInput('Betrag', refs.amountInput));
     content.appendChild(row1);
@@ -12794,13 +12938,21 @@ function showPersonalEditor(personId, editPost) {
       <option value="partial">Teilzahlung ohne Monatsabschluss</option>
       <option value="extra">Sonderzahlung ohne Monatsabschluss</option>
     `;
+    if (['regular', 'partial', 'extra'].includes(defaults.mode)) refs.typeSelect.value = defaults.mode;
     refs.noteInput = document.createElement('input');
     refs.noteInput.type = 'text';
     refs.noteInput.placeholder = 'Notiz optional';
+    refs.noteInput.value = defaults.note || '';
     row2.appendChild(createLabelInput('Zahlungsart', refs.typeSelect));
     row2.appendChild(createLabelInput('Notiz', refs.noteInput));
     content.appendChild(row2);
 
+    if (defaults.mode === 'extra') {
+      const suggestionInfo = document.createElement('div');
+      suggestionInfo.className = 'notice success';
+      suggestionInfo.textContent = 'Freiwilliger dynamischer Vorschlag: Betrag und Monat sind vorbereitet, werden aber erst mit „Speichern“ als echte Sonderzahlung übernommen.';
+      content.appendChild(suggestionInfo);
+    }
 
     if (debt && getDebtRateTimelineText(debt)) {
       const timelineInfo = document.createElement('p');
@@ -12826,6 +12978,9 @@ function showPersonalEditor(personId, editPost) {
           if (!isMonthKey(month)) return alert('Bitte einen gültigen Monat wählen.');
           if (!Number.isFinite(amount) || amount <= 0) return alert('Bitte einen gültigen Betrag eingeben.');
           const mode = refs.typeSelect.value;
+          if (mode === 'extra' && !isDebtExtraPaymentAllowed(debt)) {
+            return alert(`${debt.name}: Für diese Schuld sind keine freiwilligen Sonderzahlungen erlaubt.`);
+          }
           const markAsMonthly = mode === 'regular';
           if (markAsMonthly && !(getDebtRateForMonth(debt, currentMonth) > 0)) return alert('Für eine Regelrate muss zuerst eine Monatsrate hinterlegt sein.');
           if (addDebtPayment(debt, {

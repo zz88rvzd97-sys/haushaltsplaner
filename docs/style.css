@@ -4878,3 +4878,58 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
     grid-template-columns: 1fr;
   }
 }
+
+/* Developer Beta 2.46 – freiwillige dynamische Sonderzahlungen */
+.dynamic-debt-extra-card {
+  margin: 1rem 0;
+  border-color: rgba(42, 115, 79, .24);
+  background:
+    radial-gradient(circle at 96% 4%, rgba(99, 180, 132, .18), transparent 32%),
+    linear-gradient(145deg, rgba(241, 251, 245, .98), rgba(255, 255, 255, .98));
+}
+.dynamic-debt-extra-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+}
+.dynamic-debt-extra-head > div {
+  display: grid;
+  gap: .35rem;
+}
+.dynamic-debt-extra-head h3,
+.dynamic-debt-extra-head p {
+  margin: 0;
+}
+.dynamic-debt-extra-amount {
+  color: #234f3a;
+  font-size: clamp(1.55rem, 4vw, 2.2rem);
+  white-space: nowrap;
+}
+.dynamic-debt-extra-actions {
+  display: flex;
+  gap: .8rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: .85rem;
+  padding-top: .8rem;
+  border-top: 1px solid rgba(35, 79, 58, .12);
+}
+.dynamic-debt-extra-actions p {
+  margin: 0;
+}
+.dynamic-debt-extra-actions button {
+  flex: 0 0 auto;
+}
+@media (max-width: 720px) {
+  .dynamic-debt-extra-head {
+    grid-template-columns: 1fr;
+  }
+  .dynamic-debt-extra-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dynamic-debt-extra-actions button {
+    width: 100%;
+  }
+}
