@@ -4217,6 +4217,54 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
+/* Developer Beta 2.42 - automatische Schuldenstandsabfragen */
+.debt-balance-review-card {
+  border-color: rgba(37, 99, 235, 0.16) !important;
+  background:
+    radial-gradient(circle at 96% 0%, rgba(37, 99, 235, 0.11), transparent 30%),
+    linear-gradient(135deg, rgba(248, 251, 255, 0.98), rgba(255, 255, 255, 0.98)) !important;
+}
+
+.debt-balance-review-list {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+
+.debt-balance-review-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.78rem 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.debt-balance-review-copy {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.debt-balance-review-row select,
+.debt-balance-review-row button {
+  width: 100%;
+  min-height: 42px;
+}
+
+.debt-balance-check-form .metric-grid {
+  margin: 0.85rem 0;
+}
+
+@media (max-width: 760px) {
+  .debt-balance-review-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
 /* Developer Beta 2.41 - zuverlässiger Backup-Import und Speicherbereinigung */
 .runtime-issue-card {
   border: 1px solid rgba(220, 38, 38, 0.28) !important;

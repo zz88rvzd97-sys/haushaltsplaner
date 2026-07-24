@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.41
+ * Haushaltsplaner Developer Beta 2.42
  *
  * Diese Version verbessert Optik und Bedienung:
  * Finanz-Ampel als Monatskopf, Schnellaktionen, stärkerer Schulden-Fahrplan,
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.41';
+  const APP_VERSION = '2.42';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -534,6 +534,20 @@
         accountTransactionId: typeof entry.accountTransactionId === 'string' ? entry.accountTransactionId : '',
         reducedOpenBalance: entry.reducedOpenBalance !== false
       }));
+    if (!['monthly', 'annual'].includes(debt.balanceCheckMode)) debt.balanceCheckMode = 'annual';
+    if (!Array.isArray(debt.balanceChecks)) debt.balanceChecks = [];
+    debt.balanceChecks = debt.balanceChecks
+      .filter((entry) => entry && isMonthKey(entry.month) && Number.isFinite(Number(entry.amount)))
+      .map((entry) => ({
+        id: typeof entry.id === 'string' && entry.id ? entry.id : generateId(),
+        month: entry.month,
+        amount: Math.max(0, Number(entry.amount || 0)),
+        previousAmount: Math.max(0, Number(entry.previousAmount || 0)),
+        note: typeof entry.note === 'string' ? entry.note : '',
+        createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : '',
+        appliedToOpenBalance: entry.appliedToOpenBalance !== false
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
     if (isMonthKey(debt.completedMonth)) {
       // Bereits abgeschlossen: Abschlussmonat beibehalten.
     } else if (Number(debt.amountOpen || 0) <= 0) {
@@ -544,6 +558,52 @@
     } else {
       delete debt.completedMonth;
     }
+  }
+
+  function getDebtBalanceCheckModeLabel(debt) {
+    ensureDebtConfig(debt);
+    return debt.balanceCheckMode === 'monthly'
+      ? 'Monatlich · Stand einsehbar'
+      : 'Jährlich · Stand nicht laufend einsehbar';
+  }
+
+  function getLatestDebtBalanceCheck(debt, monthKey = currentMonth) {
+    ensureDebtConfig(debt);
+    const targetMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    return (debt.balanceChecks || [])
+      .filter((entry) => entry && isMonthKey(entry.month) && entry.month <= targetMonth)
+      .sort((a, b) => b.month.localeCompare(a.month))[0] || null;
+  }
+
+  function getNextDebtBalanceCheckMonth(debt, monthKey = currentMonth) {
+    ensureDebtConfig(debt);
+    const targetMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    const latest = getLatestDebtBalanceCheck(debt, targetMonth);
+    if (!latest) return targetMonth;
+    return addMonths(latest.month, debt.balanceCheckMode === 'monthly' ? 1 : 12);
+  }
+
+  function isDebtBalanceCheckDue(debt, monthKey = currentMonth) {
+    ensureDebtConfig(debt);
+    if (!(Number(debt.amountOpen || 0) > 0)) return false;
+    const targetMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    const latest = getLatestDebtBalanceCheck(debt, targetMonth);
+    if (!latest) return true;
+    const interval = debt.balanceCheckMode === 'monthly' ? 1 : 12;
+    return monthDiff(latest.month, targetMonth) >= interval;
+  }
+
+  function getDueDebtBalanceChecks(monthKey = currentMonth) {
+    const targetMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    return (state.debts || [])
+      .filter((debt) => Number(debt && debt.amountOpen || 0) > 0)
+      .filter((debt) => isDebtBalanceCheckDue(debt, targetMonth))
+      .sort((a, b) => {
+        ensureDebtConfig(a);
+        ensureDebtConfig(b);
+        if (a.balanceCheckMode !== b.balanceCheckMode) return a.balanceCheckMode === 'monthly' ? -1 : 1;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'de');
+      });
   }
 
   function getDebtCompletedMonth(debt) {
@@ -7724,6 +7784,17 @@
     const groceriesRestEntered = !groceries.active || Object.prototype.hasOwnProperty.call(groceriesCfg.balances || {}, monthKey);
     add('Einkaufsgeld', 'Rest Einkaufsgeld eintragen', groceriesRestEntered, groceries.active ? `Rest ${euro(groceries.balance)} · Aufstockung ${euro(groceries.topUp)}.` : 'Startziel ab Juni 2026; Rest-Aufstockung ab Juli 2026.', 'groceries');
 
+    const activeDebtsForBalanceCheck = (state.debts || []).filter((debt) => Number(debt && debt.amountOpen || 0) > 0);
+    if (activeDebtsForBalanceCheck.length) {
+      const dueBalanceChecks = getDueDebtBalanceChecks(monthKey);
+      const monthlyDue = dueBalanceChecks.filter((debt) => debt.balanceCheckMode === 'monthly').length;
+      const annualDue = dueBalanceChecks.length - monthlyDue;
+      const detail = dueBalanceChecks.length
+        ? `${dueBalanceChecks.length} fällig · ${monthlyDue} monatlich, ${annualDue} jährlich.`
+        : 'Alle aktuell fälligen Schuldenstände sind erfasst.';
+      add('Schulden', 'Schuldenstände prüfen', dueBalanceChecks.length === 0, detail, 'debts', 'Stände prüfen');
+    }
+
     const openPayments = collectOpenPaymentsForMonth(monthKey);
     add('Offene Zahlungen', 'Offene Zahlungen prüfen', openPayments.rows.length === 0, openPayments.rows.length ? `${openPayments.rows.length} offene Zahlung(en) · ${euro(openPayments.totalOpen)}.` : 'Keine offenen Zahlungen gefunden.', 'openpayments', 'Prüfen', openPayments.rows.length > 0);
 
@@ -11916,6 +11987,164 @@ function showPersonalEditor(personId, editPost) {
     return card;
   }
 
+  function showDebtBalanceCheckEditor(debt, monthKey = currentMonth) {
+    if (!debt) return;
+    ensureDebtConfig(debt);
+    const targetMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    const existing = (debt.balanceChecks || []).find((entry) => entry.month === targetMonth) || null;
+    const previousAmount = Number(debt.amountOpen || 0);
+    const content = document.createElement('div');
+    content.className = 'modal-form debt-balance-check-form';
+
+    const intro = document.createElement('div');
+    intro.className = 'notice info';
+    intro.textContent = `Trage den tatsächlich angezeigten Schuldenstand für ${formatMonthLabel(targetMonth)} ein. Die App übernimmt ihn als neue Restschuld; es wird dabei keine zusätzliche Zahlung gebucht.`;
+    content.appendChild(intro);
+
+    content.appendChild(createSummaryMetrics([
+      { label: 'Bisher in der App', value: euro(previousAmount) },
+      { label: 'Prüfrhythmus', value: getDebtBalanceCheckModeLabel(debt) },
+      { label: 'Letzte Abfrage', value: getLatestDebtBalanceCheck(debt, targetMonth)?.month ? formatMonthLabel(getLatestDebtBalanceCheck(debt, targetMonth).month) : 'noch keine' }
+    ]));
+
+    const amountInput = createMoneyField(existing ? existing.amount : previousAmount);
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.placeholder = 'Optional, z. B. Onlineportal oder Brief';
+    noteInput.value = existing ? existing.note : '';
+    const fields = document.createElement('div');
+    fields.className = 'row';
+    fields.appendChild(createLabelInput('Aktuell angezeigter Schuldenstand', amountInput));
+    fields.appendChild(createLabelInput('Notiz / Quelle', noteInput));
+    content.appendChild(fields);
+
+    showModal(`Schuldenstand prüfen · ${debt.name || 'Schuld'}`, content, [
+      {
+        label: 'Abbrechen',
+        className: 'secondary',
+        onClick: (close) => close()
+      },
+      {
+        label: 'Stand übernehmen',
+        className: 'primary',
+        onClick: (close) => {
+          const amount = parseMoneyInput(amountInput.value);
+          if (!Number.isFinite(amount) || amount < 0) return alert('Bitte einen gültigen Schuldenstand eingeben.');
+          const priorEntry = existing || null;
+          debt.balanceChecks = (debt.balanceChecks || []).filter((entry) => entry.month !== targetMonth);
+          debt.balanceChecks.push({
+            id: priorEntry && priorEntry.id ? priorEntry.id : generateId(),
+            month: targetMonth,
+            amount,
+            previousAmount: priorEntry ? Number(priorEntry.previousAmount || previousAmount) : previousAmount,
+            note: noteInput.value.trim(),
+            createdAt: new Date().toISOString(),
+            appliedToOpenBalance: true
+          });
+          debt.balanceChecks.sort((a, b) => a.month.localeCompare(b.month));
+          debt.amountOpen = amount;
+          if (amount <= 0) debt.completedMonth = targetMonth;
+          else delete debt.completedMonth;
+          const difference = amount - previousAmount;
+          const differenceText = Math.abs(difference) <= 0.005
+            ? 'ohne Abweichung'
+            : `${difference > 0 ? '+' : ''}${euro(difference)} Abweichung`;
+          addChangeLog('Schulden', `${debt.name || 'Schuld'}: Stand für ${formatMonthLabel(targetMonth)} auf ${euro(amount)} bestätigt (${differenceText})`, targetMonth);
+          saveState();
+          render();
+          close();
+        }
+      }
+    ]);
+  }
+
+  function renderDebtBalanceReviewCard(monthKey = currentMonth) {
+    const activeDebts = (state.debts || []).filter((debt) => Number(debt && debt.amountOpen || 0) > 0);
+    if (!activeDebts.length) return null;
+    activeDebts.forEach(ensureDebtConfig);
+    const dueDebts = getDueDebtBalanceChecks(monthKey);
+    const monthlyDebts = activeDebts.filter((debt) => debt.balanceCheckMode === 'monthly');
+    const annualDebts = activeDebts.filter((debt) => debt.balanceCheckMode !== 'monthly');
+    const nextCheckMonths = activeDebts
+      .map((debt) => getNextDebtBalanceCheckMonth(debt, monthKey))
+      .filter(isMonthKey)
+      .sort();
+
+    const card = document.createElement('div');
+    card.className = 'card debt-balance-review-card';
+    const head = document.createElement('div');
+    head.className = 'compact-section-head';
+    head.appendChild(createUiEl('h3', '', `Schuldenstände · ${formatMonthLabel(monthKey)}`));
+    head.appendChild(createUiEl('span', dueDebts.length ? 'pill warning' : 'pill success', dueDebts.length ? `${dueDebts.length} fällig` : 'aktuell'));
+    card.appendChild(head);
+    card.appendChild(createUiEl('p', 'small muted', 'Einsehbare Schulden fragst du monatlich ab, alle anderen nur alle zwölf Monate. Neue und bisher nicht geprüfte Schulden sind zunächst einmal fällig.'));
+    card.appendChild(createSummaryMetrics([
+      { label: 'Jetzt fällig', value: String(dueDebts.length), kind: dueDebts.length ? 'warning' : 'success' },
+      { label: 'Monatlich', value: String(monthlyDebts.length) },
+      { label: 'Jährlich', value: String(annualDebts.length) },
+      { label: dueDebts.length ? 'Fällig seit' : 'Nächste Prüfung', value: nextCheckMonths[0] ? formatMonthLabel(nextCheckMonths[0]) : '—' }
+    ]));
+
+    if (!dueDebts.length) {
+      const done = document.createElement('div');
+      done.className = 'notice success';
+      done.textContent = 'Für diesen Monat ist keine weitere Schuldenstandsabfrage nötig.';
+      card.appendChild(done);
+      return card;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'debt-balance-review-list';
+    dueDebts.forEach((debt) => {
+      const row = document.createElement('div');
+      row.className = 'debt-balance-review-row';
+      const info = document.createElement('div');
+      info.className = 'debt-balance-review-copy';
+      const name = document.createElement('strong');
+      name.textContent = debt.name || 'Schuld';
+      const latest = getLatestDebtBalanceCheck(debt, monthKey);
+      const last = document.createElement('small');
+      last.className = 'muted';
+      last.textContent = latest
+        ? `Zuletzt ${formatMonthLabel(latest.month)} · ${euro(latest.amount)}`
+        : `Noch nie geprüft · aktuell geplant ${euro(Number(debt.amountOpen || 0))}`;
+      info.appendChild(name);
+      info.appendChild(last);
+
+      const modeSelect = document.createElement('select');
+      modeSelect.setAttribute('aria-label', `Prüfrhythmus für ${debt.name || 'Schuld'}`);
+      [
+        ['monthly', 'Monatlich · Stand einsehbar'],
+        ['annual', 'Jährlich · nicht laufend einsehbar']
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        option.selected = debt.balanceCheckMode === value;
+        modeSelect.appendChild(option);
+      });
+      modeSelect.addEventListener('change', () => {
+        debt.balanceCheckMode = modeSelect.value === 'monthly' ? 'monthly' : 'annual';
+        addChangeLog('Schulden', `${debt.name || 'Schuld'}: Standprüfung auf ${debt.balanceCheckMode === 'monthly' ? 'monatlich' : 'jährlich'} gesetzt`, monthKey);
+        saveState();
+        render();
+      });
+
+      const checkBtn = document.createElement('button');
+      checkBtn.type = 'button';
+      checkBtn.className = 'primary';
+      checkBtn.textContent = 'Stand eintragen';
+      checkBtn.addEventListener('click', () => showDebtBalanceCheckEditor(debt, monthKey));
+
+      row.appendChild(info);
+      row.appendChild(modeSelect);
+      row.appendChild(checkBtn);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    return card;
+  }
+
   function renderDebts() {
     debtsSection.innerHTML = '';
     const card = document.createElement('div');
@@ -12166,11 +12395,13 @@ function showPersonalEditor(personId, editPost) {
         });
 
         const reviewRuleText = getDebtRateChangeRuleText(d);
-        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Zahlungsart:</span> ${typeHtml}</div>${reviewRuleText ? `<div><span>Regel:</span> ${reviewRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
+        const latestBalanceCheck = getLatestDebtBalanceCheck(d, currentMonth);
+        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Zahlungsart:</span> ${typeHtml}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Regel:</span> ${reviewRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
         actionCell.appendChild(createActionMenu([
           { label: 'Bearbeiten', className: 'primary', onClick: () => showDebtEditor(d) },
           { label: 'Rate ändern', className: 'secondary', onClick: () => showDebtRateEditor(d) },
           { label: 'Zahlung eintragen', className: 'success', onClick: () => showDebtPaymentEditor(d) },
+          { label: 'Schuldenstand eintragen', className: 'primary', onClick: () => showDebtBalanceCheckEditor(d, currentMonth) },
           { label: 'Zahlung zurücksetzen', className: 'secondary', disabled: !canResetDebtPayment, onClick: () => { if (confirm(`Zahlung für ${formatMonthLabel(currentMonth)} bei "${d.name}" zurücksetzen?`)) { resetDebtPaymentForMonth(d, currentMonth); saveState(); render(); } } },
           { label: 'Löschen', className: 'danger', onClick: () => { if (confirm(`Schuld "${d.name}" löschen?`)) { state.debts = state.debts.filter((x) => x.id !== d.id); saveState(); render(); } } }
         ], 'Aktionen ⋯', debtDetailsHtml));
@@ -12188,6 +12419,8 @@ function showPersonalEditor(personId, editPost) {
 
     const snowballCard = renderSnowballPlanCard(currentMonth);
     if (snowballCard) card.appendChild(snowballCard);
+    const balanceReviewCard = renderDebtBalanceReviewCard(currentMonth);
+    if (balanceReviewCard) debtsSection.appendChild(balanceReviewCard);
     debtsSection.appendChild(card);
   }
 
@@ -12584,6 +12817,13 @@ function showPersonalEditor(personId, editPost) {
     `;
     refs.paymentTypeSelect.value = editDebt ? (editDebt.paymentType || inferDebtPaymentType(editDebt)) : 'installment';
     typeRow.appendChild(createLabelInput('Zahlungsart', refs.paymentTypeSelect));
+    refs.balanceCheckModeSelect = document.createElement('select');
+    refs.balanceCheckModeSelect.innerHTML = `
+      <option value="monthly">Monatlich · Stand einsehbar</option>
+      <option value="annual">Jährlich · Stand nicht laufend einsehbar</option>
+    `;
+    refs.balanceCheckModeSelect.value = editDebt && editDebt.balanceCheckMode === 'monthly' ? 'monthly' : 'annual';
+    typeRow.appendChild(createLabelInput('Schuldenstand prüfen', refs.balanceCheckModeSelect));
     refs.accountSelect = { value: '' };
     if (ACCOUNTS_ENABLED) {
       refs.accountSelect = createAccountSelect(editDebt ? editDebt.accountId : getDefaultAccountIdForContext('personal', 'benny'), { includeNone: true });
@@ -12603,7 +12843,7 @@ function showPersonalEditor(personId, editPost) {
 
     const hint = document.createElement('p');
     hint.className = 'small muted';
-    hint.textContent = 'Zahlungsart steuert den Schneeball: Nur Ratenzahlungen zählen mit. Über „Ratenänderung ab Monat“ kannst du spätere Ratenänderungen setzen. Bei MKK ist die Rate auf jährliche Anpassung zum 01.05. begrenzt.';
+    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Zahlungsart steuert den Schneeball: Nur Ratenzahlungen zählen mit. Bei MKK ist die Rate auf jährliche Anpassung zum 01.05. begrenzt.';
     content.appendChild(hint);
 
     showModal(editDebt ? 'Schuld bearbeiten' : 'Neue Schuld anlegen', content, [
@@ -12621,6 +12861,7 @@ function showPersonalEditor(personId, editPost) {
           let rate = parseMoneyInput(refs.rateInput.value);
           const due = refs.dueInput.value;
           const paymentType = refs.paymentTypeSelect.value;
+          const balanceCheckMode = refs.balanceCheckModeSelect.value === 'monthly' ? 'monthly' : 'annual';
           if (!name) return alert('Name darf nicht leer sein.');
           if (!Number.isFinite(open) || open < 0) return alert('Bitte einen gültigen offenen Betrag eingeben.');
           if (!Number.isFinite(rate)) rate = 0;
@@ -12638,12 +12879,13 @@ function showPersonalEditor(personId, editPost) {
             editDebt.amountOpen = open;
             editDebt.monthlyRate = rate;
             editDebt.paymentType = paymentType;
+            editDebt.balanceCheckMode = balanceCheckMode;
             editDebt.nextDueMonth = due;
             editDebt.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             if (open <= 0 && wasOpen) editDebt.completedMonth = currentMonth;
             if (open > 0) delete editDebt.completedMonth;
           } else {
-            const newDebt = { id: generateId(), name, amountOpen: open, monthlyRate: rate, paymentType, nextDueMonth: due, paidMonths: [], rateTimeline: [], accountId: ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '' };
+            const newDebt = { id: generateId(), name, amountOpen: open, monthlyRate: rate, paymentType, balanceCheckMode, balanceChecks: [], nextDueMonth: due, paidMonths: [], rateTimeline: [], accountId: ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '' };
             if (open <= 0) newDebt.completedMonth = currentMonth;
             state.debts.push(newDebt);
           }
