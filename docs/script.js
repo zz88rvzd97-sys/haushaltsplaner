@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.52
+ * Haushaltsplaner Developer Beta 2.53
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.52';
+  const APP_VERSION = '2.53';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -112,6 +112,10 @@
         (refund.purchases || []).forEach((purchase) => addFromDate(purchase.date));
       });
       (state.groceryExpenses || []).forEach((expense) => {
+        addKey(expense && expense.month);
+        addFromDate(expense && expense.date);
+      });
+      (state.smokingExpenses || []).forEach((expense) => {
         addKey(expense && expense.month);
         addFromDate(expense && expense.date);
       });
@@ -710,6 +714,7 @@
     bufferExpenses: [],
     taxRefunds: [],
     groceryExpenses: [],
+    smokingExpenses: [],
     commonAccount: {
       currentBalance: 0,
       manualBound: 0,
@@ -877,6 +882,7 @@
       + (Array.isArray(obj.accounts) ? obj.accounts.length * 4 : 0)
       + (Array.isArray(obj.taxRefunds) ? obj.taxRefunds.length * 4 : 0)
       + (Array.isArray(obj.groceryExpenses) ? obj.groceryExpenses.length * 2 : 0)
+      + (Array.isArray(obj.smokingExpenses) ? obj.smokingExpenses.length * 2 : 0)
       + (Array.isArray(obj.changeLog) ? Math.min(obj.changeLog.length, 50) : 0)
       + (obj.appMeta && obj.appMeta.selectedMonth ? 2 : 0);
   };
@@ -937,8 +943,10 @@
     if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
     if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
+    if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
     normalizeAllTaxRefunds();
     normalizeGroceryExpenses();
+    normalizeSmokingExpenses();
     normalizeTankClosedMonths();
     normalizeBudgetTopUpsConfig();
     normalizeCommonAccountConfig();
@@ -3412,6 +3420,12 @@
         onClick: () => showGroceryExpenseEditor()
       },
       {
+        title: 'Rauchzeug eintragen',
+        text: 'Ausgabe vom Rauchzeug-Budget erfassen',
+        icon: '−',
+        onClick: () => showSmokingExpenseEditor()
+      },
+      {
         title: 'Tankgeld',
         text: 'Kilometerstände, Bons und Monatswerte prüfen',
         icon: '⌁',
@@ -4213,6 +4227,7 @@
   const bufferSection = document.getElementById('buffer');
   const tankCalcSection = document.getElementById('tankcalc');
   const grocerySection = document.getElementById('groceries');
+  const smokingSection = document.getElementById('smoking');
   const debtsSection = document.getElementById('debts');
   const settingsSection = document.getElementById('settings');
   const savingsSection = document.getElementById('savings');
@@ -6143,6 +6158,70 @@
     return Array.from(totals.values()).sort((a, b) => b.month.localeCompare(a.month));
   }
 
+  function getSmokingBudgetPosts() {
+    return (state.personalCosts || []).filter((post) => normalizeTextKey(post && post.name).includes('rauchzeug'));
+  }
+
+  function getSmokingBudgetTarget(monthKey = currentMonth) {
+    return getSmokingBudgetPosts().reduce((sum, post) => {
+      if (!isDue(post, monthKey)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    }, 0);
+  }
+
+  function normalizeSmokingExpense(expense) {
+    if (!expense || typeof expense !== 'object') return null;
+    const amount = parseMoneyInput(expense.amount || 0);
+    if (!Number.isFinite(amount) || !(amount > 0)) return null;
+    const date = typeof expense.date === 'string' ? expense.date : '';
+    const month = isMonthKey(expense.month) ? expense.month : getMonthKeyFromDateValue(date, dateToMonthKey(new Date()));
+    return {
+      id: typeof expense.id === 'string' && expense.id ? expense.id : generateId(),
+      month,
+      date,
+      name: typeof expense.name === 'string' && expense.name.trim() ? expense.name.trim() : 'Rauchzeug',
+      amount,
+      note: typeof expense.note === 'string' ? expense.note : ''
+    };
+  }
+
+  function normalizeSmokingExpenses() {
+    if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
+    state.smokingExpenses = state.smokingExpenses
+      .map(normalizeSmokingExpense)
+      .filter(Boolean)
+      .sort((a, b) => String(b.date || b.month).localeCompare(String(a.date || a.month)));
+  }
+
+  function getSmokingExpenses() {
+    normalizeSmokingExpenses();
+    return state.smokingExpenses;
+  }
+
+  function upsertSmokingExpense(expense) {
+    const normalized = normalizeSmokingExpense(expense);
+    if (!normalized) return null;
+    state.smokingExpenses = getSmokingExpenses().filter((entry) => entry.id !== normalized.id);
+    state.smokingExpenses.push(normalized);
+    normalizeSmokingExpenses();
+    return normalized;
+  }
+
+  function deleteSmokingExpense(expenseId) {
+    state.smokingExpenses = getSmokingExpenses().filter((entry) => entry.id !== expenseId);
+  }
+
+  function getSmokingMonthlyTotals() {
+    const totals = new Map();
+    getSmokingExpenses().forEach((expense) => {
+      const row = totals.get(expense.month) || { month: expense.month, amount: 0, count: 0 };
+      row.amount += Number(expense.amount || 0);
+      row.count += 1;
+      totals.set(expense.month, row);
+    });
+    return Array.from(totals.values()).sort((a, b) => b.month.localeCompare(a.month));
+  }
+
   function getGroceryAverageStats(monthKey = currentMonth, maxMonths = 12) {
     const priorMonth = addMonths(monthKey, -1);
     const entries = getGroceryMonthlyTotals()
@@ -7069,6 +7148,7 @@
       buffer: ['Sonstige Ausgaben', bufferSection, renderBufferExpenses],
       tankcalc: ['Tankgeld', tankCalcSection, renderTankCalc],
       groceries: ['Einkaufsgeld', grocerySection, renderGroceries],
+      smoking: ['Rauchzeug', smokingSection, renderSmokingExpenses],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
       savings: ['Rücklagen & Sparen', savingsSection, renderSavings],
@@ -11186,6 +11266,7 @@ function renderPersonal() {
           });
           const bookedNow = isPostBookedForMonth(pc, currentMonth);
           actionCell.appendChild(createActionMenu([
+            normalizeTextKey(pc.name).includes('rauchzeug') ? { label: 'Rauchzeug-Ausgabe erfassen', className: 'success', onClick: () => showSmokingExpenseEditor() } : null,
             ACCOUNTS_ENABLED && !balanceDebitedNow && paidNow && deductsBalance ? { label: pc.bookingType === 'transfer' ? 'Umbuchung nachholen' : 'Kontoabzug nachholen', className: 'success', onClick: () => { applyPostAccountBalanceDebit(pc, currentMonth, true); saveState(); render(); } } : null,
             ACCOUNTS_ENABLED ? { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : (linkedDebtName ? 'Bezahlt + Schuld + Nachweis buchen' : 'Bezahlt + buchen'), className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(pc, currentMonth); syncDebtPaymentFromPost(pc, currentMonth); saveState(); render(); } } : null,
             ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(pc, currentMonth); saveState(); render(); } } : null,
@@ -12173,6 +12254,182 @@ function showPersonalEditor(personId, editPost) {
       history.appendChild(table);
     }
     grocerySection.appendChild(history);
+  }
+
+  function showSmokingExpenseEditor(expense = null) {
+    const isNew = !expense;
+    const item = expense || {
+      id: generateId(),
+      month: currentMonth,
+      date: `${currentMonth}-01`,
+      name: '',
+      amount: 0,
+      note: ''
+    };
+    const content = document.createElement('div');
+    content.className = 'modal-form';
+
+    const row = document.createElement('div');
+    row.className = 'row';
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = item.date || `${item.month || currentMonth}-01`;
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = item.name || '';
+    nameInput.placeholder = 'z. B. Tabak und Hülsen';
+    const amountInput = document.createElement('input');
+    amountInput.type = 'text';
+    amountInput.inputMode = 'decimal';
+    amountInput.value = item.amount ? formatNumberInput(item.amount) : '';
+    amountInput.placeholder = 'z. B. 12,50';
+    row.appendChild(createLabelInput('Datum', dateInput));
+    row.appendChild(createLabelInput('Einkauf', nameInput));
+    row.appendChild(createLabelInput('Betrag', amountInput));
+    content.appendChild(row);
+
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.value = item.note || '';
+    noteInput.placeholder = 'optional: Geschäft oder Hinweis';
+    content.appendChild(createLabelInput('Notiz', noteInput));
+    content.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Die Ausgabe wird nur mit dem bereits eingeplanten Rauchzeug-Budget verglichen und nicht noch einmal vom Monatsrest abgezogen.'
+    ));
+
+    showModal(isNew ? 'Rauchzeug erfassen' : 'Rauchzeug-Ausgabe bearbeiten', content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: 'Speichern',
+        className: 'primary',
+        onClick: (close) => {
+          const amount = parseMoneyInput(amountInput.value);
+          if (!dateInput.value) return alert('Bitte ein Datum eintragen.');
+          if (!Number.isFinite(amount) || !(amount > 0)) return alert('Bitte einen Betrag größer als 0 eintragen.');
+          const saved = upsertSmokingExpense({
+            id: item.id,
+            month: getMonthKeyFromDateValue(dateInput.value, currentMonth),
+            date: dateInput.value,
+            name: nameInput.value.trim() || 'Rauchzeug',
+            amount,
+            note: noteInput.value.trim()
+          });
+          if (!saved) return alert('Die Ausgabe konnte nicht gespeichert werden.');
+          addChangeLog('Rauchzeug', `${isNew ? 'Ausgabe erfasst' : 'Ausgabe geändert'}: ${saved.name} · ${euro(saved.amount)}.`, saved.month);
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
+  function renderSmokingExpenses() {
+    if (!smokingSection) return;
+    smokingSection.innerHTML = '';
+    const expenses = getSmokingExpenses();
+    const currentExpenses = expenses.filter((expense) => expense.month === currentMonth);
+    const spent = currentExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const target = getSmokingBudgetTarget(currentMonth);
+    const difference = target - spent;
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    const header = document.createElement('div');
+    header.className = 'row';
+    const title = document.createElement('h2');
+    title.textContent = 'Rauchzeug';
+    title.style.flex = '1 1 auto';
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'primary';
+    addBtn.textContent = '+ Ausgabe';
+    addBtn.addEventListener('click', () => showSmokingExpenseEditor());
+    header.appendChild(title);
+    header.appendChild(addBtn);
+    card.appendChild(header);
+    card.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Hier trägst du ein, was du tatsächlich für Rauchzeug ausgegeben hast. Das Monatsbudget kommt automatisch aus dem persönlichen Posten „Rauchzeug“.'
+    ));
+    card.appendChild(createSummaryMetrics([
+      { label: `Budget ${formatMonthLabel(currentMonth)}`, value: euro(target), kind: target > 0 ? 'success' : 'warning' },
+      { label: 'Ausgegeben', value: euro(spent), kind: spent > target && target > 0 ? 'danger' : '' },
+      { label: difference >= 0 ? 'Noch übrig' : 'Über Budget', value: euro(Math.abs(difference)), kind: difference < 0 ? 'danger' : 'success' },
+      { label: 'Erfasste Ausgaben', value: String(currentExpenses.length) }
+    ]));
+
+    if (!(target > 0)) {
+      card.appendChild(createUiEl('div', 'notice warning', 'Für diesen Monat ist kein persönlicher Posten „Rauchzeug“ eingeplant. Ausgaben kannst du trotzdem erfassen.'));
+    }
+
+    if (!currentExpenses.length) {
+      card.appendChild(createUiEl('p', 'small muted', `Für ${formatMonthLabel(currentMonth)} sind noch keine Rauchzeug-Ausgaben erfasst.`));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>Einkauf</th><th>Betrag</th><th>Notiz</th><th>Aktion</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      currentExpenses.forEach((expense) => {
+        const tr = document.createElement('tr');
+        const dateTd = document.createElement('td');
+        dateTd.textContent = expense.date || '-';
+        const nameTd = document.createElement('td');
+        nameTd.textContent = expense.name;
+        const amountTd = document.createElement('td');
+        amountTd.textContent = euro(expense.amount);
+        const noteTd = document.createElement('td');
+        noteTd.textContent = expense.note || '-';
+        const actionTd = document.createElement('td');
+        actionTd.appendChild(createActionMenu([
+          { label: 'Bearbeiten', className: 'primary', onClick: () => showSmokingExpenseEditor(expense) },
+          { label: 'Löschen', className: 'danger', onClick: () => {
+            if (confirm(`"${expense.name}" löschen?`)) {
+              deleteSmokingExpense(expense.id);
+              addChangeLog('Rauchzeug', `Ausgabe gelöscht: ${expense.name} · ${euro(expense.amount)}.`, expense.month);
+              saveState();
+              render();
+            }
+          } }
+        ]));
+        tr.appendChild(dateTd);
+        tr.appendChild(nameTd);
+        tr.appendChild(amountTd);
+        tr.appendChild(noteTd);
+        tr.appendChild(actionTd);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      card.appendChild(table);
+    }
+    smokingSection.appendChild(card);
+
+    const totals = getSmokingMonthlyTotals().slice(0, 12);
+    const history = document.createElement('div');
+    history.className = 'card';
+    history.appendChild(createUiEl('h3', '', 'Monatsverlauf'));
+    history.appendChild(createUiEl('p', 'small muted', 'So siehst du, ob das eingeplante Rauchzeug-Budget in den einzelnen Monaten ausgereicht hat.'));
+    if (!totals.length) {
+      history.appendChild(createUiEl('p', 'small muted', 'Noch kein Verlauf vorhanden.'));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table';
+      table.innerHTML = '<thead><tr><th>Monat</th><th>Ausgaben</th><th>Ausgegeben</th><th>Budget</th><th>Abweichung</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      totals.forEach((row) => {
+        const budget = getSmokingBudgetTarget(row.month);
+        const delta = budget - row.amount;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${formatMonthLabel(row.month)}</td><td>${row.count}</td><td>${euro(row.amount)}</td><td>${euro(budget)}</td><td>${delta >= 0 ? euro(delta) + ' übrig' : euro(Math.abs(delta)) + ' darüber'}</td>`;
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      history.appendChild(table);
+    }
+    smokingSection.appendChild(history);
   }
 
   function renderFuelTopUpCard(parent) {
@@ -15765,12 +16022,14 @@ function renderPots() {
             if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
             if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
             if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
+            if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
             if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
             if (!Array.isArray(state.changeLog)) state.changeLog = [];
             if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = JSON.parse(JSON.stringify(defaultState.appMeta));
           });
           runImportStep('Steuererstattung', () => normalizeAllTaxRefunds());
           runImportStep('Einkaufsgeld', () => normalizeGroceryExpenses());
+          runImportStep('Rauchzeug', () => normalizeSmokingExpenses());
           runImportStep('Tankdaten', () => normalizeTankClosedMonths());
           runImportStep('Aufstockungen', () => normalizeBudgetTopUpsConfig());
           runImportStep('Gemeinschaftskonto', () => normalizeCommonAccountConfig());
