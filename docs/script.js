@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.48
+ * Haushaltsplaner Developer Beta 2.49
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.48';
+  const APP_VERSION = '2.49';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -750,7 +750,7 @@
       fuel: { name: 'Tankgeld', startMonth: '2026-07', balances: {}, notes: {} },
       groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06' }
     },
-    appMeta: { selectedMonth: '', lastAutoMonthCheck: '', includeApiKeyInBackup: true }
+    appMeta: { selectedMonth: '', lastAutoMonthCheck: '', lastPreparedMonth: '', includeApiKeyInBackup: true }
   };
   let state;
   let stateLoadFailed = false;
@@ -985,9 +985,10 @@
   }
 
   function normalizeAppMeta() {
-    if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = { selectedMonth: '', lastAutoMonthCheck: '', includeApiKeyInBackup: true };
+    if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = { selectedMonth: '', lastAutoMonthCheck: '', lastPreparedMonth: '', includeApiKeyInBackup: true };
     if (!isMonthKey(state.appMeta.selectedMonth)) state.appMeta.selectedMonth = '';
     if (!isMonthKey(state.appMeta.lastAutoMonthCheck)) state.appMeta.lastAutoMonthCheck = '';
+    if (!isMonthKey(state.appMeta.lastPreparedMonth)) state.appMeta.lastPreparedMonth = '';
     // Ab 1.29 wird nur noch ein Backup erstellt und der Tank-API-Key ist immer enthalten.
     state.appMeta.includeApiKeyInBackup = true;
   }
@@ -4116,6 +4117,11 @@
   if (!isMonthKey(state.appMeta.lastAutoMonthCheck)) {
     state.appMeta.lastAutoMonthCheck = actualMonthKey;
   }
+  // Bestehende Installationen werden beim Update nicht rückwirkend verändert.
+  // Die automatische Vorbereitung beginnt beim nächsten echten Monatswechsel.
+  if (!isMonthKey(state.appMeta.lastPreparedMonth)) {
+    state.appMeta.lastPreparedMonth = actualMonthKey;
+  }
   const initialDebtRateSyncChanges = syncAllLinkedDebtRatesFromPosts(currentMonth, 36, { silent: true });
   if (initialDebtRateSyncChanges > 0) saveState();
   // ----- DOM-Referenzen -----
@@ -6932,6 +6938,7 @@
     try { syncCurrentMonthToActualDate(); } catch (error) { recordRuntimeIssue('System', 'Monatsprüfung fehlgeschlagen', error); }
     try { renderGlobalMonthBar(); } catch (error) { recordRuntimeIssue('System', 'Monatsleiste fehlgeschlagen', error); }
     if (!ACCOUNTS_ENABLED && currentSection === 'sharedaccount') currentSection = 'common';
+    if (currentSection === 'taxrefund') currentSection = 'overview';
 
     if (sectionSelect && sectionSelect.value !== currentSection) {
       sectionSelect.value = currentSection;
@@ -6963,8 +6970,7 @@
       monthclose: ['Monatsabschluss', monthCloseSection, renderMonthClose],
       datacheck: ['Datencheck', dataCheckSection, renderDataCheck],
       forecast: ['Vorschau & Simulation', forecastSection, renderForecast],
-      save: ['Sichern', saveSection, renderSave],
-      taxrefund: ['Steuererstattung', taxRefundSection, renderTaxRefund]
+      save: ['Sichern', saveSection, renderSave]
     };
     const step = renderMap[currentSection] || renderMap.overview;
     runRenderStep(step[0], step[1], step[2]);
@@ -7252,7 +7258,6 @@
       { key: 'Schulden', label: 'Schulden', section: 'debts' },
       { key: 'Tankgeld', label: 'Tankgeld', section: 'tankcalc' },
       { key: 'Einkaufsgeld', label: 'Einkaufsgeld', section: 'groceries' },
-      { key: 'Steuererstattung', label: 'Steuererstattung', section: 'taxrefund' },
       { key: 'Rücklagen & Sparen', label: 'Rücklagen & Sparen', section: 'savings' },
       { key: 'Töpfe', label: 'Töpfe', section: 'pots' },
       { key: 'Monatsabschluss', label: 'Monatsabschluss', section: 'monthclose' },
@@ -7598,20 +7603,6 @@
         });
       }
     }
-
-    getTaxRefundSuspiciousEntries().forEach((entry) => {
-      items.push({
-        kind: 'warning',
-        area: 'Steuererstattung',
-        checkType: 'tax-refund-suspicious',
-        refundId: entry.refund && entry.refund.id || '',
-        matchingRefundId: entry.matchingRefund && entry.matchingRefund.id || '',
-        matchingPurchaseId: entry.matchingPurchase && entry.matchingPurchase.id || '',
-        amount: entry.amount,
-        title: `Kleine Einzel-Erstattung prüfen: ${euro(entry.amount)}`,
-        detail: `Dieser Betrag steht als eigene Erstattung ohne Käufe drin und kommt zusätzlich als Kauf „${entry.matchingPurchase.name || 'ohne Namen'}“ vor. Dadurch steigt der angezeigte Rest um ${euro(entry.amount)}, falls es kein echter zweiter Eingang war.`
-      });
-    });
 
     const reserveCheckMonth = addMonths(savingsConfig.startMonth, 1);
     const reserveCheckValue = getSavingsContribution(reserveCheckMonth) + Object.keys(savingsConfig.reservePotShares).reduce((sum, key) => sum + getReserveContributionForPot(key, reserveCheckMonth), 0);
@@ -8037,7 +8028,6 @@
   function getDataCheckItemSection(item) {
     const area = normalizeDataCheckAreaName(item && item.area || '');
     if (area === 'Schulden') return 'debts';
-    if (area === 'Steuererstattung') return 'taxrefund';
     if (area === 'Konten') return 'sharedaccount';
     if (area === 'Einkommen') return 'income';
     if (area === 'Gemeinsame Kosten') return 'common';
@@ -8499,7 +8489,7 @@
     return card;
   }
 
-  function renderOverview() {
+  function renderOverviewLegacy() {
     overviewSection.innerHTML = '';
 
     const details = computeMonthDetails(currentMonth);
@@ -8744,6 +8734,181 @@
     logDetails.appendChild(logSummary);
     appendSafe(logDetails, () => renderChangeLogCard(5), 'Änderungsprotokoll');
     overviewSection.appendChild(logDetails);
+  }
+
+  function renderOverview() {
+    overviewSection.innerHTML = '';
+
+    const details = computeMonthDetails(currentMonth);
+    const commonAccountTarget = getCommonAccountTargetSummary(currentMonth);
+    const openPayments = collectOpenPaymentsForMonth(currentMonth);
+    const page = createUiEl('div', 'dashboard-page simplified-dashboard');
+
+    const appendSafe = (parent, builder, label) => {
+      try {
+        const node = typeof builder === 'function' ? builder() : builder;
+        if (node) parent.appendChild(node);
+        return node;
+      } catch (err) {
+        recordRuntimeIssue('Übersicht', `${label || 'Block'} konnte nicht geladen werden`, err);
+        const fallback = createUiEl('div', 'card compact-card notice warning');
+        fallback.appendChild(createUiEl('strong', '', `${label || 'Block'} konnte nicht geladen werden.`));
+        fallback.appendChild(createUiEl('p', 'small muted', 'Die übrige Übersicht bleibt nutzbar.'));
+        parent.appendChild(fallback);
+        return fallback;
+      }
+    };
+
+    const header = createUiEl('div', 'dashboard-header simplified-dashboard-header');
+    const titleWrap = createUiEl('div', 'dashboard-title-wrap');
+    titleWrap.appendChild(createUiEl('h2', '', 'Übersicht'));
+    titleWrap.appendChild(createUiEl('p', '', `${formatMonthLabel(currentMonth)} · nur das, was jetzt wichtig ist`));
+    header.appendChild(titleWrap);
+    page.appendChild(header);
+
+    appendSafe(page, () => renderRuntimeIssueNotice(), 'Fehlerwächter');
+
+    const kpiGrid = createUiEl('div', 'dash-kpi-grid simplified-kpi-grid');
+    const addKpi = ({ label, value, hint, icon, kind = '' }) => {
+      const card = createUiEl('div', `dash-kpi simplified-kpi ${kind}`.trim());
+      const top = createUiEl('div', 'dash-kpi-top');
+      top.appendChild(createUiEl('div', 'modern-icon', icon));
+      top.appendChild(createUiEl('div', 'dash-kpi-label', label));
+      card.appendChild(top);
+      card.appendChild(createUiEl('div', 'dash-kpi-value', value));
+      card.appendChild(createUiEl('div', 'dash-kpi-hint', hint));
+      kpiGrid.appendChild(card);
+    };
+
+    addKpi({
+      label: 'Jetzt für gemeinsame Kosten nötig',
+      value: euro(commonAccountTarget.openTotal),
+      hint: `Monatsbedarf ${euro(commonAccountTarget.dueTotal)} · bereits bezahlt ${euro(commonAccountTarget.paidTotal)}`,
+      icon: '👥',
+      kind: commonAccountTarget.openTotal > 0 ? 'blue' : 'mint'
+    });
+    addKpi({
+      label: 'Sicher frei',
+      value: euro(details.free),
+      hint: details.miscOpen > 0
+        ? `${euro(details.miscOpen)} offene sonstige Ausgaben sind bereits abgezogen`
+        : 'Nach allen geplanten Kosten dieses Monats',
+      icon: details.free >= 0 ? '✓' : '!',
+      kind: details.free >= 0 ? 'mint' : 'danger'
+    });
+    addKpi({
+      label: 'Offene Zahlungen',
+      value: String(openPayments.rows.length),
+      hint: openPayments.rows.length
+        ? `Noch ${euro(openPayments.totalOpen)} zu prüfen oder zu bezahlen`
+        : 'Keine offenen Zahlungen gefunden',
+      icon: '◷',
+      kind: openPayments.rows.length ? 'violet' : 'mint'
+    });
+    page.appendChild(kpiGrid);
+
+    const tasks = getMonthStartChecklist(currentMonth)
+      .filter((item) => !item.done)
+      .sort((a, b) => {
+        const rank = { danger: 0, warning: 1, info: 2, success: 3 };
+        return (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9);
+      });
+    const focusCard = createUiEl('div', 'card overview-focus-card');
+    const focusHead = createUiEl('div', 'compact-section-head');
+    focusHead.appendChild(createUiEl('h3', '', 'Jetzt erledigen'));
+    focusHead.appendChild(createUiEl(
+      'span',
+      tasks.length ? 'pill warning' : 'pill success',
+      tasks.length ? `${tasks.length} offen` : 'alles vorbereitet'
+    ));
+    focusCard.appendChild(focusHead);
+    focusCard.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Laufende Kosten, Aufstockungen und verknüpfte Schuldenraten werden beim Monatswechsel automatisch vorbereitet. Hier erscheinen nur Punkte, die noch eine Entscheidung brauchen.'
+    ));
+
+    if (!tasks.length) {
+      focusCard.appendChild(createUiEl('div', 'empty-state success', 'Für diesen Monat ist nichts Weiteres offen.'));
+    } else {
+      const taskList = createUiEl('div', 'todo-list overview-focus-list');
+      tasks.slice(0, 5).forEach((item) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `todo-row ${item.kind || ''}`.trim();
+        const copy = document.createElement('span');
+        copy.appendChild(createUiEl('strong', '', item.title));
+        copy.appendChild(createUiEl('small', '', item.detail));
+        row.appendChild(copy);
+        row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
+        row.addEventListener('click', () => switchSection(item.section || 'overview'));
+        taskList.appendChild(row);
+      });
+      focusCard.appendChild(taskList);
+      if (tasks.length > 5) {
+        focusCard.appendChild(createUiEl('p', 'small muted', `+ ${tasks.length - 5} weitere Aufgabe(n) im Monatsstart`));
+      }
+    }
+
+    const focusActions = createUiEl('div', 'row overview-focus-actions');
+    const monthStartButton = document.createElement('button');
+    monthStartButton.type = 'button';
+    monthStartButton.className = 'secondary compact';
+    monthStartButton.textContent = 'Monatsstart öffnen';
+    monthStartButton.addEventListener('click', () => switchSection('monthstart'));
+    const quickButton = document.createElement('button');
+    quickButton.type = 'button';
+    quickButton.className = 'primary compact';
+    quickButton.textContent = 'Schnell erfassen';
+    quickButton.addEventListener('click', showQuickCaptureModal);
+    focusActions.appendChild(monthStartButton);
+    focusActions.appendChild(quickButton);
+    focusCard.appendChild(focusActions);
+    page.appendChild(focusCard);
+
+    const more = document.createElement('details');
+    more.className = 'compact-details overview-more-details';
+    const moreSummary = document.createElement('summary');
+    moreSummary.textContent = 'Weitere Auswertungen anzeigen';
+    more.appendChild(moreSummary);
+    const moreContent = createUiEl('div', 'overview-more-content');
+
+    const financeStatus = getFinanceStatus(details.free);
+    const criticalMonths = findCriticalMonths(currentMonth);
+    const financeCard = createUiEl('div', 'card compact-card finance-guard-card');
+    financeCard.appendChild(createUiEl('h3', '', 'Finanz-Ampel'));
+    const financeChips = createUiEl('div', 'status-chip-list');
+    financeChips.appendChild(createUiEl('span', `pill ${financeStatus.kind}`, `${formatMonthLabel(currentMonth)}: ${financeStatus.label}`));
+    financeChips.appendChild(createUiEl('span', 'pill', financeStatus.text));
+    if (criticalMonths.length) {
+      criticalMonths.forEach((item) => {
+        financeChips.appendChild(createUiEl('span', 'pill danger', `${item.label}: ${euro(item.free)}`));
+      });
+    } else {
+      financeChips.appendChild(createUiEl('span', 'pill success', 'Keine negativen Monate in der 12-Monats-Vorschau'));
+    }
+    financeCard.appendChild(financeChips);
+    moreContent.appendChild(financeCard);
+
+    appendSafe(moreContent, () => renderOpenPaymentsOverviewCard(currentMonth, { compact: true }), 'Offene Zahlungen');
+    appendSafe(moreContent, () => renderMonthCompareCard(currentMonth), 'Monatsvergleich');
+    const statusGrid = createUiEl('div', 'overview-compact-grid');
+    appendSafe(statusGrid, () => renderOverviewDataCheckSummaryCard(), 'Datencheck');
+    appendSafe(statusGrid, () => renderWarningsCard(currentMonth), 'Warnungen');
+    moreContent.appendChild(statusGrid);
+
+    const logDetails = document.createElement('details');
+    logDetails.className = 'compact-details';
+    const logSummary = document.createElement('summary');
+    logSummary.textContent = 'Änderungsprotokoll anzeigen';
+    logDetails.appendChild(logSummary);
+    appendSafe(logDetails, () => renderChangeLogCard(5), 'Änderungsprotokoll');
+    moreContent.appendChild(logDetails);
+
+    more.appendChild(moreContent);
+    page.appendChild(more);
+
+    overviewSection.appendChild(page);
   }
 
   function matchesSearchText(value, search) {
@@ -9575,7 +9740,6 @@
           ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(post, currentMonth); saveState(); render(); } } : null,
           { label: 'Zahlung zurücksetzen', className: 'secondary', disabled: !paidNow, onClick: () => { setPostPaidForMonth(post, currentMonth, false); saveState(); render(); } },
           { label: 'In anderen Monat verschieben', className: 'secondary', onClick: () => showBufferMoveMonthModal(post) },
-          { label: 'Zur Steuererstattung verschieben', className: 'secondary', disabled: !(state.taxRefunds || []).length, onClick: () => showBufferToTaxRefundModal(post) },
           { label: 'Bearbeiten', className: 'primary', onClick: () => showBufferExpenseEditor(post) },
           { label: 'Löschen', className: 'danger', onClick: () => { if (confirm(`"${post.name}" löschen?`)) { state.bufferExpenses = state.bufferExpenses.filter((x) => x.id !== post.id); saveState(); render(); } } }
         ]));
@@ -14530,7 +14694,7 @@ function renderPots() {
     apiInfo.textContent = 'Backup-Einstellung: Es wird genau eine Sicherungsdatei erstellt. Der Tank-API-Key wird immer mitgesichert.';
     card.appendChild(apiInfo);
 
-    const totalPosts = (state.commonCosts?.length || 0) + (state.personalCosts?.length || 0) + (state.bufferExpenses?.length || 0) + (state.taxRefunds?.length || 0);
+    const totalPosts = (state.commonCosts?.length || 0) + (state.personalCosts?.length || 0) + (state.bufferExpenses?.length || 0);
     card.appendChild(createSummaryMetrics([
       { label: 'Personen', value: String(state.persons.length) },
       { label: 'Posten gesamt', value: String(totalPosts) },
@@ -14994,15 +15158,28 @@ function renderPots() {
   function syncCurrentMonthToActualDate() {
     const actualMonth = dateToMonthKey(new Date());
     normalizeAppMeta();
+    let changed = false;
     if (state.appMeta.lastAutoMonthCheck !== actualMonth) {
       currentMonth = actualMonth;
       monthList = getSelectableMonths(currentMonth);
       state.appMeta.lastAutoMonthCheck = actualMonth;
       state.appMeta.selectedMonth = actualMonth;
-      saveState();
-      return true;
+      changed = true;
     }
-    return false;
+    if (state.appMeta.lastPreparedMonth !== actualMonth) {
+      syncFuelTopUpExpenses(actualMonth);
+      syncGroceryTopUpExpense(actualMonth);
+      syncAllLinkedDebtRatesFromPosts(actualMonth, 36, { silent: true });
+      state.appMeta.lastPreparedMonth = actualMonth;
+      addChangeLog(
+        'Monatsstart',
+        `${formatMonthLabel(actualMonth)} automatisch vorbereitet: laufende Kosten, Aufstockungen und verknüpfte Schuldenraten geprüft.`,
+        actualMonth
+      );
+      changed = true;
+    }
+    if (changed) saveState();
+    return changed;
   }
 
   function createSummaryMetrics(items) {

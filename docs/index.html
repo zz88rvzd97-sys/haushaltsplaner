@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Developer Beta 2.48
+  Haushaltsplaner Developer Beta 2.49
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,9 +12,9 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
-  Aktualisierung Developer&nbsp;Beta&nbsp;2.48: Monatsanteile der gemeinsamen
-  Kosten können pro Person und Monat manuell mit deutschem Dezimalkomma
-  eingetragen oder jederzeit wieder automatisch berechnet werden.
+  Aktualisierung Developer&nbsp;Beta&nbsp;2.49: Die PC-Übersicht konzentriert
+  sich auf die nächsten Aufgaben und drei Kernwerte. Der Monatsstart bereitet
+  laufende Aufstockungen künftig automatisch vor.
 -->
 
 <!DOCTYPE html>
@@ -23,12 +23,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
-    <title>Haushaltsplaner Developer Beta 2.48</title>
-    <link rel="stylesheet" href="style.css?v=2.48">
-    <link rel="manifest" href="manifest.json?v=2.48">
+    <title>Haushaltsplaner Developer Beta 2.49</title>
+    <link rel="stylesheet" href="style.css?v=2.49">
+    <link rel="manifest" href="manifest.json?v=2.49">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.48">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.49">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.49">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -65,7 +65,6 @@
             <option value="forecast">Vorschau &amp; Simulation</option>
             <option value="save">Sichern</option>
             <option value="buffer">Sonstige Ausgaben</option>
-            <option value="taxrefund">Steuererstattung</option>
           </select>
         </div>
         <nav class="side-nav" aria-label="Hauptnavigation">
@@ -83,7 +82,6 @@
             <button type="button" class="side-nav-link" data-section="common"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><b>Gemeinsame Kosten</b></button>
             <button type="button" class="side-nav-link" data-section="personal"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/><path d="M19 8h4"/><path d="M21 6v4"/></svg></span><b>Persönliche Ausgaben</b></button>
             <button type="button" class="side-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M6 7l1.2 13h9.6L18 7"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/><path d="M9 12h6"/><path d="M10 16h4"/></svg></span><b>Sonstige Ausgaben</b></button>
-            <button type="button" class="side-nav-link" data-section="taxrefund"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h4"/><path d="M10 9h1"/></svg></span><b>Steuererstattung</b></button>
             <button type="button" class="side-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h10v18H4z"/><path d="M8 7h3"/><path d="M14 8h3l3 3v7a2 2 0 0 1-4 0v-3a2 2 0 0 0-2-2"/><path d="M7 21h4"/></svg></span><b>Tankgeld</b></button>
             <button type="button" class="side-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/><path d="M9 13h6"/></svg></span><b>Einkaufsgeld</b></button>
           </div>
@@ -103,7 +101,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.48 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.49 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -131,9 +129,9 @@
           <section id="buffer" class="tab-section"></section>
           <section id="taxrefund" class="tab-section"></section>
         </main>
-        <footer>Developer&nbsp;Beta&nbsp;2.48</footer>
+        <footer>Developer&nbsp;Beta&nbsp;2.49</footer>
       </div>
     </div>
-    <script src="script.js?v=2.48"></script>
+    <script src="script.js?v=2.49"></script>
   </body>
 </html>
