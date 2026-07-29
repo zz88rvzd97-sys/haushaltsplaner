@@ -1,9 +1,9 @@
 /*
- * Haushaltsplaner Developer Beta 2.46
+ * Haushaltsplaner Developer Beta 2.47
  *
  * Diese Version ergänzt eine freiwillige dynamische Sonderzahlungs-Empfehlung:
  * Der feste Schulden-Pool bleibt unverändert, während sicher freies Geld
- * oberhalb des geschützten Puffers neu berechnet und sinnvoll vorgeschlagen wird.
+ * oberhalb eines geschützten 300-€-Puffers neu berechnet und sinnvoll vorgeschlagen wird.
  */
 
 (() => {
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.46';
+  const APP_VERSION = '2.47';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -774,8 +774,8 @@
   };
   const snowballConfig = {
     shortTermSkipMonths: 6,
-    extraInvestTrigger: 600,
-    keepFreeBuffer: 500
+    extraInvestTrigger: 400,
+    keepFreeBuffer: 300
   };
 
   function sanitizeStateTextValues(value, seen = new WeakSet()) {
