@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.51
+ * Haushaltsplaner Developer Beta 2.52
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -14,7 +14,8 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.51';
+  const CARRYOVER_START_MONTH = '2026-08';
+  const APP_VERSION = '2.52';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3596,6 +3597,39 @@
     return Math.max(savingsConfig.minFree - getBufferExpenseSumForMonth(monthKey), 0);
   }
 
+  function getCarryoverInForMonth(monthKey) {
+    if (!isMonthKey(monthKey) || monthKey <= CARRYOVER_START_MONTH) return 0;
+    const previousMonth = addMonths(monthKey, -1);
+    if (previousMonth < CARRYOVER_START_MONTH) return 0;
+    const closing = state.monthlyClosings && state.monthlyClosings[previousMonth];
+    if (!closing || !Number.isFinite(Number(closing.carryoverOut))) return 0;
+    if (closing.carryoverToMonth && closing.carryoverToMonth !== monthKey) return 0;
+    return roundMoney(Math.max(0, Number(closing.carryoverOut || 0)));
+  }
+
+  function getCarryoverStatusForMonth(monthKey) {
+    if (!isMonthKey(monthKey)) {
+      return { active: false, isStart: false, previousMonth: '', amount: 0, closed: false };
+    }
+    const previousMonth = addMonths(monthKey, -1);
+    const isStart = monthKey === CARRYOVER_START_MONTH;
+    if (monthKey < CARRYOVER_START_MONTH) {
+      return { active: false, isStart: false, previousMonth, amount: 0, closed: false };
+    }
+    if (isStart) {
+      return { active: true, isStart: true, previousMonth, amount: 0, closed: false };
+    }
+    const closing = state.monthlyClosings && state.monthlyClosings[previousMonth];
+    return {
+      active: true,
+      isStart: false,
+      previousMonth,
+      amount: getCarryoverInForMonth(monthKey),
+      closed: !!closing,
+      closing: closing || null
+    };
+  }
+
   function roundMoney(value) {
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return 0;
@@ -3653,7 +3687,8 @@
     const miscPaid = roundMoney(getBufferExpenseSumForMonth(monthKey));
     const miscPlanned = roundMoney(getBufferExpensePlannedSumForMonth(monthKey));
     const miscOpen = roundMoney(Math.max(miscPlanned - miscPaid, 0));
-    const freeBeforeMisc = roundMoney(totalIncome - totalCommonRounded - totalPersonal);
+    const carryoverIn = roundMoney(getCarryoverInForMonth(monthKey));
+    const freeBeforeMisc = roundMoney(totalIncome + carryoverIn - totalCommonRounded - totalPersonal);
     const freeCurrent = roundMoney(freeBeforeMisc - miscPaid);
     const freeConservative = roundMoney(freeBeforeMisc - miscPlanned);
     const free = freeConservative;
@@ -3667,6 +3702,7 @@
       totalPersonal,
       totalPersonalAssigned,
       unassignedPersonalDue: roundMoney(unassignedPersonalDue),
+      carryoverIn,
       miscPaid,
       miscPlanned,
       miscOpen,
@@ -7418,6 +7454,20 @@
       });
     });
 
+    Object.entries(state.monthlyClosings || {}).forEach(([month, closing]) => {
+      if (month < CARRYOVER_START_MONTH || !closing) return;
+      const targetMonth = nextMonth(month);
+      const amount = Number(closing.carryoverOut);
+      if (!Number.isFinite(amount) || amount < 0 || (closing.carryoverToMonth && closing.carryoverToMonth !== targetMonth)) {
+        items.push({
+          kind: 'warning',
+          area: 'Monatsübertrag',
+          title: `Übertrag aus ${formatMonthLabel(month)} prüfen`,
+          detail: `Bitte ${formatMonthLabel(month)} einmal erneut abschließen, damit der Rest sauber nach ${formatMonthLabel(targetMonth)} übernommen wird.`
+        });
+      }
+    });
+
     const allPosts = getAllCostPosts();
     const nextMonthsForChecks = getNext12Months(currentMonth).map((m) => m.key);
     allPosts.forEach(({ area, post }) => {
@@ -9029,6 +9079,36 @@
     });
     page.appendChild(kpiGrid);
 
+    const carryoverStatus = getCarryoverStatusForMonth(currentMonth);
+    if (carryoverStatus.active) {
+      const carryoverNotice = createUiEl(
+        'div',
+        `notice ${carryoverStatus.isStart || carryoverStatus.closed ? 'success' : 'warning'} month-carryover-notice`
+      );
+      const carryoverCopy = createUiEl('span');
+      if (carryoverStatus.isStart) {
+        carryoverCopy.innerHTML = '<strong>Neustart ab August:</strong> Dieser Monat beginnt ohne alten Übertrag. Der Rest aus August wird beim Monatsabschluss automatisch nach September übernommen.';
+      } else if (carryoverStatus.closed) {
+        carryoverCopy.innerHTML = `<strong>${euro(carryoverStatus.amount)} aus ${formatMonthLabel(carryoverStatus.previousMonth)} übernommen.</strong> Der Betrag ist bereits in „Sicher frei“ enthalten.`;
+      } else {
+        carryoverCopy.innerHTML = `<strong>Noch kein Übertrag aus ${formatMonthLabel(carryoverStatus.previousMonth)}.</strong> Sobald der Vormonat abgeschlossen ist, erscheint dessen Rest hier automatisch.`;
+      }
+      carryoverNotice.appendChild(carryoverCopy);
+      if (!carryoverStatus.isStart && !carryoverStatus.closed) {
+        const closePreviousButton = document.createElement('button');
+        closePreviousButton.type = 'button';
+        closePreviousButton.className = 'secondary compact';
+        closePreviousButton.textContent = 'Vormonat abschließen';
+        closePreviousButton.addEventListener('click', () => {
+          setCurrentMonth(carryoverStatus.previousMonth);
+          currentSection = 'monthclose';
+          render();
+        });
+        carryoverNotice.appendChild(closePreviousButton);
+      }
+      page.appendChild(carryoverNotice);
+    }
+
     const tasks = getMonthStartChecklist(currentMonth)
       .filter((item) => !item.done)
       .sort((a, b) => {
@@ -9047,7 +9127,7 @@
     focusCard.appendChild(createUiEl(
       'p',
       'small muted',
-      'Laufende Kosten, Aufstockungen und verknüpfte Schuldenraten werden beim Monatswechsel automatisch vorbereitet. Hier erscheinen nur Punkte, die noch eine Entscheidung brauchen.'
+      'Laufende Kosten, Aufstockungen, verknüpfte Schuldenraten und der bestätigte Rest aus dem Vormonat werden automatisch vorbereitet. Hier erscheinen nur Punkte, die noch eine Entscheidung brauchen.'
     ));
 
     if (!tasks.length) {
@@ -9560,7 +9640,7 @@
 
     const table = document.createElement('table');
     table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Monat</th><th>Netto gesamt</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon übernommene Raten</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Sicher verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Monat</th><th>Netto gesamt</th><th>Übertrag</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon übernommene Raten</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Sicher verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
     const tbody = document.createElement('tbody');
     months.forEach(({ key, label }) => {
       const rawDetails = hasScenario ? computeMonthDetailsWithScenario(key) : computeMonthDetails(key);
@@ -9568,7 +9648,7 @@
       const free = details.free;
       const distributable = details.distributable;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
+      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.carryoverIn || 0)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -9600,9 +9680,15 @@
   }
 
 
-  function buildMonthCloseSnapshot(monthKey) {
+  function buildMonthCloseSnapshot(monthKey, options = {}) {
     const details = getMonthCloseActualDetails(monthKey);
     const debtPlan = getDebtPlanForMonth(monthKey);
+    const automaticCarryover = monthKey >= CARRYOVER_START_MONTH
+      ? roundMoney(Math.max(0, Number(details.free || 0)))
+      : 0;
+    const carryoverOut = monthKey >= CARRYOVER_START_MONTH && options.carryoverOut !== undefined
+      ? roundMoney(Math.max(0, Number(options.carryoverOut || 0)))
+      : automaticCarryover;
     const accounts = ACCOUNTS_ENABLED ? (state.accounts || []).map((account) => {
       const availability = getAccountAvailability(account, monthKey);
       return {
@@ -9618,9 +9704,12 @@
       };
     }) : [];
     return {
-      schema: 'monthCloseV180',
+      schema: 'monthCloseV252',
       closedAt: new Date().toISOString(),
       totalIncome: Number(details.totalIncome || 0),
+      carryoverIn: Number(details.carryoverIn || 0),
+      carryoverOut,
+      carryoverToMonth: monthKey >= CARRYOVER_START_MONTH ? nextMonth(monthKey) : '',
       totalCommonRounded: Number(details.totalCommonRounded || 0),
       totalPersonal: Number(details.totalPersonal || 0),
       linkedDebtCosts: Number(details.linkedDebtCosts || 0),
@@ -9647,6 +9736,7 @@
     if (!closedSnapshot) return [];
     const checks = [
       ['Netto gesamt', liveDetails.totalIncome, closedSnapshot.totalIncome],
+      ['Übertrag aus Vormonat', liveDetails.carryoverIn || 0, closedSnapshot.carryoverIn || 0],
       ['Gemeinsame Kosten', liveDetails.totalCommonRounded, closedSnapshot.totalCommonRounded],
       ['Persönliche Ausgaben', liveDetails.totalPersonal, closedSnapshot.totalPersonal],
       ['Schulden geplant', liveDetails.debtPlanned || 0, closedSnapshot.debtPlanned || 0],
@@ -9659,22 +9749,29 @@
       .filter((row) => Math.abs(row.diff) > 0.009);
   }
 
-  function closeMonth(monthKey) {
-    const details = buildMonthCloseSnapshot(monthKey);
+  function closeMonth(monthKey, options = {}) {
+    const details = buildMonthCloseSnapshot(monthKey, options);
     if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
     state.monthlyClosings[monthKey] = details;
     // Neue Rücklagenlogik ab 1.83: Der Monatsabschluss speichert nur den Beleg.
     // Rücklagen-Posten werden gezielt im Bereich „Rücklagen & Sparen“ eingezahlt.
-    addChangeLog('Monatsabschluss', `Monat abgeschlossen: Beleg gespeichert`, monthKey);
+    const transferText = monthKey >= CARRYOVER_START_MONTH
+      ? ` · ${euro(details.carryoverOut)} automatisch nach ${formatMonthLabel(details.carryoverToMonth)} übernommen`
+      : '';
+    addChangeLog('Monatsabschluss', `Monat abgeschlossen: Beleg gespeichert${transferText}`, monthKey);
     saveState();
   }
 
   function reopenMonth(monthKey) {
+    const previousClosing = state.monthlyClosings && state.monthlyClosings[monthKey];
     if (state.monthlyClosings) delete state.monthlyClosings[monthKey];
     if (state.reserveItemSaved && state.reserveItemSaved[monthKey]) {
       delete state.reserveItemSaved[monthKey];
     }
-    addChangeLog('Monatsabschluss', 'Monatsabschluss zurückgesetzt', monthKey);
+    const transferText = previousClosing && Number(previousClosing.carryoverOut || 0) > 0
+      ? `; der Übertrag nach ${formatMonthLabel(previousClosing.carryoverToMonth || nextMonth(monthKey))} wurde entfernt`
+      : '';
+    addChangeLog('Monatsabschluss', `Monatsabschluss zurückgesetzt${transferText}`, monthKey);
     saveState();
   }
 
@@ -9698,8 +9795,16 @@
     const closed = isMonthClosed(currentMonth);
     const closedSnapshot = closed && state.monthlyClosings ? state.monthlyClosings[currentMonth] : null;
     const details = closedSnapshot ? { ...liveDetails, ...closedSnapshot } : liveDetails;
+    const carryoverActive = currentMonth >= CARRYOVER_START_MONTH;
+    const carryoverTargetMonth = nextMonth(currentMonth);
+    const automaticCarryoverOut = carryoverActive ? roundMoney(Math.max(0, Number(liveDetails.free || 0))) : 0;
+    const displayedCarryoverOut = closedSnapshot && Number.isFinite(Number(closedSnapshot.carryoverOut))
+      ? roundMoney(Math.max(0, Number(closedSnapshot.carryoverOut || 0)))
+      : automaticCarryoverOut;
     card.appendChild(createSummaryMetrics([
       { label: 'Sicher verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : '' },
+      { label: 'Übertrag aus Vormonat', value: `${euro(details.carryoverIn || 0)}`, kind: Number(details.carryoverIn || 0) > 0 ? 'success' : '', hint: currentMonth === CARRYOVER_START_MONTH ? 'Neustart ab August ohne alten Übertrag.' : 'Bereits im sicheren freien Betrag enthalten.' },
+      { label: `Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, value: `${euro(displayedCarryoverOut)}`, kind: displayedCarryoverOut > 0 ? 'success' : '', hint: carryoverActive ? 'Wird beim Abschluss automatisch gespeichert.' : 'Automatischer Übertrag startet ab August 2026.' },
       { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
       { label: 'Rücklagen 70 % über Puffer', value: `${euro(details.reserves)}` },
       { label: 'Sparen 30 % über Puffer', value: `${euro(details.savings)}` },
@@ -9715,6 +9820,7 @@
     receiptHead.appendChild(createUiEl('span', closed ? 'pill success' : 'pill warning', closed ? 'Abgeschlossen' : 'Noch offen'));
     receipt.appendChild(receiptHead);
     receipt.appendChild(createReceiptRow('Netto gesamt', euro(details.totalIncome)));
+    receipt.appendChild(createReceiptRow('Übertrag aus Vormonat', `+ ${euro(details.carryoverIn || 0)}`));
     receipt.appendChild(createReceiptRow('Gemeinsame Kosten', `− ${euro(details.totalCommonRounded)}`));
     receipt.appendChild(createReceiptRow('Persönliche Ausgaben', `− ${euro(details.totalPersonal)}`));
     receipt.appendChild(createReceiptRow('Davon Schulden in den Kosten', euro(details.debtPlanned || 0)));
@@ -9725,7 +9831,25 @@
     receipt.appendChild(createReceiptRow('Puffer bleibt frei', euro(details.keptFreeBuffer || 0)));
     receipt.appendChild(createReceiptRow('Davon Rücklagen', euro(details.reserves)));
     receipt.appendChild(createReceiptRow('Davon Sparen', euro(details.savings)));
+    receipt.appendChild(createReceiptRow(`Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, euro(displayedCarryoverOut), displayedCarryoverOut > 0 ? 'success' : ''));
     card.appendChild(receipt);
+
+    const carryoverBox = createUiEl('div', `notice ${carryoverActive ? 'success' : 'info'} month-close-carryover-box`);
+    const carryoverText = createUiEl('div');
+    carryoverText.appendChild(createUiEl('strong', '', carryoverActive ? 'Automatischer Monatsübertrag' : 'Neustart ab August'));
+    carryoverText.appendChild(createUiEl(
+      'p',
+      'small muted',
+      carryoverActive
+        ? `Der sichere Monatsrest wird automatisch als Startguthaben für ${formatMonthLabel(carryoverTargetMonth)} übernommen. Ändere den Betrag nur, wenn tatsächlich weniger übrig geblieben ist.`
+        : 'Alte Monate werden nicht übernommen. Der erste automatische Übertrag entsteht beim Abschluss von August 2026.'
+    ));
+    carryoverBox.appendChild(carryoverText);
+    const carryoverInput = createMoneyField(carryoverActive ? displayedCarryoverOut : 0);
+    carryoverInput.disabled = !carryoverActive;
+    carryoverInput.setAttribute('aria-label', `Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`);
+    carryoverBox.appendChild(createLabelInput(`Tatsächlicher Rest für ${formatMonthLabel(carryoverTargetMonth)}`, carryoverInput));
+    card.appendChild(carryoverBox);
 
     if (closedSnapshot) {
       const closedInfo = createUiEl('div', 'notice success month-close-snapshot-note');
@@ -9813,7 +9937,11 @@
     closeBtn.disabled = false;
     closeBtn.addEventListener('click', () => {
       if (closed && !confirm('Monatsabschluss überschreiben?')) return;
-      closeMonth(currentMonth);
+      const carryoverOut = carryoverActive ? parseMoneyInput(carryoverInput.value) : 0;
+      if (!Number.isFinite(carryoverOut) || carryoverOut < 0) return alert('Bitte einen gültigen Übertrag ab 0 € eingeben.');
+      if (carryoverOut > automaticCarryoverOut + 0.01
+        && !confirm(`Der eingetragene Übertrag ist höher als der aktuell sichere Monatsrest von ${euro(automaticCarryoverOut)}. Trotzdem übernehmen?`)) return;
+      closeMonth(currentMonth, { carryoverOut });
       render();
     });
     const reopenBtn = document.createElement('button');
@@ -9832,7 +9960,7 @@
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen. Einzahlungen in Töpfe erfolgen bewusst im Bereich „Rücklagen & Sparen“. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
+    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen und übernimmt den bestätigten Rest automatisch in den Folgemonat. Einzahlungen in Töpfe erfolgen weiterhin bewusst im Bereich „Rücklagen & Sparen“. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
     card.appendChild(note);
     monthCloseSection.appendChild(card);
   }

@@ -5041,7 +5041,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
-/* Developer Beta 2.51 – PC-Automatik und browserunabhängige Sicherungen */
+/* Developer Beta 2.52 – PC-Automatik, Sicherungen und Monatsübertrag */
 .simplified-side-nav {
   gap: .7rem !important;
 }
@@ -5223,6 +5223,24 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   min-width: min(100%, 380px);
 }
 
+.month-carryover-notice,
+.month-close-carryover-box {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.month-carryover-notice > span,
+.month-close-carryover-box > div {
+  display: grid;
+  gap: .25rem;
+}
+
+.month-close-carryover-box label {
+  min-width: min(100%, 240px);
+}
+
 @media (max-width: 900px) {
   .batch-payment-list {
     grid-template-columns: 1fr;
@@ -5230,7 +5248,9 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .batch-payment-actions,
   .batch-payment-undo,
   .tank-km-suggestion,
-  .automatic-backup-history-row {
+  .automatic-backup-history-row,
+  .month-carryover-notice,
+  .month-close-carryover-box {
     align-items: stretch;
     flex-direction: column;
   }
