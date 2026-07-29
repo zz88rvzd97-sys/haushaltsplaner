@@ -1,9 +1,9 @@
 /*
- * Haushaltsplaner Developer Beta 2.47
+ * Haushaltsplaner Developer Beta 2.48
  *
- * Diese Version ergänzt eine freiwillige dynamische Sonderzahlungs-Empfehlung:
- * Der feste Schulden-Pool bleibt unverändert, während sicher freies Geld
- * oberhalb eines geschützten 300-€-Puffers neu berechnet und sinnvoll vorgeschlagen wird.
+ * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
+ * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
+ * ohne manuellen Wert bleibt die automatische Aufteilung aktiv.
  */
 
 (() => {
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.47';
+  const APP_VERSION = '2.48';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -713,6 +713,7 @@
       currentBalance: 0,
       manualBound: 0,
       note: '',
+      contributionOverrides: {},
       contributionsPaid: {},
       contributionPayments: {},
       interestEntries: []
@@ -2003,6 +2004,20 @@
     ca.manualBound = Number.isFinite(Number(ca.manualBound)) ? Number(ca.manualBound) : 0;
     if (ca.manualBound < 0) ca.manualBound = 0;
     if (typeof ca.note !== 'string') ca.note = '';
+    if (!ca.contributionOverrides || typeof ca.contributionOverrides !== 'object' || Array.isArray(ca.contributionOverrides)) ca.contributionOverrides = {};
+    Object.keys(ca.contributionOverrides).forEach((month) => {
+      const monthMap = ca.contributionOverrides[month];
+      if (!isMonthKey(month) || !monthMap || typeof monthMap !== 'object' || Array.isArray(monthMap)) {
+        delete ca.contributionOverrides[month];
+        return;
+      }
+      Object.keys(monthMap).forEach((personId) => {
+        const amount = Number(monthMap[personId]);
+        if (!Number.isFinite(amount) || amount < 0) delete monthMap[personId];
+        else monthMap[personId] = roundMoney(amount);
+      });
+      if (!Object.keys(monthMap).length) delete ca.contributionOverrides[month];
+    });
     if (!ca.contributionsPaid || typeof ca.contributionsPaid !== 'object' || Array.isArray(ca.contributionsPaid)) ca.contributionsPaid = {};
     Object.keys(ca.contributionsPaid).forEach((month) => {
       if (!isMonthKey(month) || !ca.contributionsPaid[month] || typeof ca.contributionsPaid[month] !== 'object') {
@@ -2071,6 +2086,34 @@
     normalizeCommonAccountConfig();
     if (!state.commonAccount.contributionPayments[monthKey]) state.commonAccount.contributionPayments[monthKey] = {};
     return state.commonAccount.contributionPayments[monthKey];
+  }
+
+  function getManualCommonContribution(monthKey, personId) {
+    if (!isMonthKey(monthKey) || !personId) return null;
+    normalizeCommonAccountConfig();
+    const monthMap = state.commonAccount.contributionOverrides[monthKey];
+    if (!monthMap || !Object.prototype.hasOwnProperty.call(monthMap, personId)) return null;
+    const amount = Number(monthMap[personId]);
+    return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : null;
+  }
+
+  function setManualCommonContribution(monthKey, personId, amount) {
+    if (!isMonthKey(monthKey) || !personId) return false;
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value < 0) return false;
+    normalizeCommonAccountConfig();
+    if (!state.commonAccount.contributionOverrides[monthKey]) state.commonAccount.contributionOverrides[monthKey] = {};
+    state.commonAccount.contributionOverrides[monthKey][personId] = roundMoney(value);
+    return true;
+  }
+
+  function clearManualCommonContribution(monthKey, personId) {
+    if (!isMonthKey(monthKey) || !personId) return;
+    normalizeCommonAccountConfig();
+    const monthMap = state.commonAccount.contributionOverrides[monthKey];
+    if (!monthMap) return;
+    delete monthMap[personId];
+    if (!Object.keys(monthMap).length) delete state.commonAccount.contributionOverrides[monthKey];
   }
 
   function getContributionTransferForPerson(monthKey, personId) {
@@ -5901,7 +5944,7 @@
    * @param {number} totalMonthly Gesamtsumme aller monatlichen Anteile
    * @param {Array<{person: Object, income: number}>} persons Personen mit ihren Einkommen
    */
-  function computeRoundedCommonShares(totalMonthly, persons, monthKey = '') {
+  function computeAutomaticRoundedCommonShares(totalMonthly, persons, monthKey = '') {
     const result = {};
     if (!persons || persons.length === 0) return result;
     let totalIncome = 0;
@@ -5911,6 +5954,17 @@
       const ratio = totalIncome ? income / totalIncome : 0;
       const base = ratio * totalMonthly + getPersonShift(person, monthKey);
       result[person.id] = Math.ceil(base / roundingStep) * roundingStep;
+    });
+    return result;
+  }
+
+  function computeRoundedCommonShares(totalMonthly, persons, monthKey = '') {
+    const result = computeAutomaticRoundedCommonShares(totalMonthly, persons, monthKey);
+    if (!isMonthKey(monthKey)) return result;
+    (persons || []).forEach(({ person }) => {
+      if (!person || !person.id) return;
+      const manualAmount = getManualCommonContribution(monthKey, person.id);
+      if (manualAmount !== null) result[person.id] = manualAmount;
     });
     return result;
   }
@@ -9977,18 +10031,100 @@ function renderCommon() {
     const distTitle = document.createElement('h3');
     distTitle.textContent = 'Eure Monatsanteile';
     distBox.appendChild(distTitle);
+    distBox.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Die automatische Aufteilung ist vorausgefüllt. Du kannst jeden Anteil für diesen Monat manuell ändern – Komma-Beträge wie 425,50 sind möglich.'
+    ));
     const distTable = document.createElement('table');
     distTable.className = 'list-table common-contribution-table';
     const distHead = document.createElement('thead');
     distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Eingezahlt?</th></tr>';
     distTable.appendChild(distHead);
     const distBody = document.createElement('tbody');
+    let automaticCommonRaw = 0;
+    (state.commonCosts || []).forEach((cost) => {
+      if (isPostActiveInMonth(cost, currentMonth)) automaticCommonRaw += getCommonMonthlyShare(cost, currentMonth);
+    });
+    const automaticShareMap = computeAutomaticRoundedCommonShares(
+      automaticCommonRaw,
+      state.persons.map((person) => ({ person, income: getPersonNet(person, currentMonth) })),
+      currentMonth
+    );
     contributionDetails.persons.forEach((rowData) => {
       const row = document.createElement('tr');
       const nameCell = document.createElement('td');
       nameCell.textContent = rowData.person.name;
       const amountCell = document.createElement('td');
-      amountCell.textContent = euro(rowData.plannedAmount);
+      amountCell.className = 'common-contribution-amount-cell';
+      const automaticAmount = roundMoney(Number(automaticShareMap[rowData.person.id] || 0));
+      const manualAmount = getManualCommonContribution(currentMonth, rowData.person.id);
+      const amountControls = document.createElement('div');
+      amountControls.className = 'common-contribution-amount-controls';
+      const amountInput = document.createElement('input');
+      amountInput.type = 'text';
+      amountInput.inputMode = 'decimal';
+      amountInput.className = 'common-contribution-amount-input';
+      amountInput.setAttribute('aria-label', `Monatsanteil für ${rowData.person.name} in Euro`);
+      amountInput.value = formatNumberInput(rowData.plannedAmount);
+      const saveAmountButton = document.createElement('button');
+      saveAmountButton.type = 'button';
+      saveAmountButton.className = 'secondary compact';
+      saveAmountButton.textContent = 'Speichern';
+      saveAmountButton.addEventListener('click', () => {
+        if (!amountInput.value.trim()) {
+          alert('Bitte einen Anteil eingeben, zum Beispiel 425,50.');
+          return;
+        }
+        const amount = parseMoneyInput(amountInput.value);
+        if (!Number.isFinite(amount) || amount < 0) {
+          alert('Bitte einen gültigen Anteil eingeben, zum Beispiel 425,50.');
+          return;
+        }
+        if (!setManualCommonContribution(currentMonth, rowData.person.id, amount)) {
+          alert('Der Anteil konnte nicht gespeichert werden.');
+          return;
+        }
+        addChangeLog(
+          'Gemeinsame Kosten',
+          `${rowData.person.name}: Monatsanteil auf ${euro(amount)} manuell gesetzt.`,
+          currentMonth
+        );
+        saveState();
+        render();
+      });
+      amountInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveAmountButton.click();
+        }
+      });
+      amountControls.appendChild(amountInput);
+      amountControls.appendChild(saveAmountButton);
+      if (manualAmount !== null) {
+        const autoButton = document.createElement('button');
+        autoButton.type = 'button';
+        autoButton.className = 'ghost-btn compact';
+        autoButton.textContent = 'Automatisch';
+        autoButton.title = `Setzt den Anteil wieder auf die automatische Berechnung von ${euro(automaticAmount)}.`;
+        autoButton.addEventListener('click', () => {
+          clearManualCommonContribution(currentMonth, rowData.person.id);
+          addChangeLog(
+            'Gemeinsame Kosten',
+            `${rowData.person.name}: Monatsanteil wieder automatisch berechnet (${euro(automaticAmount)}).`,
+            currentMonth
+          );
+          saveState();
+          render();
+        });
+        amountControls.appendChild(autoButton);
+      }
+      amountCell.appendChild(amountControls);
+      amountCell.appendChild(createUiEl(
+        'div',
+        `small ${manualAmount !== null ? 'success-text' : 'muted'}`,
+        manualAmount !== null ? `Manuell · automatisch wären es ${euro(automaticAmount)}` : 'Automatisch berechnet'
+      ));
       if (rowData.paid && Math.abs(Number(rowData.plannedAmount || 0) - Number(rowData.paidAmount || 0)) > 0.005) {
         amountCell.appendChild(createUiEl('div', 'small muted', `${euro(rowData.paidAmount)} bereits eingezahlt`));
       }

@@ -3837,6 +3837,29 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
 .shared-contribution-name {
   min-width: 0;
 }
+
+/* Developer Beta 2.48 – Manuelle Monatsanteile bei gemeinsamen Kosten */
+.common-contribution-amount-cell {
+  min-width: 290px;
+}
+.common-contribution-amount-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem;
+}
+.common-contribution-amount-input {
+  width: 8.5rem !important;
+  min-width: 7.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.common-contribution-amount-cell .small {
+  margin-top: .3rem;
+}
+.success-text {
+  color: #147a45;
+}
 @media (max-width: 640px) {
   .shared-contribution-row {
     grid-template-columns: auto 1fr;
@@ -3845,6 +3868,12 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .shared-contribution-row .pill {
     grid-column: 2;
     justify-self: start;
+  }
+  .common-contribution-amount-cell {
+    min-width: 245px;
+  }
+  .common-contribution-amount-input {
+    width: 7.75rem !important;
   }
 }
 
