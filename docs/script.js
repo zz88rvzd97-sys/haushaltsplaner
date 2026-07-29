@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.49
+ * Haushaltsplaner Developer Beta 2.50
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.49';
+  const APP_VERSION = '2.50';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -750,7 +750,15 @@
       fuel: { name: 'Tankgeld', startMonth: '2026-07', balances: {}, notes: {} },
       groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06' }
     },
-    appMeta: { selectedMonth: '', lastAutoMonthCheck: '', lastPreparedMonth: '', includeApiKeyInBackup: true }
+    appMeta: {
+      selectedMonth: '',
+      lastAutoMonthCheck: '',
+      lastPreparedMonth: '',
+      includeApiKeyInBackup: true,
+      externalBackupFolderName: '',
+      lastExternalBackupAt: '',
+      lastBatchPayment: null
+    }
   };
   let state;
   let stateLoadFailed = false;
@@ -960,6 +968,9 @@
       const savedAt = new Date().toISOString();
       localStorage.setItem('budgetStateLastSavedAt', savedAt);
       updateSaveStatus(savedAt);
+      if (state.appMeta && state.appMeta.externalBackupFolderName) {
+        queueAutomaticExternalBackup();
+      }
       return true;
     } catch (err) {
       console.error('Speichern fehlgeschlagen', err);
@@ -985,10 +996,28 @@
   }
 
   function normalizeAppMeta() {
-    if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = { selectedMonth: '', lastAutoMonthCheck: '', lastPreparedMonth: '', includeApiKeyInBackup: true };
+    if (!state.appMeta || typeof state.appMeta !== 'object') {
+      state.appMeta = {
+        selectedMonth: '',
+        lastAutoMonthCheck: '',
+        lastPreparedMonth: '',
+        includeApiKeyInBackup: true,
+        externalBackupFolderName: '',
+        lastExternalBackupAt: '',
+        lastBatchPayment: null
+      };
+    }
     if (!isMonthKey(state.appMeta.selectedMonth)) state.appMeta.selectedMonth = '';
     if (!isMonthKey(state.appMeta.lastAutoMonthCheck)) state.appMeta.lastAutoMonthCheck = '';
     if (!isMonthKey(state.appMeta.lastPreparedMonth)) state.appMeta.lastPreparedMonth = '';
+    if (typeof state.appMeta.externalBackupFolderName !== 'string') state.appMeta.externalBackupFolderName = '';
+    if (typeof state.appMeta.lastExternalBackupAt !== 'string') state.appMeta.lastExternalBackupAt = '';
+    if (!state.appMeta.lastBatchPayment || typeof state.appMeta.lastBatchPayment !== 'object') {
+      state.appMeta.lastBatchPayment = null;
+    } else {
+      const batch = state.appMeta.lastBatchPayment;
+      if (!isMonthKey(batch.month) || !Array.isArray(batch.items)) state.appMeta.lastBatchPayment = null;
+    }
     // Ab 1.29 wird nur noch ein Backup erstellt und der Tank-API-Key ist immer enthalten.
     state.appMeta.includeApiKeyInBackup = true;
   }
@@ -4146,6 +4175,7 @@
   const taxRefundSection = document.getElementById('taxrefund');
   const globalMonthBar = document.getElementById('globalMonthBar');
   const sectionSelect = document.getElementById('sectionSelect');
+  const sideMoreSelect = document.getElementById('sideMoreSelect');
   const quickCaptureButton = document.getElementById('quickCaptureButton');
   const reloadButton = document.getElementById('reloadButton');
   const sectionButtons = Array.from(document.querySelectorAll('[data-section]'));
@@ -4304,6 +4334,9 @@
     sectionButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.section === currentSection);
     });
+    if (sideMoreSelect && Array.from(sideMoreSelect.options).some((option) => option.value === currentSection)) {
+      sideMoreSelect.value = currentSection;
+    } else if (sideMoreSelect) sideMoreSelect.value = '';
     render();
     requestAnimationFrame(() => {
       const main = document.querySelector('.app-content main');
@@ -4312,6 +4345,11 @@
   }
   if (sectionSelect) {
     sectionSelect.addEventListener('change', (e) => switchSection(e.target.value));
+  }
+  if (sideMoreSelect) {
+    sideMoreSelect.addEventListener('change', (e) => {
+      if (e.target.value) switchSection(e.target.value);
+    });
   }
   sectionButtons.forEach((btn) => {
     btn.addEventListener('click', () => switchSection(btn.dataset.section));
@@ -6416,12 +6454,28 @@
   function getTankRealMonthlyRecords(personKey, baseMonth = currentMonth) {
     const months = new Set();
     getTankMonthlyEntries(personKey).forEach((entry) => {
-      if (monthDiff(entry.month, baseMonth) <= 0) months.add(entry.month);
+      if (entry.month <= baseMonth) months.add(entry.month);
     });
     return Array.from(months)
       .sort((a, b) => String(b).localeCompare(String(a)))
       .map((month) => getTankMonthlyRecord(personKey, month))
       .filter((entry) => Number(entry.netCost || 0) > 0 || Number(entry.km || 0) > 0 || Number(entry.liters || 0) > 0);
+  }
+
+  function getPreviousTankEndKm(personKey, monthKey) {
+    const previous = getTankEntryForMonth(personKey, addMonths(monthKey, -1));
+    const endKm = Number(previous && previous.endKm || 0);
+    return endKm > 0 ? endKm : null;
+  }
+
+  function getTankKmPlanSuggestion(personKey, monthKey = currentMonth) {
+    const entries = getTankRealMonthlyRecords(personKey, monthKey)
+      .filter((entry) => entry.month < monthKey && isTankMonthClosed(entry.month) && Number(entry.km || 0) > 0)
+      .slice(0, 3);
+    if (entries.length < 2) return null;
+    const average = entries.reduce((sum, entry) => sum + Number(entry.km || 0), 0) / entries.length;
+    const rounded = Math.max(0, Math.round(average / 10) * 10);
+    return { km: rounded, count: entries.length, months: entries.map((entry) => entry.month) };
   }
 
   function normalizeTankMonthlyEntry(entry) {
@@ -6946,6 +7000,9 @@
     sectionButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.section === currentSection);
     });
+    if (sideMoreSelect && Array.from(sideMoreSelect.options).some((option) => option.value === currentSection)) {
+      sideMoreSelect.value = currentSection;
+    } else if (sideMoreSelect) sideMoreSelect.value = '';
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
       if (sec.id !== currentSection) sec.setAttribute('aria-hidden', 'true');
@@ -7652,6 +7709,9 @@
         const accountId = post.accountId || inferAccountIdForPost(post) || '';
         rows.push({
           id: `post:${post.id || generateId()}:${monthKey}`,
+          targetType: 'post',
+          targetId: post.id || '',
+          batchEligible: !isOneTimePost(post) && !getLinkedSavingsGoal(post),
           group,
           name: post.name || 'Posten',
           amount,
@@ -7677,6 +7737,9 @@
       const accountId = debt.accountId || '';
       rows.push({
         id: `debt:${debt.id || generateId()}:${monthKey}`,
+        targetType: 'debt',
+        targetId: debt.id || '',
+        batchEligible: false,
         group: 'Schulden',
         name: debt.name || 'Schuld',
         amount: open,
@@ -7754,6 +7817,11 @@
     ];
     if (ACCOUNTS_ENABLED) metrics.splice(2, 0, { label: 'Konten mit Fehlbetrag', value: String(accountsMissing), kind: accountsMissing > 0 ? 'danger' : 'success' });
     card.appendChild(createSummaryMetrics(metrics));
+
+    if (!compact) {
+      const batchCard = renderBatchPaymentCard(monthKey, data);
+      if (batchCard) card.appendChild(batchCard);
+    }
 
     if (data.rows.length === 0) {
       const empty = createUiEl('div', 'empty-state', 'Für diesen Monat sind keine offenen Zahlungen gefunden.');
@@ -7862,6 +7930,136 @@
     return card;
   }
 
+  function undoLastBatchPayment() {
+    normalizeAppMeta();
+    const batch = state.appMeta.lastBatchPayment;
+    if (!batch || !isMonthKey(batch.month) || !Array.isArray(batch.items)) return false;
+    let restored = 0;
+    batch.items.forEach((item) => {
+      if (!item || item.type !== 'post' || !item.postId) return;
+      const found = findCostPostById(item.postId);
+      const post = found && found.post;
+      if (!post || !isPostPaidForMonth(post, batch.month)) return;
+      setPostPaidForMonth(post, batch.month, false);
+      resetDebtPaymentFromPost(post, batch.month);
+      restored += 1;
+    });
+    state.appMeta.lastBatchPayment = null;
+    if (restored > 0) {
+      addChangeLog('Zahlungen', `${restored} Sammelzahlung(en) zurückgesetzt.`, batch.month);
+    }
+    saveState();
+    render();
+    return restored > 0;
+  }
+
+  function renderBatchPaymentCard(monthKey, openData = collectOpenPaymentsForMonth(monthKey)) {
+    normalizeAppMeta();
+    const eligible = (openData.rows || []).filter((row) => row.batchEligible && row.targetType === 'post' && row.targetId);
+    const lastBatch = state.appMeta.lastBatchPayment;
+    const canUndo = lastBatch && lastBatch.month === monthKey && Array.isArray(lastBatch.items) && lastBatch.items.length > 0;
+    if (!eligible.length && !canUndo) return null;
+
+    const box = createUiEl('div', 'sub-card batch-payment-card');
+    const head = createUiEl('div', 'compact-section-head');
+    head.appendChild(createUiEl('h3', '', 'Regelmäßige Zahlungen gesammelt abhaken'));
+    head.appendChild(createUiEl('span', eligible.length ? 'pill warning' : 'pill success', eligible.length ? `${eligible.length} auswählbar` : 'erledigt'));
+    box.appendChild(head);
+    box.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Markiere nur Zahlungen, die wirklich abgegangen sind. Einmalige Ausgaben und eigenständige Schuldenzahlungen bleiben zur Sicherheit einzeln.'
+    ));
+
+    if (eligible.length) {
+      const list = createUiEl('div', 'batch-payment-list');
+      const checkboxes = [];
+      const totalLine = createUiEl('strong', 'batch-payment-total');
+      const updateTotal = () => {
+        const selected = checkboxes.filter((entry) => entry.input.checked);
+        const total = selected.reduce((sum, entry) => sum + Number(entry.row.amount || 0), 0);
+        totalLine.textContent = `${selected.length} ausgewählt · ${euro(total)}`;
+      };
+      eligible.forEach((row) => {
+        const label = document.createElement('label');
+        label.className = 'batch-payment-row';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = true;
+        input.addEventListener('change', updateTotal);
+        const copy = createUiEl('span');
+        copy.appendChild(createUiEl('strong', '', row.name));
+        copy.appendChild(createUiEl('small', 'muted', `${row.group} · ${euro(row.amount)}`));
+        label.appendChild(input);
+        label.appendChild(copy);
+        list.appendChild(label);
+        checkboxes.push({ input, row });
+      });
+      const details = document.createElement('details');
+      details.className = 'compact-details batch-payment-details';
+      const summary = document.createElement('summary');
+      summary.textContent = `Auswahl prüfen (${eligible.length} Posten)`;
+      details.appendChild(summary);
+      details.appendChild(list);
+      box.appendChild(details);
+
+      const actions = createUiEl('div', 'row batch-payment-actions');
+      updateTotal();
+      actions.appendChild(totalLine);
+      const markButton = document.createElement('button');
+      markButton.type = 'button';
+      markButton.className = 'success';
+      markButton.textContent = 'Ausgewählte als bezahlt markieren';
+      markButton.addEventListener('click', () => {
+        const selected = checkboxes.filter((entry) => entry.input.checked);
+        if (!selected.length) return alert('Bitte mindestens eine Zahlung auswählen.');
+        const total = selected.reduce((sum, entry) => sum + Number(entry.row.amount || 0), 0);
+        if (!confirm(`${selected.length} Zahlung(en) über insgesamt ${euro(total)} als bezahlt markieren?`)) return;
+        const changedItems = [];
+        selected.forEach(({ row }) => {
+          const found = findCostPostById(row.targetId);
+          const post = found && found.post;
+          if (!post || isPostPaidForMonth(post, monthKey)) return;
+          setPostPaidForMonth(post, monthKey, true);
+          syncDebtPaymentFromPost(post, monthKey);
+          changedItems.push({ type: 'post', postId: post.id });
+        });
+        if (!changedItems.length) return;
+        state.appMeta.lastBatchPayment = {
+          id: generateId(),
+          month: monthKey,
+          items: changedItems,
+          createdAt: new Date().toISOString()
+        };
+        addChangeLog('Zahlungen', `${changedItems.length} regelmäßige Zahlung(en) gesammelt als bezahlt markiert.`, monthKey);
+        saveState();
+        render();
+      });
+      actions.appendChild(markButton);
+      box.appendChild(actions);
+    }
+
+    if (canUndo) {
+      const undo = createUiEl('div', 'notice success batch-payment-undo');
+      const created = lastBatch.createdAt ? new Date(lastBatch.createdAt) : null;
+      undo.appendChild(createUiEl(
+        'span',
+        '',
+        `${lastBatch.items.length} Sammelzahlung(en) markiert${created && !Number.isNaN(created.getTime()) ? ' · ' + created.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''}.`
+      ));
+      const undoButton = document.createElement('button');
+      undoButton.type = 'button';
+      undoButton.className = 'secondary compact';
+      undoButton.textContent = 'Rückgängig';
+      undoButton.addEventListener('click', () => {
+        if (confirm('Die zuletzt gesammelt markierten Zahlungen wieder öffnen?')) undoLastBatchPayment();
+      });
+      undo.appendChild(undoButton);
+      box.appendChild(undo);
+    }
+    return box;
+  }
+
   function renderOpenPayments() {
     if (!openPaymentsSection) return;
     openPaymentsSection.innerHTML = '';
@@ -7935,6 +8133,19 @@
       }).length;
       add('Konten', 'Kontenabgleich prüfen', reconciledThisMonth === accounts.length, `${reconciledThisMonth} von ${accounts.length} Konto/Konten in ${formatMonthLabel(monthKey)} abgeglichen.`, 'sharedaccount', 'Konten öffnen');
     }
+
+    normalizeAppMeta();
+    const externalBackupDate = state.appMeta.lastExternalBackupAt ? new Date(state.appMeta.lastExternalBackupAt) : null;
+    const externalBackupAge = externalBackupDate && !Number.isNaN(externalBackupDate.getTime())
+      ? Date.now() - externalBackupDate.getTime()
+      : Number.POSITIVE_INFINITY;
+    const externalBackupFresh = !!state.appMeta.externalBackupFolderName && externalBackupAge < 8 * 24 * 60 * 60 * 1000;
+    const externalBackupDetail = state.appMeta.externalBackupFolderName
+      ? (externalBackupFresh
+        ? `Automatisch gesichert: ${externalBackupDate.toLocaleString('de-DE')}.`
+        : `Ordner „${state.appMeta.externalBackupFolderName}“ ist verbunden, die letzte Sicherung ist aber älter.`)
+      : 'Einmal einen PC-Ordner auswählen; danach aktualisiert die App dort täglich eine Sicherung.';
+    add('Sichern', 'Externe PC-Sicherung', externalBackupFresh, externalBackupDetail, 'save', state.appMeta.externalBackupFolderName ? 'Prüfen' : 'Ordner wählen');
 
     const dataItems = getDataCheckItems();
     const critical = dataItems.filter((item) => item.kind === 'warning' || item.kind === 'danger').length;
@@ -11200,6 +11411,9 @@ function showPersonalEditor(personId, editPost) {
 
   function renderTankMonthlyTracking(sub, personKey, labelText) {
     const existing = getTankEntryForMonth(personKey, currentMonth) || {};
+    const previousEndKm = getPreviousTankEndKm(personKey, currentMonth);
+    const automaticStartKm = existing.month ? Number(existing.startKm || 0) : previousEndKm;
+    const needsManualStart = automaticStartKm === null;
     const monthlyRecord = getTankMonthlyRecord(personKey, currentMonth);
     const householdRecord = getTankHouseholdMonthlyRecord(currentMonth);
     const currentKmShare = householdRecord.km > 0 ? monthlyRecord.km / householdRecord.km : 0;
@@ -11208,7 +11422,7 @@ function showPersonalEditor(personId, editPost) {
     const tracking = document.createElement('div');
     tracking.className = 'sub-card tank-monthly-tracking';
     tracking.appendChild(createUiEl('h4', '', 'Reale Kilometer'));
-    tracking.appendChild(createUiEl('p', 'small muted', 'Ab Juni 2026 trägst du hier den Kilometerstand des Autos ein. Tankbons und Kanisterkäufe gehören zum gemeinsamen Kraftstoffvorrat; der Anteil dieses Autos wird deshalb aus seinen gefahrenen Kilometern berechnet. Erst ein bestätigter Monat zählt ab dem Folgemonat für die Planung.'));
+    tracking.appendChild(createUiEl('p', 'small muted', 'Du trägst nur den aktuellen Kilometerstand ein. Der Endstand des Vormonats wird automatisch als Start übernommen. Nur beim allerersten Eintrag ist zusätzlich ein Startstand nötig.'));
 
     tracking.appendChild(createSummaryMetrics([
       { label: 'Gefahren im Monat', value: monthlyRecord.km ? `${monthlyRecord.km.toFixed(0)} km` : '—', kind: monthlyRecord.km ? 'success' : 'warning' },
@@ -11218,11 +11432,25 @@ function showPersonalEditor(personId, editPost) {
 
     const form = document.createElement('div');
     form.className = 'row tank-entry-form';
-    const fields = [
-      ['month', 'Monat', 'month', currentMonth],
-      ['startKm', 'Start-km', 'number', existing.startKm || ''],
-      ['endKm', 'End-km', 'number', existing.endKm || '']
-    ];
+    const monthInfo = createUiEl('div', 'tank-entry-month');
+    monthInfo.appendChild(createUiEl('label', '', 'Monat'));
+    monthInfo.appendChild(createUiEl('strong', '', formatMonthLabel(currentMonth)));
+    form.appendChild(monthInfo);
+    if (!needsManualStart) {
+      const startInfo = createUiEl('div', 'tank-auto-start');
+      startInfo.appendChild(createUiEl('label', '', 'Start automatisch'));
+      startInfo.appendChild(createUiEl('strong', '', `${Number(automaticStartKm || 0).toFixed(0)} km`));
+      startInfo.appendChild(createUiEl('small', 'muted', existing.month ? 'Bereits für diesen Monat gespeichert' : 'Endstand aus dem Vormonat'));
+      form.appendChild(startInfo);
+    }
+    const fields = needsManualStart
+      ? [
+        ['startKm', 'Erster Startstand', 'number', existing.startKm || ''],
+        ['endKm', 'Aktueller Kilometerstand', 'number', existing.endKm || '']
+      ]
+      : [
+        ['endKm', 'Aktueller Kilometerstand', 'number', existing.endKm || '']
+      ];
     const inputs = {};
     fields.forEach(([key, label, type, value]) => {
       const wrap = document.createElement('div');
@@ -11258,14 +11486,14 @@ function showPersonalEditor(personId, editPost) {
     saveBtn.className = 'success';
     saveBtn.textContent = 'Kilometerstand speichern';
     saveBtn.addEventListener('click', () => {
-      if (!isMonthKey(inputs.month.value) || inputs.month.value < TANK_REAL_DATA_START_MONTH) return alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
-      const startKm = parseMoneyInput(inputs.startKm.value);
+      if (!isMonthKey(currentMonth) || currentMonth < TANK_REAL_DATA_START_MONTH) return alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
+      const startKm = needsManualStart ? parseMoneyInput(inputs.startKm.value) : Number(automaticStartKm || 0);
       const endKm = parseMoneyInput(inputs.endKm.value);
       if (!Number.isFinite(startKm) || !Number.isFinite(endKm) || endKm < startKm) return alert('Bitte gültige Kilometerstände eintragen. Der Endstand darf nicht kleiner als der Startstand sein.');
-      reopenTankMonthAfterEdit(inputs.month.value);
-      const currentRecord = getTankMonthlyRecord(personKey, inputs.month.value);
+      reopenTankMonthAfterEdit(currentMonth);
+      const currentRecord = getTankMonthlyRecord(personKey, currentMonth);
       const entry = upsertTankMonthlyEntry(personKey, {
-        month: inputs.month.value,
+        month: currentMonth,
         startKm,
         endKm,
         liters: currentRecord.liters,
@@ -11296,6 +11524,29 @@ function showPersonalEditor(personId, editPost) {
       btnRow.appendChild(delBtn);
     }
     tracking.appendChild(btnRow);
+
+    const kmSuggestion = getTankKmPlanSuggestion(personKey, currentMonth);
+    const cfg = getTankCalcData(personKey);
+    if (kmSuggestion && Math.abs(Number(cfg.kmPerMonth || 0) - kmSuggestion.km) >= 10) {
+      const suggestion = createUiEl('div', 'notice info tank-km-suggestion');
+      const copy = createUiEl('span');
+      copy.appendChild(createUiEl('strong', '', `Realistische Planung: etwa ${kmSuggestion.km.toFixed(0)} km pro Monat`));
+      copy.appendChild(createUiEl('small', 'muted', `Automatisch aus den letzten ${kmSuggestion.count} bestätigten Monaten berechnet. Deine bisherige Planung bleibt unverändert, bis du zustimmst.`));
+      const applySuggestion = document.createElement('button');
+      applySuggestion.type = 'button';
+      applySuggestion.className = 'secondary compact';
+      applySuggestion.textContent = 'Als Planung übernehmen';
+      applySuggestion.addEventListener('click', () => {
+        cfg.kmPerMonth = kmSuggestion.km;
+        syncTankgeldExpense(personKey, { silent: true });
+        addChangeLog('Tankgeld', `${labelText}: Kilometerplanung auf ${kmSuggestion.km.toFixed(0)} km angepasst.`, currentMonth);
+        saveState();
+        render();
+      });
+      suggestion.appendChild(copy);
+      suggestion.appendChild(applySuggestion);
+      tracking.appendChild(suggestion);
+    }
 
     const combinedMonths = getTankRealMonthlyRecords(personKey, currentMonth)
       .filter((entry) => entry.month >= TANK_REAL_DATA_START_MONTH);
@@ -14100,6 +14351,145 @@ function renderPots() {
   }
   // Rendert den Sicherungsbereich
 
+  const EXTERNAL_BACKUP_DB_NAME = 'haushaltsplanerExternalBackup';
+  const EXTERNAL_BACKUP_STORE_NAME = 'handles';
+  const EXTERNAL_BACKUP_HANDLE_KEY = 'backupDirectory';
+  const EXTERNAL_BACKUP_FILENAME = 'haushaltsplaner-auto-backup.json';
+  const EXTERNAL_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  let externalBackupDbPromise = null;
+  let cachedExternalBackupDirectoryHandle = null;
+  let externalBackupQueued = false;
+
+  function openExternalBackupDb() {
+    if (!('indexedDB' in window)) return Promise.resolve(null);
+    if (externalBackupDbPromise) return externalBackupDbPromise;
+    externalBackupDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(EXTERNAL_BACKUP_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(EXTERNAL_BACKUP_STORE_NAME)) {
+          db.createObjectStore(EXTERNAL_BACKUP_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Sicherungsordner konnte nicht gespeichert werden.'));
+    });
+    return externalBackupDbPromise;
+  }
+
+  async function getExternalBackupDirectoryHandle() {
+    const db = await openExternalBackupDb();
+    if (!db) return null;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(EXTERNAL_BACKUP_STORE_NAME, 'readonly');
+      const request = tx.objectStore(EXTERNAL_BACKUP_STORE_NAME).get(EXTERNAL_BACKUP_HANDLE_KEY);
+      request.onsuccess = () => {
+        cachedExternalBackupDirectoryHandle = request.result || null;
+        resolve(cachedExternalBackupDirectoryHandle);
+      };
+      request.onerror = () => reject(request.error || new Error('Sicherungsordner konnte nicht gelesen werden.'));
+    });
+  }
+
+  async function storeExternalBackupDirectoryHandle(handle) {
+    const db = await openExternalBackupDb();
+    if (!db) throw new Error('Dieser Browser kann den ausgewählten Ordner nicht dauerhaft merken.');
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(EXTERNAL_BACKUP_STORE_NAME, 'readwrite');
+      tx.objectStore(EXTERNAL_BACKUP_STORE_NAME).put(handle, EXTERNAL_BACKUP_HANDLE_KEY);
+      tx.oncomplete = () => {
+        cachedExternalBackupDirectoryHandle = handle;
+        resolve(true);
+      };
+      tx.onerror = () => reject(tx.error || new Error('Sicherungsordner konnte nicht gespeichert werden.'));
+    });
+  }
+
+  async function removeExternalBackupDirectoryHandle() {
+    const db = await openExternalBackupDb();
+    if (!db) return false;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(EXTERNAL_BACKUP_STORE_NAME, 'readwrite');
+      tx.objectStore(EXTERNAL_BACKUP_STORE_NAME).delete(EXTERNAL_BACKUP_HANDLE_KEY);
+      tx.oncomplete = () => {
+        cachedExternalBackupDirectoryHandle = null;
+        resolve(true);
+      };
+      tx.onerror = () => reject(tx.error || new Error('Sicherungsordner konnte nicht getrennt werden.'));
+    });
+  }
+
+  async function getExternalBackupPermission(handle, requestPermission = false) {
+    if (!handle) return 'missing';
+    const options = { mode: 'readwrite' };
+    if (typeof handle.queryPermission === 'function') {
+      const current = await handle.queryPermission(options);
+      if (current === 'granted' || !requestPermission) return current;
+    }
+    if (requestPermission && typeof handle.requestPermission === 'function') {
+      return handle.requestPermission(options);
+    }
+    return 'prompt';
+  }
+
+  async function writeExternalBackup(options = {}) {
+    normalizeAppMeta();
+    const handle = options.handle || cachedExternalBackupDirectoryHandle || await getExternalBackupDirectoryHandle();
+    if (!handle) return { ok: false, status: 'missing' };
+    const permission = await getExternalBackupPermission(handle, options.requestPermission === true);
+    if (permission !== 'granted') return { ok: false, status: permission || 'prompt' };
+
+    const timestamp = new Date().toISOString();
+    const { blob } = createBackupFile({ filename: EXTERNAL_BACKUP_FILENAME, externalTimestamp: timestamp });
+    const fileHandle = await handle.getFileHandle(EXTERNAL_BACKUP_FILENAME, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+
+    state.appMeta.externalBackupFolderName = String(handle.name || state.appMeta.externalBackupFolderName || 'Sicherungsordner');
+    state.appMeta.lastExternalBackupAt = timestamp;
+    writeStatePayloadToStorage(JSON.stringify(state));
+    return { ok: true, status: 'granted', timestamp, folderName: state.appMeta.externalBackupFolderName };
+  }
+
+  function queueAutomaticExternalBackup() {
+    if (externalBackupQueued || !state.appMeta || !state.appMeta.externalBackupFolderName) return;
+    const last = state.appMeta.lastExternalBackupAt ? new Date(state.appMeta.lastExternalBackupAt) : null;
+    if (last && !Number.isNaN(last.getTime()) && Date.now() - last.getTime() < EXTERNAL_BACKUP_INTERVAL_MS) return;
+    externalBackupQueued = true;
+    setTimeout(async () => {
+      try {
+        await writeExternalBackup({ requestPermission: false });
+      } catch (err) {
+        console.warn('Automatische externe Sicherung konnte nicht aktualisiert werden', err);
+      } finally {
+        externalBackupQueued = false;
+      }
+    }, 500);
+  }
+
+  async function reconcileExternalBackupConnection() {
+    try {
+      normalizeAppMeta();
+      const handle = await getExternalBackupDirectoryHandle();
+      let changed = false;
+      if (!handle && (state.appMeta.externalBackupFolderName || state.appMeta.lastExternalBackupAt)) {
+        state.appMeta.externalBackupFolderName = '';
+        state.appMeta.lastExternalBackupAt = '';
+        changed = true;
+      } else if (handle && state.appMeta.externalBackupFolderName !== String(handle.name || 'Sicherungsordner')) {
+        state.appMeta.externalBackupFolderName = String(handle.name || 'Sicherungsordner');
+        changed = true;
+      }
+      if (changed) writeStatePayloadToStorage(JSON.stringify(state));
+      if (handle) queueAutomaticExternalBackup();
+      return changed;
+    } catch (err) {
+      console.warn('Status der externen Sicherung konnte nicht geprüft werden', err);
+      return false;
+    }
+  }
+
   function createBackupFilename() {
     const now = new Date();
     const yyyy = now.getFullYear();
@@ -14110,7 +14500,7 @@ function renderPots() {
     return `haushaltsplaner-backup-${yyyy}-${mm}-${dd}-${hh}${mi}.json`;
   }
 
-  function createBackupFile() {
+  function createBackupFile(options = {}) {
     normalizeAppMeta();
     syncAllLinkedDebtRatesFromPosts(currentMonth, 36, { silent: true });
     normalizeAllPersonConfigs();
@@ -14119,9 +14509,10 @@ function renderPots() {
     const backupState = JSON.parse(JSON.stringify(state));
     if (!backupState.appMeta || typeof backupState.appMeta !== 'object') backupState.appMeta = {};
     backupState.appMeta.includeApiKeyInBackup = true;
+    if (options.externalTimestamp) backupState.appMeta.lastExternalBackupAt = options.externalTimestamp;
     // Der API-Key wird bewusst NICHT entfernt: Benny möchte nur ein Backup, immer mit API-Key.
     const dataStr = JSON.stringify(backupState, null, 2);
-    const filename = createBackupFilename();
+    const filename = options.filename || createBackupFilename();
     const blob = new Blob([dataStr], { type: 'application/json' });
     const file = new File([blob], filename, { type: 'application/json' });
     return { blob, file, filename };
@@ -14675,7 +15066,7 @@ function renderPots() {
     card.appendChild(h2);
 
     const intro = document.createElement('p');
-    intro.textContent = 'Hier kannst du ein Backup für iCloud Drive oder Dateien erstellen und eine vorhandene Backup-Datei wiederherstellen.';
+    intro.textContent = 'Wähle einmal einen Sicherungsordner auf deinem PC. Danach aktualisiert die App dort automatisch einmal täglich eine Sicherungsdatei. Der normale Download und der Import bleiben zusätzlich erhalten.';
     card.appendChild(intro);
 
     const storageInfo = getBrowserStorageInfo();
@@ -14694,6 +15085,100 @@ function renderPots() {
     apiInfo.textContent = 'Backup-Einstellung: Es wird genau eine Sicherungsdatei erstellt. Der Tank-API-Key wird immer mitgesichert.';
     card.appendChild(apiInfo);
 
+    const externalCard = createUiEl('div', 'sub-card external-backup-card');
+    const externalHead = createUiEl('div', 'compact-section-head');
+    externalHead.appendChild(createUiEl('h3', '', 'Automatische PC-Sicherung'));
+    const externalReady = !!state.appMeta.externalBackupFolderName;
+    externalHead.appendChild(createUiEl('span', externalReady ? 'pill success' : 'pill warning', externalReady ? 'Ordner verbunden' : 'Noch einrichten'));
+    externalCard.appendChild(externalHead);
+
+    const lastExternalDate = state.appMeta.lastExternalBackupAt ? new Date(state.appMeta.lastExternalBackupAt) : null;
+    const lastExternalLabel = lastExternalDate && !Number.isNaN(lastExternalDate.getTime())
+      ? lastExternalDate.toLocaleString('de-DE')
+      : 'noch keine externe Sicherung';
+    externalCard.appendChild(createSummaryMetrics([
+      { label: 'Sicherungsordner', value: externalReady ? escapeHtml(state.appMeta.externalBackupFolderName) : 'Nicht ausgewählt', kind: externalReady ? 'success' : 'warning' },
+      { label: 'Letzte externe Sicherung', value: lastExternalLabel, kind: lastExternalDate ? 'success' : 'warning' },
+      { label: 'Datei', value: EXTERNAL_BACKUP_FILENAME, hint: 'Wird täglich mit dem aktuellen Stand überschrieben.' }
+    ]));
+
+    const externalActions = createUiEl('div', 'row external-backup-actions');
+    const folderButton = document.createElement('button');
+    folderButton.type = 'button';
+    folderButton.className = 'primary';
+    folderButton.textContent = externalReady ? 'Anderen Sicherungsordner wählen' : 'Sicherungsordner auswählen';
+    folderButton.disabled = typeof window.showDirectoryPicker !== 'function';
+    folderButton.addEventListener('click', async () => {
+      folderButton.disabled = true;
+      const originalText = folderButton.textContent;
+      folderButton.textContent = 'Ordner wird verbunden …';
+      try {
+        const handle = await window.showDirectoryPicker({ id: 'haushaltsplaner-backup', mode: 'readwrite' });
+        await storeExternalBackupDirectoryHandle(handle);
+        state.appMeta.externalBackupFolderName = String(handle.name || 'Sicherungsordner');
+        const result = await writeExternalBackup({ handle, requestPermission: true });
+        if (!result.ok) throw new Error('Der Ordner wurde nicht für Schreibzugriff freigegeben.');
+        addChangeLog('Sichern', `Automatische PC-Sicherung im Ordner „${result.folderName}“ eingerichtet.`, currentMonth);
+        saveState();
+        render();
+      } catch (err) {
+        if (String(err && err.name) !== 'AbortError') {
+          alert('Der Sicherungsordner konnte nicht verbunden werden: ' + (err && err.message ? err.message : String(err)));
+        }
+        folderButton.disabled = false;
+        folderButton.textContent = originalText;
+      }
+    });
+    externalActions.appendChild(folderButton);
+
+    if (externalReady) {
+      const nowButton = document.createElement('button');
+      nowButton.type = 'button';
+      nowButton.className = 'success';
+      nowButton.textContent = 'Jetzt extern sichern';
+      nowButton.addEventListener('click', async () => {
+        nowButton.disabled = true;
+        nowButton.textContent = 'Sicherung läuft …';
+        try {
+          let handle = cachedExternalBackupDirectoryHandle;
+          if (!handle) {
+            handle = await window.showDirectoryPicker({ id: 'haushaltsplaner-backup', mode: 'readwrite' });
+            await storeExternalBackupDirectoryHandle(handle);
+          }
+          const result = await writeExternalBackup({ handle, requestPermission: true });
+          if (!result.ok) throw new Error('Bitte die Freigabe des Sicherungsordners erneuern.');
+          saveState();
+          render();
+        } catch (err) {
+          alert('Externe Sicherung nicht möglich: ' + (err && err.message ? err.message : String(err)));
+          nowButton.disabled = false;
+          nowButton.textContent = 'Jetzt extern sichern';
+        }
+      });
+      externalActions.appendChild(nowButton);
+
+      const disconnectButton = document.createElement('button');
+      disconnectButton.type = 'button';
+      disconnectButton.className = 'secondary';
+      disconnectButton.textContent = 'Ordner trennen';
+      disconnectButton.addEventListener('click', async () => {
+        if (!confirm('Automatische PC-Sicherung trennen? Bereits gespeicherte Sicherungsdateien bleiben im Ordner erhalten.')) return;
+        try { await removeExternalBackupDirectoryHandle(); } catch (err) {}
+        state.appMeta.externalBackupFolderName = '';
+        state.appMeta.lastExternalBackupAt = '';
+        addChangeLog('Sichern', 'Automatische PC-Sicherung getrennt.', currentMonth);
+        saveState();
+        render();
+      });
+      externalActions.appendChild(disconnectButton);
+    }
+    externalCard.appendChild(externalActions);
+
+    if (typeof window.showDirectoryPicker !== 'function') {
+      externalCard.appendChild(createUiEl('div', 'notice warning', 'Dieser Browser unterstützt keine automatische Ordnersicherung. Der Sicherungs-Download darunter funktioniert weiterhin.'));
+    }
+    card.appendChild(externalCard);
+
     const totalPosts = (state.commonCosts?.length || 0) + (state.personalCosts?.length || 0) + (state.bufferExpenses?.length || 0);
     card.appendChild(createSummaryMetrics([
       { label: 'Personen', value: String(state.persons.length) },
@@ -14701,7 +15186,7 @@ function renderPots() {
       { label: 'Schulden', value: String(state.debts.length) },
       { label: 'Töpfe', value: String(state.pots.length) },
       { label: 'Aktiver Monat', value: formatMonthLabel(currentMonth) },
-      { label: 'Zuletzt gespeichert', value: localStorage.getItem('budgetStateLastSavedAt') ? new Date(localStorage.getItem('budgetStateLastSavedAt')).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-' }
+      { label: 'Zuletzt im Browser gespeichert', value: localStorage.getItem('budgetStateLastSavedAt') ? new Date(localStorage.getItem('budgetStateLastSavedAt')).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-' }
     ]));
 
     const actionRow = document.createElement('div');
@@ -14709,7 +15194,7 @@ function renderPots() {
 
     let backupDownloadInProgress = false;
     const exportBtn = document.createElement('button');
-    exportBtn.textContent = 'Eine Sicherung mit API-Key herunterladen';
+    exportBtn.textContent = 'Zusätzliche Sicherung herunterladen';
     exportBtn.className = 'primary';
     exportBtn.addEventListener('click', () => {
       if (backupDownloadInProgress) return;
@@ -15493,4 +15978,7 @@ function renderPots() {
   updateSaveStatus();
   // Starte das Rendering
   render();
+  reconcileExternalBackupConnection().then((changed) => {
+    if (changed && currentSection === 'save') render();
+  });
 })();

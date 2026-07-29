@@ -5040,3 +5040,155 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
     grid-template-columns: 1fr;
   }
 }
+
+/* Developer Beta 2.50 – PC-Automatik und kürzere Alltagsbedienung */
+.simplified-side-nav {
+  gap: .7rem !important;
+}
+
+.simplified-side-nav .side-nav-heading {
+  margin-bottom: .35rem;
+}
+
+.simplified-side-nav .nav-icon {
+  display: inline-grid;
+  place-items: center;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.side-nav-more-select-wrap {
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, .045);
+  display: grid;
+  gap: .35rem;
+  padding: .68rem .72rem .72rem;
+}
+
+.side-nav-more-select-wrap label {
+  margin: 0;
+  color: rgba(255, 255, 255, .72);
+  font-size: .78rem;
+  font-weight: 850;
+}
+
+.side-nav-more-select-wrap select {
+  width: 100%;
+  min-height: 40px;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, .14) !important;
+  border-radius: 11px !important;
+  background: rgba(255, 255, 255, .09) !important;
+  box-shadow: none !important;
+}
+
+.side-nav-more-select-wrap option {
+  color: #101828;
+}
+
+.batch-payment-card {
+  margin: 1rem 0;
+  border-color: rgba(37, 99, 235, .16);
+  background: linear-gradient(145deg, rgba(245, 249, 255, .98), rgba(255, 255, 255, .98));
+}
+
+.batch-payment-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .55rem;
+  margin: .8rem 0;
+}
+
+.batch-payment-details {
+  margin: .8rem 0;
+  background: rgba(255, 255, 255, .7);
+}
+
+.batch-payment-details .batch-payment-list {
+  padding: 0 .75rem .75rem;
+}
+
+.batch-payment-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .7rem;
+  align-items: center;
+  min-width: 0;
+  padding: .7rem .78rem;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.batch-payment-row input {
+  width: 19px;
+  height: 19px;
+}
+
+.batch-payment-row > span {
+  display: grid;
+  gap: .14rem;
+  min-width: 0;
+}
+
+.batch-payment-actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.batch-payment-undo,
+.tank-km-suggestion {
+  display: flex;
+  gap: .8rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: .8rem;
+}
+
+.tank-km-suggestion > span {
+  display: grid;
+  gap: .2rem;
+}
+
+.tank-entry-month,
+.tank-auto-start {
+  display: grid;
+  gap: .35rem;
+  min-width: 160px;
+  padding: .64rem .72rem;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 13px;
+  background: #f8fafc;
+}
+
+.tank-entry-month label,
+.tank-auto-start label {
+  margin: 0;
+  color: #667085;
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+.external-backup-card {
+  margin: 1rem 0;
+  border-color: rgba(22, 163, 74, .18);
+  background: linear-gradient(145deg, rgba(241, 251, 245, .98), rgba(255, 255, 255, .98));
+}
+
+.external-backup-actions {
+  margin-top: .8rem;
+}
+
+@media (max-width: 900px) {
+  .batch-payment-list {
+    grid-template-columns: 1fr;
+  }
+  .batch-payment-actions,
+  .batch-payment-undo,
+  .tank-km-suggestion {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
