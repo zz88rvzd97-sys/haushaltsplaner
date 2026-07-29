@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.50
+ * Haushaltsplaner Developer Beta 2.51
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -14,7 +14,7 @@
   const APP_FIRST_DATA_MONTH = '2026-04';
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
-  const APP_VERSION = '2.50';
+  const APP_VERSION = '2.51';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -755,6 +755,7 @@
       lastAutoMonthCheck: '',
       lastPreparedMonth: '',
       includeApiKeyInBackup: true,
+      lastAutomaticBrowserBackupAt: '',
       externalBackupFolderName: '',
       lastExternalBackupAt: '',
       lastBatchPayment: null
@@ -768,6 +769,13 @@
   const CURRENT_VERSION_STORAGE_KEY = `budgetStateV${APP_VERSION_STORAGE_SUFFIX}`;
   const DEFAULT_TRANSACTION_MONTH = dateToMonthKey(new Date());
   const DEFAULT_SHARED_ACCOUNT_ID = 'account_shared_main';
+  const AUTOMATIC_BROWSER_BACKUP_DB_NAME = 'haushaltsplanerAutomaticBackups';
+  const AUTOMATIC_BROWSER_BACKUP_STORE_NAME = 'snapshots';
+  const AUTOMATIC_BROWSER_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const AUTOMATIC_BROWSER_BACKUP_RETENTION = 30;
+  let automaticBrowserBackupDbPromise = null;
+  let automaticBrowserBackupQueued = false;
+  let automaticBrowserBackupInitialized = false;
   const savingsConfig = {
     minFree: 200,
     reservesRatio: 0.7,
@@ -968,6 +976,9 @@
       const savedAt = new Date().toISOString();
       localStorage.setItem('budgetStateLastSavedAt', savedAt);
       updateSaveStatus(savedAt);
+      if (automaticBrowserBackupInitialized) {
+        queueAutomaticBrowserBackup();
+      }
       if (state.appMeta && state.appMeta.externalBackupFolderName) {
         queueAutomaticExternalBackup();
       }
@@ -1002,6 +1013,7 @@
         lastAutoMonthCheck: '',
         lastPreparedMonth: '',
         includeApiKeyInBackup: true,
+        lastAutomaticBrowserBackupAt: '',
         externalBackupFolderName: '',
         lastExternalBackupAt: '',
         lastBatchPayment: null
@@ -1010,6 +1022,7 @@
     if (!isMonthKey(state.appMeta.selectedMonth)) state.appMeta.selectedMonth = '';
     if (!isMonthKey(state.appMeta.lastAutoMonthCheck)) state.appMeta.lastAutoMonthCheck = '';
     if (!isMonthKey(state.appMeta.lastPreparedMonth)) state.appMeta.lastPreparedMonth = '';
+    if (typeof state.appMeta.lastAutomaticBrowserBackupAt !== 'string') state.appMeta.lastAutomaticBrowserBackupAt = '';
     if (typeof state.appMeta.externalBackupFolderName !== 'string') state.appMeta.externalBackupFolderName = '';
     if (typeof state.appMeta.lastExternalBackupAt !== 'string') state.appMeta.lastExternalBackupAt = '';
     if (!state.appMeta.lastBatchPayment || typeof state.appMeta.lastBatchPayment !== 'object') {
@@ -8135,17 +8148,15 @@
     }
 
     normalizeAppMeta();
-    const externalBackupDate = state.appMeta.lastExternalBackupAt ? new Date(state.appMeta.lastExternalBackupAt) : null;
-    const externalBackupAge = externalBackupDate && !Number.isNaN(externalBackupDate.getTime())
-      ? Date.now() - externalBackupDate.getTime()
+    const automaticBackupDate = state.appMeta.lastAutomaticBrowserBackupAt ? new Date(state.appMeta.lastAutomaticBrowserBackupAt) : null;
+    const automaticBackupAge = automaticBackupDate && !Number.isNaN(automaticBackupDate.getTime())
+      ? Date.now() - automaticBackupDate.getTime()
       : Number.POSITIVE_INFINITY;
-    const externalBackupFresh = !!state.appMeta.externalBackupFolderName && externalBackupAge < 8 * 24 * 60 * 60 * 1000;
-    const externalBackupDetail = state.appMeta.externalBackupFolderName
-      ? (externalBackupFresh
-        ? `Automatisch gesichert: ${externalBackupDate.toLocaleString('de-DE')}.`
-        : `Ordner „${state.appMeta.externalBackupFolderName}“ ist verbunden, die letzte Sicherung ist aber älter.`)
-      : 'Einmal einen PC-Ordner auswählen; danach aktualisiert die App dort täglich eine Sicherung.';
-    add('Sichern', 'Externe PC-Sicherung', externalBackupFresh, externalBackupDetail, 'save', state.appMeta.externalBackupFolderName ? 'Prüfen' : 'Ordner wählen');
+    const automaticBackupFresh = automaticBackupAge < 8 * 24 * 60 * 60 * 1000;
+    const automaticBackupDetail = automaticBackupFresh
+      ? `Automatische Browser-Sicherung: ${automaticBackupDate.toLocaleString('de-DE')}.`
+      : 'Die tägliche Browser-Sicherung wird beim Öffnen automatisch angelegt.';
+    add('Sichern', 'Automatische Sicherung', automaticBackupFresh, automaticBackupDetail, 'save', 'Sicherung öffnen');
 
     const dataItems = getDataCheckItems();
     const critical = dataItems.filter((item) => item.kind === 'warning' || item.kind === 'danger').length;
@@ -14351,6 +14362,133 @@ function renderPots() {
   }
   // Rendert den Sicherungsbereich
 
+  function openAutomaticBrowserBackupDb() {
+    if (!('indexedDB' in window)) return Promise.resolve(null);
+    if (automaticBrowserBackupDbPromise) return automaticBrowserBackupDbPromise;
+    automaticBrowserBackupDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(AUTOMATIC_BROWSER_BACKUP_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(AUTOMATIC_BROWSER_BACKUP_STORE_NAME)) {
+          db.createObjectStore(AUTOMATIC_BROWSER_BACKUP_STORE_NAME, { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Automatische Sicherungen konnten nicht geöffnet werden.'));
+    });
+    return automaticBrowserBackupDbPromise;
+  }
+
+  async function listAutomaticBrowserBackups() {
+    const db = await openAutomaticBrowserBackupDb();
+    if (!db) return [];
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(AUTOMATIC_BROWSER_BACKUP_STORE_NAME, 'readonly');
+      const request = tx.objectStore(AUTOMATIC_BROWSER_BACKUP_STORE_NAME).getAll();
+      request.onsuccess = () => {
+        const rows = Array.isArray(request.result) ? request.result : [];
+        rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        resolve(rows);
+      };
+      request.onerror = () => reject(request.error || new Error('Automatische Sicherungen konnten nicht gelesen werden.'));
+    });
+  }
+
+  async function putAutomaticBrowserBackup(record) {
+    const db = await openAutomaticBrowserBackupDb();
+    if (!db) throw new Error('Der Browser-Speicher für automatische Sicherungen ist nicht verfügbar.');
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUTOMATIC_BROWSER_BACKUP_STORE_NAME, 'readwrite');
+      tx.objectStore(AUTOMATIC_BROWSER_BACKUP_STORE_NAME).put(record);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error || new Error('Automatische Sicherung konnte nicht gespeichert werden.'));
+    });
+
+    const all = await listAutomaticBrowserBackups();
+    const expired = all.slice(AUTOMATIC_BROWSER_BACKUP_RETENTION);
+    if (!expired.length) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUTOMATIC_BROWSER_BACKUP_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(AUTOMATIC_BROWSER_BACKUP_STORE_NAME);
+      expired.forEach((entry) => store.delete(entry.id));
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error || new Error('Alte automatische Sicherungen konnten nicht aufgeräumt werden.'));
+    });
+  }
+
+  async function createAutomaticBrowserBackup(options = {}) {
+    normalizeAppMeta();
+    if (!('indexedDB' in window)) return { ok: false, status: 'unsupported' };
+    const previousTimestamp = state.appMeta.lastAutomaticBrowserBackupAt || '';
+    const previousDate = previousTimestamp ? new Date(previousTimestamp) : null;
+    const previousAge = previousDate && !Number.isNaN(previousDate.getTime())
+      ? Date.now() - previousDate.getTime()
+      : Number.POSITIVE_INFINITY;
+    if (!options.force && previousAge < AUTOMATIC_BROWSER_BACKUP_INTERVAL_MS) {
+      return { ok: true, status: 'fresh', timestamp: previousTimestamp, skipped: true };
+    }
+
+    const timestamp = new Date().toISOString();
+    state.appMeta.lastAutomaticBrowserBackupAt = timestamp;
+    const payload = JSON.stringify(state);
+    const record = {
+      id: options.id || `daily-${timestamp.slice(0, 10)}`,
+      createdAt: timestamp,
+      month: currentMonth,
+      label: options.label || 'Tägliche Sicherung',
+      payload
+    };
+    try {
+      await putAutomaticBrowserBackup(record);
+      writeStatePayloadToStorage(payload);
+      return { ok: true, status: 'saved', timestamp, record };
+    } catch (err) {
+      state.appMeta.lastAutomaticBrowserBackupAt = previousTimestamp;
+      throw err;
+    }
+  }
+
+  function queueAutomaticBrowserBackup(options = {}) {
+    if (!automaticBrowserBackupInitialized || automaticBrowserBackupQueued || !('indexedDB' in window)) return;
+    normalizeAppMeta();
+    const last = state.appMeta.lastAutomaticBrowserBackupAt ? new Date(state.appMeta.lastAutomaticBrowserBackupAt) : null;
+    if (!options.force && last && !Number.isNaN(last.getTime()) && Date.now() - last.getTime() < AUTOMATIC_BROWSER_BACKUP_INTERVAL_MS) return;
+    automaticBrowserBackupQueued = true;
+    setTimeout(async () => {
+      try {
+        await createAutomaticBrowserBackup({ force: options.force === true });
+        if (currentSection === 'overview' || currentSection === 'monthstart') render();
+      } catch (err) {
+        console.warn('Automatische Browser-Sicherung konnte nicht aktualisiert werden', err);
+      } finally {
+        automaticBrowserBackupQueued = false;
+      }
+    }, 350);
+  }
+
+  async function reconcileAutomaticBrowserBackups() {
+    if (!('indexedDB' in window)) return false;
+    try {
+      normalizeAppMeta();
+      const backups = await listAutomaticBrowserBackups();
+      if (!backups.length) {
+        await createAutomaticBrowserBackup({ force: true });
+        return true;
+      }
+      const latestTimestamp = String(backups[0].createdAt || '');
+      if (latestTimestamp && state.appMeta.lastAutomaticBrowserBackupAt !== latestTimestamp) {
+        state.appMeta.lastAutomaticBrowserBackupAt = latestTimestamp;
+        writeStatePayloadToStorage(JSON.stringify(state));
+        return true;
+      }
+      queueAutomaticBrowserBackup();
+      return false;
+    } catch (err) {
+      console.warn('Status der automatischen Browser-Sicherung konnte nicht geprüft werden', err);
+      return false;
+    }
+  }
+
   const EXTERNAL_BACKUP_DB_NAME = 'haushaltsplanerExternalBackup';
   const EXTERNAL_BACKUP_STORE_NAME = 'handles';
   const EXTERNAL_BACKUP_HANDLE_KEY = 'backupDirectory';
@@ -15066,14 +15204,14 @@ function renderPots() {
     card.appendChild(h2);
 
     const intro = document.createElement('p');
-    intro.textContent = 'Wähle einmal einen Sicherungsordner auf deinem PC. Danach aktualisiert die App dort automatisch einmal täglich eine Sicherungsdatei. Der normale Download und der Import bleiben zusätzlich erhalten.';
+    intro.textContent = 'Deine Daten werden bei jeder Änderung gespeichert. Zusätzlich legt die App einmal täglich eine unabhängige Sicherung im Browser an. Eine Sicherungsdatei für den PC kannst du jederzeit zusätzlich herunterladen.';
     card.appendChild(intro);
 
     const storageInfo = getBrowserStorageInfo();
     const storageNotice = document.createElement('div');
     storageNotice.className = storageInfo.ok ? 'notice success' : 'notice danger';
     storageNotice.innerHTML = storageInfo.ok
-      ? `<strong>Browser-Speicher aktiv:</strong> Deine Daten werden dauerhaft unter dem stabilen Speicher "budgetStateStable" gesichert. Neue Versionen übernehmen diese Daten automatisch.${storageInfo.last ? '<br><span class="small muted">Zuletzt gespeichert: ' + new Date(storageInfo.last).toLocaleString('de-DE') + '</span>' : ''}`
+      ? `<strong>Laufendes Speichern aktiv:</strong> Änderungen werden sofort in diesem Browser gesichert und von neuen Versionen automatisch übernommen.${storageInfo.last ? '<br><span class="small muted">Zuletzt gespeichert: ' + new Date(storageInfo.last).toLocaleString('de-DE') + '</span>' : ''}`
       : `<strong>Browser-Speicher nicht verfügbar:</strong> Der Browser blockiert localStorage. Bitte Sicherung herunterladen und Browser-/Privatmodus prüfen.`;
     card.appendChild(storageNotice);
 
@@ -15082,9 +15220,120 @@ function renderPots() {
 
     const apiInfo = document.createElement('div');
     apiInfo.className = 'notice success';
-    apiInfo.textContent = 'Backup-Einstellung: Es wird genau eine Sicherungsdatei erstellt. Der Tank-API-Key wird immer mitgesichert.';
+    apiInfo.textContent = 'Vollständige Sicherung: Der Tank-API-Key wird in den automatischen und heruntergeladenen Sicherungen mitgesichert.';
     card.appendChild(apiInfo);
 
+    const automaticCard = createUiEl('div', 'sub-card automatic-browser-backup-card');
+    const automaticHead = createUiEl('div', 'compact-section-head');
+    automaticHead.appendChild(createUiEl('h3', '', 'Automatische Browser-Sicherung'));
+    const automaticSupported = 'indexedDB' in window;
+    automaticHead.appendChild(createUiEl('span', automaticSupported ? 'pill success' : 'pill danger', automaticSupported ? 'Aktiv' : 'Nicht verfügbar'));
+    automaticCard.appendChild(automaticHead);
+
+    const lastAutomaticDate = state.appMeta.lastAutomaticBrowserBackupAt ? new Date(state.appMeta.lastAutomaticBrowserBackupAt) : null;
+    const lastAutomaticValid = lastAutomaticDate && !Number.isNaN(lastAutomaticDate.getTime());
+    automaticCard.appendChild(createSummaryMetrics([
+      { label: 'Letzte automatische Sicherung', value: lastAutomaticValid ? lastAutomaticDate.toLocaleString('de-DE') : 'wird gerade angelegt', kind: lastAutomaticValid ? 'success' : 'warning' },
+      { label: 'Aufbewahrung', value: `Bis zu ${AUTOMATIC_BROWSER_BACKUP_RETENTION} Sicherungen`, hint: 'Ältere Stände werden automatisch aufgeräumt.' },
+      { label: 'Speicherort', value: 'Dieser Browser auf diesem PC', hint: 'Funktioniert auch ohne Zugriff auf einen PC-Ordner.' }
+    ]));
+
+    const automaticActions = createUiEl('div', 'row automatic-backup-actions');
+    const automaticNowButton = document.createElement('button');
+    automaticNowButton.type = 'button';
+    automaticNowButton.className = 'success';
+    automaticNowButton.textContent = 'Jetzt automatisch sichern';
+    automaticNowButton.disabled = !automaticSupported;
+    automaticNowButton.addEventListener('click', async () => {
+      automaticNowButton.disabled = true;
+      automaticNowButton.textContent = 'Sicherung läuft …';
+      try {
+        await createAutomaticBrowserBackup({ force: true });
+        render();
+      } catch (err) {
+        alert('Automatische Sicherung nicht möglich: ' + (err && err.message ? err.message : String(err)));
+        automaticNowButton.disabled = false;
+        automaticNowButton.textContent = 'Jetzt automatisch sichern';
+      }
+    });
+    automaticActions.appendChild(automaticNowButton);
+    automaticCard.appendChild(automaticActions);
+
+    const automaticHistory = document.createElement('details');
+    automaticHistory.className = 'automatic-backup-history';
+    const automaticHistorySummary = document.createElement('summary');
+    automaticHistorySummary.textContent = 'Frühere automatische Sicherung wiederherstellen';
+    automaticHistory.appendChild(automaticHistorySummary);
+    const automaticHistoryInfo = createUiEl('p', 'small muted', 'Wähle einen Stand aus. Vor der Wiederherstellung sichert die App den jetzigen Stand noch einmal.');
+    automaticHistory.appendChild(automaticHistoryInfo);
+    const automaticHistoryRow = createUiEl('div', 'row automatic-backup-history-row');
+    const automaticHistorySelect = document.createElement('select');
+    automaticHistorySelect.setAttribute('aria-label', 'Automatische Sicherung auswählen');
+    automaticHistorySelect.disabled = true;
+    automaticHistorySelect.appendChild(new Option('Sicherungen werden geladen …', ''));
+    automaticHistoryRow.appendChild(automaticHistorySelect);
+    const automaticRestoreButton = document.createElement('button');
+    automaticRestoreButton.type = 'button';
+    automaticRestoreButton.className = 'secondary';
+    automaticRestoreButton.textContent = 'Ausgewählten Stand laden';
+    automaticRestoreButton.disabled = true;
+    automaticHistoryRow.appendChild(automaticRestoreButton);
+    automaticHistory.appendChild(automaticHistoryRow);
+    automaticCard.appendChild(automaticHistory);
+    card.appendChild(automaticCard);
+
+    let automaticBackupRows = [];
+    if (automaticSupported) {
+      listAutomaticBrowserBackups().then((rows) => {
+        if (!automaticHistorySelect.isConnected) return;
+        automaticBackupRows = rows;
+        automaticHistorySelect.innerHTML = '';
+        if (!rows.length) {
+          automaticHistorySelect.appendChild(new Option('Noch keine Sicherung vorhanden', ''));
+          return;
+        }
+        rows.forEach((entry) => {
+          const created = new Date(entry.createdAt);
+          const dateLabel = Number.isNaN(created.getTime()) ? String(entry.createdAt || '') : created.toLocaleString('de-DE');
+          automaticHistorySelect.appendChild(new Option(`${entry.label || 'Automatische Sicherung'} · ${dateLabel}`, entry.id));
+        });
+        automaticHistorySelect.disabled = false;
+        automaticRestoreButton.disabled = false;
+      }).catch((err) => {
+        if (!automaticHistorySelect.isConnected) return;
+        automaticHistorySelect.innerHTML = '';
+        automaticHistorySelect.appendChild(new Option('Sicherungen konnten nicht geladen werden', ''));
+        console.warn('Automatische Sicherungen konnten nicht angezeigt werden', err);
+      });
+    }
+
+    automaticRestoreButton.addEventListener('click', async () => {
+      const selected = automaticBackupRows.find((entry) => entry.id === automaticHistorySelect.value);
+      if (!selected || !selected.payload) return;
+      const created = new Date(selected.createdAt);
+      const dateLabel = Number.isNaN(created.getTime()) ? 'dem ausgewählten Zeitpunkt' : created.toLocaleString('de-DE');
+      if (!confirm(`Den Haushaltsplaner auf den Stand vom ${dateLabel} zurücksetzen? Der jetzige Stand wird vorher automatisch gesichert.`)) return;
+      automaticRestoreButton.disabled = true;
+      automaticRestoreButton.textContent = 'Stand wird geladen …';
+      try {
+        const safetyTimestamp = new Date().toISOString();
+        await createAutomaticBrowserBackup({
+          force: true,
+          id: `vor-wiederherstellung-${safetyTimestamp}`,
+          label: 'Stand vor Wiederherstellung'
+        });
+        JSON.parse(selected.payload);
+        writeStatePayloadToStorage(selected.payload);
+        localStorage.setItem('budgetStateLastSavedAt', new Date().toISOString());
+        window.location.reload();
+      } catch (err) {
+        alert('Die automatische Sicherung konnte nicht wiederhergestellt werden: ' + (err && err.message ? err.message : String(err)));
+        automaticRestoreButton.disabled = false;
+        automaticRestoreButton.textContent = 'Ausgewählten Stand laden';
+      }
+    });
+
+    const supportsExternalFolderBackup = typeof window.showDirectoryPicker === 'function';
     const externalCard = createUiEl('div', 'sub-card external-backup-card');
     const externalHead = createUiEl('div', 'compact-section-head');
     externalHead.appendChild(createUiEl('h3', '', 'Automatische PC-Sicherung'));
@@ -15107,7 +15356,7 @@ function renderPots() {
     folderButton.type = 'button';
     folderButton.className = 'primary';
     folderButton.textContent = externalReady ? 'Anderen Sicherungsordner wählen' : 'Sicherungsordner auswählen';
-    folderButton.disabled = typeof window.showDirectoryPicker !== 'function';
+    folderButton.disabled = !supportsExternalFolderBackup;
     folderButton.addEventListener('click', async () => {
       folderButton.disabled = true;
       const originalText = folderButton.textContent;
@@ -15174,10 +15423,22 @@ function renderPots() {
     }
     externalCard.appendChild(externalActions);
 
-    if (typeof window.showDirectoryPicker !== 'function') {
-      externalCard.appendChild(createUiEl('div', 'notice warning', 'Dieser Browser unterstützt keine automatische Ordnersicherung. Der Sicherungs-Download darunter funktioniert weiterhin.'));
+    if (supportsExternalFolderBackup) {
+      const externalDetails = document.createElement('details');
+      externalDetails.className = 'optional-external-backup';
+      externalDetails.open = externalReady;
+      const externalSummary = document.createElement('summary');
+      externalSummary.textContent = externalReady
+        ? `Zusätzlicher Sicherungsordner: ${state.appMeta.externalBackupFolderName}`
+        : 'Optional: zusätzlichen Sicherungsordner auf dem PC verbinden';
+      externalDetails.appendChild(externalSummary);
+      externalDetails.appendChild(externalCard);
+      card.appendChild(externalDetails);
+    } else {
+      const folderInfo = createUiEl('div', 'notice info');
+      folderInfo.innerHTML = '<strong>Zusätzliche Datei auf dem PC:</strong> Die automatische Browser-Sicherung oben ist aktiv. Für eine weitere Sicherung außerhalb des Browsers kannst du unten jederzeit eine Datei herunterladen.';
+      card.appendChild(folderInfo);
     }
-    card.appendChild(externalCard);
 
     const totalPosts = (state.commonCosts?.length || 0) + (state.personalCosts?.length || 0) + (state.bufferExpenses?.length || 0);
     card.appendChild(createSummaryMetrics([
@@ -15194,7 +15455,7 @@ function renderPots() {
 
     let backupDownloadInProgress = false;
     const exportBtn = document.createElement('button');
-    exportBtn.textContent = 'Zusätzliche Sicherung herunterladen';
+    exportBtn.textContent = 'Sicherung als Datei herunterladen';
     exportBtn.className = 'primary';
     exportBtn.addEventListener('click', () => {
       if (backupDownloadInProgress) return;
@@ -15317,6 +15578,9 @@ function renderPots() {
         let previousStatePayload = '';
         let importStarted = false;
         let importCommitted = false;
+        const localAutomaticBackupAt = state.appMeta && typeof state.appMeta.lastAutomaticBrowserBackupAt === 'string'
+          ? state.appMeta.lastAutomaticBrowserBackupAt
+          : '';
         const resetImportButton = () => {
           importBtn.disabled = false;
           importBtn.textContent = 'Backup jetzt importieren';
@@ -15387,6 +15651,7 @@ function renderPots() {
           runImportStep('Umbuchungsvorlagen', () => normalizeAccountTransferTemplatesConfig());
           runImportStep('Rücklagenziele', () => normalizeSavingsGoalsConfig());
           runImportStep('App-Meta', () => normalizeAppMeta());
+          if (localAutomaticBackupAt) state.appMeta.lastAutomaticBrowserBackupAt = localAutomaticBackupAt;
           runImportStep('Kreiskasse Migration', () => migrateKreiskasseToBennyPersonal());
           runImportStep('Kreiskasse Lohnabzug', () => migrateKreiskassePayrollPayment());
           runImportStep('Rücklagen-Sync', () => syncAllReserveSelectionsToPots());
@@ -15978,7 +16243,11 @@ function renderPots() {
   updateSaveStatus();
   // Starte das Rendering
   render();
-  reconcileExternalBackupConnection().then((changed) => {
-    if (changed && currentSection === 'save') render();
+  automaticBrowserBackupInitialized = true;
+  Promise.all([
+    reconcileAutomaticBrowserBackups(),
+    reconcileExternalBackupConnection()
+  ]).then(([automaticChanged, externalChanged]) => {
+    if ((automaticChanged || externalChanged) && (currentSection === 'save' || currentSection === 'overview' || currentSection === 'monthstart')) render();
   });
 })();

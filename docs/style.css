@@ -5041,7 +5041,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
-/* Developer Beta 2.50 – PC-Automatik und kürzere Alltagsbedienung */
+/* Developer Beta 2.51 – PC-Automatik und browserunabhängige Sicherungen */
 .simplified-side-nav {
   gap: .7rem !important;
 }
@@ -5177,8 +5177,50 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   background: linear-gradient(145deg, rgba(241, 251, 245, .98), rgba(255, 255, 255, .98));
 }
 
+.automatic-browser-backup-card {
+  margin: 1rem 0;
+  border-color: rgba(22, 163, 74, .22);
+  background: linear-gradient(145deg, rgba(236, 253, 245, .98), rgba(255, 255, 255, .98));
+}
+
+.automatic-backup-actions,
 .external-backup-actions {
   margin-top: .8rem;
+}
+
+.automatic-backup-history {
+  margin-top: .85rem;
+  padding-top: .75rem;
+  border-top: 1px solid rgba(15, 23, 42, .08);
+}
+
+.automatic-backup-history summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #365b47;
+}
+
+.optional-external-backup {
+  margin: .9rem 0;
+}
+
+.optional-external-backup > summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #365b47;
+}
+
+.optional-external-backup .external-backup-card {
+  margin-bottom: 0;
+}
+
+.automatic-backup-history-row {
+  align-items: end;
+  margin-top: .65rem;
+}
+
+.automatic-backup-history-row select {
+  min-width: min(100%, 380px);
 }
 
 @media (max-width: 900px) {
@@ -5187,7 +5229,8 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
   .batch-payment-actions,
   .batch-payment-undo,
-  .tank-km-suggestion {
+  .tank-km-suggestion,
+  .automatic-backup-history-row {
     align-items: stretch;
     flex-direction: column;
   }
