@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.56
+ * Haushaltsplaner Developer Beta 2.57
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.56';
+  const APP_VERSION = '2.57';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -814,6 +814,7 @@
   const AUTOMATIC_BROWSER_BACKUP_STORE_NAME = 'snapshots';
   const AUTOMATIC_BROWSER_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
   const AUTOMATIC_BROWSER_BACKUP_RETENTION = 30;
+  const AUTOMATIC_FUEL_CARRYOVER_NOTE_PREFIX = 'Automatisch aus Tankmonat ';
   let automaticBrowserBackupDbPromise = null;
   let automaticBrowserBackupQueued = false;
   let automaticBrowserBackupInitialized = false;
@@ -6885,6 +6886,61 @@
     return { ...calc, allocations };
   }
 
+  function getFuelTopUpPaidAmount(monthKey = currentMonth) {
+    return roundMoney(['benny', 'madeleine'].reduce((sum, personKey) => {
+      const post = getTankExpensePost(personKey);
+      if (!post || !isPostPaidForMonth(post, monthKey)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    }, 0));
+  }
+
+  function getFuelPoolLiveStatus(monthKey = currentMonth) {
+    const calc = getFuelTopUpAllocation(monthKey);
+    const receipts = getTankReceiptHouseholdStatsForMonth(monthKey);
+    const openingBalance = roundMoney(Number(calc.balance || 0));
+    const paidTopUp = getFuelTopUpPaidAmount(monthKey);
+    const funded = roundMoney(openingBalance + paidTopUp);
+    const spent = roundMoney(Number(receipts.netCost || 0));
+    const currentBalance = roundMoney(Math.max(0, funded - spent));
+    const shortage = roundMoney(Math.max(0, spent - funded));
+    const pendingTopUp = roundMoney(Math.max(0, Number(calc.topUp || 0) - paidTopUp));
+    return {
+      ...calc,
+      receipts,
+      openingBalance,
+      paidTopUp,
+      funded,
+      spent,
+      currentBalance,
+      shortage,
+      pendingTopUp
+    };
+  }
+
+  function syncFuelCarryoverFromMonth(monthKey) {
+    if (!isMonthKey(monthKey)) return 0;
+    const nextMonthKey = nextMonth(monthKey);
+    const live = getFuelPoolLiveStatus(monthKey);
+    setBudgetTopUpBalance(
+      'fuel',
+      nextMonthKey,
+      live.currentBalance,
+      `${AUTOMATIC_FUEL_CARRYOVER_NOTE_PREFIX}${formatMonthLabel(monthKey)}`
+    );
+    return live.currentBalance;
+  }
+
+  function clearAutomaticFuelCarryoverFromMonth(monthKey) {
+    if (!isMonthKey(monthKey)) return false;
+    const nextMonthKey = nextMonth(monthKey);
+    const cfg = getBudgetTopUpConfig('fuel');
+    const note = String(cfg.notes[nextMonthKey] || '');
+    if (!note.startsWith(AUTOMATIC_FUEL_CARRYOVER_NOTE_PREFIX)) return false;
+    delete cfg.balances[nextMonthKey];
+    delete cfg.notes[nextMonthKey];
+    return true;
+  }
+
   function getGroceryTopUpAllocation(monthKey = currentMonth) {
     const calc = calculateBudgetTopUp('groceries', monthKey);
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
@@ -6959,6 +7015,7 @@
   function reopenTankMonthAfterEdit(monthKey) {
     if (!isTankMonthClosed(monthKey)) return false;
     setTankMonthClosed(monthKey, false);
+    clearAutomaticFuelCarryoverFromMonth(monthKey);
     syncAllTankgeldExpenses({ silent: true, monthKey: nextMonth(monthKey) });
     addChangeLog('Tankgeld', `${formatMonthLabel(monthKey)} nach Änderung wieder zur Prüfung geöffnet.`, monthKey);
     return true;
@@ -12436,7 +12493,6 @@ function showPersonalEditor(personId, editPost) {
         allocations: {},
         note: inputs.note.value
       });
-      syncAllTankgeldExpenses({ silent: true });
       addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · ${receipt.liters.toFixed(2)} l · netto ${euro(receipt.netCost)}`, receipt.month);
       saveState();
       render();
@@ -12468,7 +12524,6 @@ function showPersonalEditor(personId, editPost) {
           if (confirm('Tankbon löschen?')) {
             reopenTankMonthAfterEdit(receipt.month);
             deleteTankReceipt(receipt.id);
-            syncAllTankgeldExpenses({ silent: true });
             saveState();
             render();
           }
@@ -12524,12 +12579,13 @@ function showPersonalEditor(personId, editPost) {
         if (!(total.liters > 0) || !(total.netCost > 0)) return alert('Bitte zuerst mindestens einen vollständigen Tankbon mit Litern und Betrag speichern.');
         setTankMonthClosed(currentMonth, true);
         const nextPlanMonth = nextMonth(currentMonth);
+        const carriedFuelBalance = syncFuelCarryoverFromMonth(currentMonth);
         syncAllTankgeldExpenses({ silent: true, monthKey: nextPlanMonth });
         const nextStats = getTankHouseholdAverageStats(nextPlanMonth, 12);
-        addChangeLog('Tankgeld', `${formatMonthLabel(currentMonth)} bestätigt; ab ${formatMonthLabel(nextPlanMonth)} fließen ${euro(total.netCost)} echte Tankausgaben in die Planung ein.`, currentMonth);
+        addChangeLog('Tankgeld', `${formatMonthLabel(currentMonth)} bestätigt; ${euro(carriedFuelBalance)} Rest in ${formatMonthLabel(nextPlanMonth)} übernommen und ${euro(total.netCost)} echte Tankausgaben in die Planung aufgenommen.`, currentMonth);
         saveState();
         render();
-        alert(`Tankmonat bestätigt. Für ${formatMonthLabel(nextPlanMonth)} rechnet die App nun mit ${nextStats.realCount} echtem Monat/Monaten und ${nextStats.projectedCount} Prognosemonat/-monaten.`);
+        alert(`Tankmonat bestätigt. ${euro(carriedFuelBalance)} Rest wurden automatisch in ${formatMonthLabel(nextPlanMonth)} übernommen. Die Planung rechnet nun mit ${nextStats.realCount} echtem Monat/Monaten und ${nextStats.projectedCount} Prognosemonat/-monaten.`);
       });
       actions.appendChild(closeBtn);
     } else {
@@ -12539,6 +12595,7 @@ function showPersonalEditor(personId, editPost) {
       reopenBtn.textContent = 'Monat zur Bearbeitung wieder öffnen';
       reopenBtn.addEventListener('click', () => {
         setTankMonthClosed(currentMonth, false);
+        clearAutomaticFuelCarryoverFromMonth(currentMonth);
         syncAllTankgeldExpenses({ silent: true, monthKey: nextMonth(currentMonth) });
         addChangeLog('Tankgeld', `${formatMonthLabel(currentMonth)} zur Bearbeitung wieder geöffnet.`, currentMonth);
         saveState();
@@ -13679,19 +13736,22 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Tankgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Start ab Juli 2026: Du trägst den Rest aus dem Vormonat ein. Die App füllt bis zum berechneten Kraftstoffziel auf und rundet die Aufstockung auf die nächsten 5 € auf.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Rest aus dem Vormonat und die bezahlten Tankgeld-Posten bilden den Kraftstofftopf. Gespeicherte Tankbons werden sofort abgezogen.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
+    const live = getFuelPoolLiveStatus(currentMonth);
     card.appendChild(createSummaryMetrics([
-      { label: 'Kraftstoff Ziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
-      { label: 'Rest Tankgeld', value: calc.active ? euro(calc.balance) : 'ab Juli 2026' },
-      { label: 'Aufstocken', value: calc.active ? euro(calc.topUp) : 'ab Juli 2026', kind: calc.active ? 'success' : 'warning' }
+      { label: 'Kraftstoff-Ziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
+      { label: 'Aus Gehaltskonten eingezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
+      { label: 'Tankbons im Monat', value: calc.active ? euro(live.spent) : 'ab Juli 2026' },
+      { label: 'Aktuell im Tanktopf', value: calc.active ? euro(live.currentBalance) : 'ab Juli 2026', kind: live.shortage > 0 ? 'danger' : 'success' },
+      { label: 'Noch einzuzahlen', value: calc.active ? euro(live.pendingTopUp) : 'ab Juli 2026', kind: live.pendingTopUp > 0 ? 'warning' : 'success' }
     ]));
 
     const info = document.createElement('div');
     info.className = 'info-box';
     if (calc.active) {
-      info.innerHTML = `<strong>Berechnung:</strong> ${euro(calc.target)} geplant − ${euro(calc.balance)} Rest = ${euro(calc.missing)} Bedarf; aufgerundet <strong>${euro(calc.topUp)}</strong>.`;
+      info.innerHTML = `<strong>Aktueller Stand:</strong> ${euro(live.openingBalance)} Rest aus dem Vormonat + ${euro(live.paidTopUp)} eingezahlt − ${euro(live.spent)} Tankbons = <strong>${euro(live.currentBalance)} im Tanktopf</strong>.${live.shortage > 0 ? ` Es fehlen aktuell ${euro(live.shortage)}.` : ''}<br><span class="muted">Monatsziel ${euro(calc.target)}; geplante Aufstockung ${euro(calc.topUp)}.</span>`;
     } else {
       info.innerHTML = '<strong>Noch nicht aktiv:</strong> Die Rest-Aufstockung beginnt ab Juli 2026.';
     }
@@ -13709,7 +13769,7 @@ function showPersonalEditor(personId, editPost) {
       noteInput.type = 'text';
       noteInput.value = getBudgetTopUpConfig('fuel').notes[currentMonth] || '';
       noteInput.placeholder = 'z. B. Rest aus dem Vormonat';
-      row.appendChild(createLabelInput('Rest Tankgeld', restInput));
+      row.appendChild(createLabelInput('Rest aus dem Vormonat', restInput));
       row.appendChild(createLabelInput('Notiz', noteInput));
       card.appendChild(row);
 
