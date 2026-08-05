@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.55
+ * Haushaltsplaner Developer Beta 2.56
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.55';
+  const APP_VERSION = '2.56';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -118,6 +118,10 @@
       (state.smokingExpenses || []).forEach((expense) => {
         addKey(expense && expense.month);
         addFromDate(expense && expense.date);
+      });
+      ((state.selfEmployment && state.selfEmployment.recurringExpenses) || []).forEach((template) => {
+        addKey(template && template.startMonth);
+        addKey(template && template.endMonth);
       });
     }
 
@@ -743,7 +747,8 @@
     selfEmployment: {
       businessName: '',
       taxMode: 'small_business',
-      entries: []
+      entries: [],
+      recurringExpenses: []
     },
     commonAccount: {
       currentBalance: 0,
@@ -914,6 +919,7 @@
       + (Array.isArray(obj.groceryExpenses) ? obj.groceryExpenses.length * 2 : 0)
       + (Array.isArray(obj.smokingExpenses) ? obj.smokingExpenses.length * 2 : 0)
       + (obj.selfEmployment && Array.isArray(obj.selfEmployment.entries) ? obj.selfEmployment.entries.length * 3 : 0)
+      + (obj.selfEmployment && Array.isArray(obj.selfEmployment.recurringExpenses) ? obj.selfEmployment.recurringExpenses.length * 2 : 0)
       + (Array.isArray(obj.changeLog) ? Math.min(obj.changeLog.length, 50) : 0)
       + (obj.appMeta && obj.appMeta.selectedMonth ? 2 : 0);
   };
@@ -4332,11 +4338,15 @@
     const unpaidCommon = state.commonCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidPersonal = state.personalCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidDebts = state.debts.filter((d) => isDebtOpenForMonth(d, monthKey)).length;
+    const openRecurringBusiness = getSelfEmploymentRecurringExpenses()
+      .filter((template) => isSelfEmploymentRecurringDue(template, monthKey) && !getSelfEmploymentRecurringBooking(template.id, monthKey))
+      .length;
     const miscOpen = getBufferExpenseOpenSumForMonth(monthKey);
     const free = computeFreeSumForMonth(monthKey);
     if (unpaidCommon > 0) warnings.push({ kind: 'warning', text: `${unpaidCommon} gemeinsame Zahlung(en) noch offen` });
     if (unpaidPersonal > 0) warnings.push({ kind: 'warning', text: `${unpaidPersonal} persönliche Zahlung(en) noch offen` });
     if (unpaidDebts > 0) warnings.push({ kind: 'danger', text: `${unpaidDebts} Schuld(en) diesen Monat noch offen` });
+    if (openRecurringBusiness > 0) warnings.push({ kind: 'warning', text: `${openRecurringBusiness} wiederkehrende Betriebsausgabe(n) noch nicht als bezahlt in die EÜR übernommen` });
     if (miscOpen > 0) warnings.push({ kind: 'warning', text: `Sonstige Ausgaben offen geplant: ${euro(miscOpen)}` });
     if (free < 0) warnings.push({ kind: 'danger', text: `Monat rechnerisch im Minus: ${euro(free)}` });
     if (!state.monthlyClosings || !state.monthlyClosings[monthKey]) warnings.push({ kind: 'info', text: 'Monatsabschluss noch offen' });
@@ -6434,7 +6444,39 @@
       amount: roundMoney(amount),
       vatRate,
       documentNumber: typeof entry.documentNumber === 'string' ? entry.documentNumber.trim() : '',
-      note: typeof entry.note === 'string' ? entry.note.trim() : ''
+      note: typeof entry.note === 'string' ? entry.note.trim() : '',
+      recurringTemplateId: typeof entry.recurringTemplateId === 'string' ? entry.recurringTemplateId : '',
+      recurringMonth: isMonthKey(entry.recurringMonth) ? entry.recurringMonth : ''
+    };
+  }
+
+  function normalizeSelfEmploymentRecurringExpense(template) {
+    if (!template || typeof template !== 'object') return null;
+    const amount = parseMoneyInput(template.amount || 0);
+    if (!Number.isFinite(amount) || !(amount > 0)) return null;
+    const startMonth = isMonthKey(template.startMonth) ? template.startMonth : DEFAULT_TRANSACTION_MONTH;
+    const endMonth = isMonthKey(template.endMonth) && template.endMonth >= startMonth ? template.endMonth : '';
+    const intervalMonths = [1, 3, 12].includes(Number(template.intervalMonths))
+      ? Number(template.intervalMonths)
+      : 1;
+    const rawVatRate = Number(template.vatRate || 0);
+    const vatRate = [0, 7, 19].includes(rawVatRate) ? rawVatRate : 0;
+    const paymentDay = Math.min(28, Math.max(1, Math.round(Number(template.paymentDay || 1))));
+    return {
+      id: typeof template.id === 'string' && template.id ? template.id : generateId(),
+      name: typeof template.name === 'string' && template.name.trim() ? template.name.trim() : 'Wiederkehrende Betriebsausgabe',
+      category: typeof template.category === 'string' && template.category.trim()
+        ? template.category.trim()
+        : getSelfEmploymentExpenseCategories()[0],
+      amount: roundMoney(amount),
+      intervalMonths,
+      startMonth,
+      endMonth,
+      paymentDay,
+      vatRate,
+      note: typeof template.note === 'string' ? template.note.trim() : '',
+      includeInPersonalBudget: template.includeInPersonalBudget !== false,
+      personalCostId: typeof template.personalCostId === 'string' ? template.personalCostId : ''
     };
   }
 
@@ -6451,7 +6493,173 @@
       .map(normalizeSelfEmploymentEntry)
       .filter(Boolean)
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+    if (!Array.isArray(state.selfEmployment.recurringExpenses)) state.selfEmployment.recurringExpenses = [];
+    state.selfEmployment.recurringExpenses = state.selfEmployment.recurringExpenses
+      .map(normalizeSelfEmploymentRecurringExpense)
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
     return state.selfEmployment;
+  }
+
+  function getSelfEmploymentRecurringExpenses() {
+    return normalizeSelfEmployment().recurringExpenses;
+  }
+
+  function getSelfEmploymentRecurringIntervalLabel(template) {
+    const interval = Number(template && template.intervalMonths || 1);
+    if (interval === 3) return 'vierteljährlich';
+    if (interval === 12) return 'jährlich';
+    return 'monatlich';
+  }
+
+  function isSelfEmploymentRecurringDue(template, monthKey) {
+    if (!template || !isMonthKey(monthKey) || !isMonthKey(template.startMonth)) return false;
+    if (monthKey < template.startMonth || (template.endMonth && monthKey > template.endMonth)) return false;
+    const distance = monthDiff(template.startMonth, monthKey);
+    return distance >= 0 && distance % Number(template.intervalMonths || 1) === 0;
+  }
+
+  function getNextSelfEmploymentRecurringMonth(template, fromMonth = currentMonth) {
+    if (!template || !isMonthKey(template.startMonth) || !isMonthKey(fromMonth)) return '';
+    const interval = Number(template.intervalMonths || 1);
+    const distance = monthDiff(template.startMonth, fromMonth);
+    const steps = distance <= 0 ? 0 : Math.ceil(distance / interval);
+    const nextDue = addMonths(template.startMonth, steps * interval);
+    return template.endMonth && nextDue > template.endMonth ? '' : nextDue;
+  }
+
+  function getSelfEmploymentRecurringBooking(templateId, monthKey) {
+    return getSelfEmploymentEntries().find((entry) => entry.recurringTemplateId === templateId && entry.recurringMonth === monthKey) || null;
+  }
+
+  function getBennyForSelfEmploymentBudget() {
+    return (state.persons || []).find((person) => normalizeTextKey(person && person.name) === 'benny')
+      || (state.persons || []).find((person) => String(person && person.id || '').toLowerCase() === 'benny')
+      || (state.persons || [])[0]
+      || null;
+  }
+
+  function getSelfEmploymentLinkedPersonalCost(template) {
+    if (!template) return null;
+    if (template.personalCostId) {
+      const exact = (state.personalCosts || []).find((post) => post && post.id === template.personalCostId);
+      if (exact) return exact;
+    }
+    return (state.personalCosts || []).find((post) => post
+      && post.selfEmploymentRecurringTemplateId === template.id
+      && (!post.endMonth || post.endMonth >= currentMonth)) || null;
+  }
+
+  function disableSelfEmploymentPersonalBudgetLink(template) {
+    const post = getSelfEmploymentLinkedPersonalCost(template);
+    if (!post) {
+      template.personalCostId = '';
+      return;
+    }
+    const previousMonth = addMonths(currentMonth, -1);
+    const hasHistory = Array.isArray(post.paidMonths) && post.paidMonths.length > 0;
+    if (!hasHistory && post.startMonth >= currentMonth) {
+      state.personalCosts = state.personalCosts.filter((item) => item.id !== post.id);
+    } else if (!post.endMonth || post.endMonth >= currentMonth) {
+      post.endMonth = previousMonth >= post.startMonth ? previousMonth : post.startMonth;
+    }
+    template.personalCostId = '';
+  }
+
+  function syncSelfEmploymentPersonalBudgetLink(template) {
+    if (!template) return null;
+    if (!template.includeInPersonalBudget) {
+      disableSelfEmploymentPersonalBudgetLink(template);
+      return null;
+    }
+    const person = getBennyForSelfEmploymentBudget();
+    if (!person) return null;
+    let post = getSelfEmploymentLinkedPersonalCost(template);
+    if (post && post.endMonth && post.endMonth < currentMonth) post = null;
+    if (!post) {
+      post = {
+        id: generateId(),
+        personId: person.id,
+        name: `Betrieblich: ${template.name}`,
+        amount: template.amount,
+        interval: template.intervalMonths,
+        startMonth: template.startMonth,
+        endMonth: template.endMonth,
+        oneTime: false,
+        paidMonths: [],
+        accountBalanceDebits: {},
+        amountTimeline: [],
+        amountOverrides: {},
+        linkedDebtId: '',
+        linkedSavingsGoalId: '',
+        accountId: '',
+        paidWithIncome: false,
+        incomePaidMonths: [],
+        selfEmploymentRecurringTemplateId: template.id
+      };
+      state.personalCosts.push(post);
+    } else {
+      post.personId = person.id;
+      post.name = `Betrieblich: ${template.name}`;
+      post.amount = template.amount;
+      post.interval = template.intervalMonths;
+      post.startMonth = template.startMonth;
+      post.endMonth = template.endMonth;
+      post.oneTime = false;
+      post.selfEmploymentRecurringTemplateId = template.id;
+      if (Array.isArray(post.amountTimeline)) post.amountTimeline = [];
+      if (post.amountOverrides && typeof post.amountOverrides === 'object') post.amountOverrides = {};
+    }
+    ensurePostConfig(post);
+    template.personalCostId = post.id;
+    return post;
+  }
+
+  function upsertSelfEmploymentRecurringExpense(template) {
+    const cfg = normalizeSelfEmployment();
+    const previous = cfg.recurringExpenses.find((item) => item.id === template.id) || null;
+    const normalized = normalizeSelfEmploymentRecurringExpense(template);
+    if (!normalized) return null;
+    if (previous && previous.personalCostId && !normalized.personalCostId) normalized.personalCostId = previous.personalCostId;
+    cfg.recurringExpenses = cfg.recurringExpenses.filter((item) => item.id !== normalized.id);
+    cfg.recurringExpenses.push(normalized);
+    syncSelfEmploymentPersonalBudgetLink(normalized);
+    normalizeSelfEmployment();
+    return cfg.recurringExpenses.find((item) => item.id === normalized.id) || normalized;
+  }
+
+  function deleteSelfEmploymentRecurringExpense(templateId) {
+    const cfg = normalizeSelfEmployment();
+    const template = cfg.recurringExpenses.find((item) => item.id === templateId);
+    if (!template) return false;
+    template.includeInPersonalBudget = false;
+    disableSelfEmploymentPersonalBudgetLink(template);
+    cfg.recurringExpenses = cfg.recurringExpenses.filter((item) => item.id !== templateId);
+    return true;
+  }
+
+  function bookSelfEmploymentRecurringExpense(template, monthKey) {
+    if (!isSelfEmploymentRecurringDue(template, monthKey)) return null;
+    const existing = getSelfEmploymentRecurringBooking(template.id, monthKey);
+    if (existing) return existing;
+    const saved = upsertSelfEmploymentEntry({
+      id: generateId(),
+      date: `${monthKey}-${String(template.paymentDay || 1).padStart(2, '0')}`,
+      type: 'expense',
+      description: template.name,
+      category: template.category,
+      amount: template.amount,
+      vatRate: normalizeSelfEmployment().taxMode === 'vat_registered' ? template.vatRate : 0,
+      documentNumber: '',
+      note: template.note,
+      recurringTemplateId: template.id,
+      recurringMonth: monthKey
+    });
+    const personalPost = getSelfEmploymentLinkedPersonalCost(template);
+    if (saved && template.includeInPersonalBudget && personalPost && isDue(personalPost, monthKey)) {
+      setPostPaidForMonth(personalPost, monthKey, true);
+    }
+    return saved;
   }
 
   function getSelfEmploymentEntries(year = '') {
@@ -12918,7 +13126,9 @@ function showPersonalEditor(personId, editPost) {
             amount,
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
             documentNumber: documentInput.value,
-            note: noteInput.value
+            note: noteInput.value,
+            recurringTemplateId: item.recurringTemplateId || '',
+            recurringMonth: item.recurringMonth || ''
           });
           if (!saved) return alert('Der Betriebsvorgang konnte nicht gespeichert werden.');
           selfEmploymentReportYear = saved.date.slice(0, 4);
@@ -12933,6 +13143,280 @@ function showPersonalEditor(personId, editPost) {
         }
       }
     ]);
+  }
+
+  function showSelfEmploymentRecurringExpenseEditor(template = null) {
+    const cfg = normalizeSelfEmployment();
+    const isNew = !template;
+    const item = template || {
+      id: generateId(),
+      name: '',
+      category: getSelfEmploymentExpenseCategories()[0],
+      amount: 0,
+      intervalMonths: 1,
+      startMonth: currentMonth,
+      endMonth: '',
+      paymentDay: 1,
+      vatRate: 0,
+      note: '',
+      includeInPersonalBudget: true,
+      personalCostId: ''
+    };
+    const content = document.createElement('div');
+    content.className = 'modal-form self-employment-form';
+
+    const firstRow = document.createElement('div');
+    firstRow.className = 'row';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = item.name || '';
+    nameInput.placeholder = 'z. B. Buchhaltungssoftware';
+    const amountInput = createMoneyField(item.amount || '');
+    amountInput.placeholder = 'z. B. 19,90';
+    const categorySelect = document.createElement('select');
+    getSelfEmploymentExpenseCategories().forEach((category) => {
+      const option = document.createElement('option');
+      option.value = category;
+      option.textContent = category;
+      categorySelect.appendChild(option);
+    });
+    if (item.category && !getSelfEmploymentExpenseCategories().includes(item.category)) {
+      const custom = document.createElement('option');
+      custom.value = item.category;
+      custom.textContent = item.category;
+      categorySelect.appendChild(custom);
+    }
+    categorySelect.value = item.category || getSelfEmploymentExpenseCategories()[0];
+    firstRow.appendChild(createLabelInput('Ausgabe', nameInput));
+    firstRow.appendChild(createLabelInput('Bezahlter Betrag', amountInput));
+    firstRow.appendChild(createLabelInput('EÜR-Kategorie', categorySelect));
+    content.appendChild(firstRow);
+
+    const secondRow = document.createElement('div');
+    secondRow.className = 'row';
+    const intervalSelect = document.createElement('select');
+    intervalSelect.innerHTML = '<option value="1">Monatlich</option><option value="3">Vierteljährlich</option><option value="12">Jährlich</option>';
+    intervalSelect.value = String(Number(item.intervalMonths || 1));
+    const startInput = document.createElement('input');
+    startInput.type = 'month';
+    startInput.value = item.startMonth || currentMonth;
+    const endInput = document.createElement('input');
+    endInput.type = 'month';
+    endInput.value = item.endMonth || '';
+    secondRow.appendChild(createLabelInput('Rhythmus', intervalSelect));
+    secondRow.appendChild(createLabelInput('Erstmals fällig', startInput));
+    secondRow.appendChild(createLabelInput('Endet im Monat (optional)', endInput));
+    content.appendChild(secondRow);
+
+    const thirdRow = document.createElement('div');
+    thirdRow.className = 'row';
+    const dayInput = document.createElement('input');
+    dayInput.type = 'number';
+    dayInput.min = '1';
+    dayInput.max = '28';
+    dayInput.step = '1';
+    dayInput.value = String(Number(item.paymentDay || 1));
+    const vatSelect = document.createElement('select');
+    vatSelect.innerHTML = '<option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option>';
+    vatSelect.value = String(Number(item.vatRate || 0));
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.value = item.note || '';
+    noteInput.placeholder = 'optional';
+    thirdRow.appendChild(createLabelInput('Zahlungstag (1–28)', dayInput));
+    thirdRow.appendChild(createLabelInput('Umsatzsteuer im Betrag', vatSelect));
+    thirdRow.appendChild(createLabelInput('Notiz', noteInput));
+    content.appendChild(thirdRow);
+
+    const personalLabel = document.createElement('label');
+    personalLabel.className = 'check-line recurring-personal-check';
+    const personalCheck = document.createElement('input');
+    personalCheck.type = 'checkbox';
+    personalCheck.checked = item.includeInPersonalBudget !== false;
+    personalLabel.appendChild(personalCheck);
+    personalLabel.appendChild(document.createTextNode(' Zusätzlich bei Benny als persönliche Ausgabe einplanen'));
+    content.appendChild(personalLabel);
+    content.appendChild(createUiEl('p', 'small muted', 'Solange die Ausgabe vom Gehaltskonto bezahlt wird, bleibt der Schalter aktiv. Beim Übernehmen in die EÜR wird der persönliche Posten für denselben Monat automatisch als bezahlt markiert. Sobald genug Betriebspuffer vorhanden ist, kannst du den Schalter ausschalten.'));
+
+    if (cfg.taxMode !== 'vat_registered') {
+      vatSelect.value = '0';
+      vatSelect.disabled = true;
+    }
+    content.appendChild(createUiEl('div', 'notice info', 'Die App zeigt die Ausgabe im fälligen Monat automatisch an. In die EÜR kommt sie erst, wenn du „Als bezahlt übernehmen“ anklickst.'));
+
+    showModal(isNew ? 'Wiederkehrende Betriebsausgabe anlegen' : 'Wiederkehrende Betriebsausgabe bearbeiten', content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: 'Speichern',
+        className: 'primary',
+        onClick: (close) => {
+          const name = nameInput.value.trim();
+          const amount = parseMoneyInput(amountInput.value);
+          const paymentDay = Math.round(Number(dayInput.value || 0));
+          if (!name) return alert('Bitte eine kurze Bezeichnung eintragen.');
+          if (!Number.isFinite(amount) || !(amount > 0)) return alert('Bitte einen Betrag größer als 0 eintragen.');
+          if (!isMonthKey(startInput.value)) return alert('Bitte einen gültigen Startmonat wählen.');
+          if (endInput.value && (!isMonthKey(endInput.value) || endInput.value < startInput.value)) return alert('Der Endmonat darf nicht vor dem Startmonat liegen.');
+          if (!Number.isInteger(paymentDay) || paymentDay < 1 || paymentDay > 28) return alert('Bitte einen Zahlungstag zwischen 1 und 28 eintragen.');
+          const saved = upsertSelfEmploymentRecurringExpense({
+            id: item.id,
+            name,
+            category: categorySelect.value,
+            amount,
+            intervalMonths: Number(intervalSelect.value || 1),
+            startMonth: startInput.value,
+            endMonth: endInput.value,
+            paymentDay,
+            vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
+            note: noteInput.value,
+            includeInPersonalBudget: personalCheck.checked,
+            personalCostId: item.personalCostId || ''
+          });
+          if (!saved) return alert('Die wiederkehrende Ausgabe konnte nicht gespeichert werden.');
+          addChangeLog('Selbständigkeit', `Wiederkehrende Ausgabe ${isNew ? 'angelegt' : 'geändert'}: ${saved.name} · ${euro(saved.amount)} ${getSelfEmploymentRecurringIntervalLabel(saved)}.`, currentMonth);
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
+  function renderSelfEmploymentRecurringExpenses(parent) {
+    const templates = getSelfEmploymentRecurringExpenses();
+    const due = templates.filter((template) => isSelfEmploymentRecurringDue(template, currentMonth));
+    const openDue = due.filter((template) => !getSelfEmploymentRecurringBooking(template.id, currentMonth));
+    const card = document.createElement('div');
+    card.className = 'card self-employment-recurring-card';
+    const header = document.createElement('div');
+    header.className = 'self-employment-head';
+    const copy = document.createElement('div');
+    copy.appendChild(createUiEl('h3', '', 'Wiederkehrende Betriebsausgaben'));
+    copy.appendChild(createUiEl('p', 'small muted', `Fällige Kosten für ${formatMonthLabel(currentMonth)} werden vorbereitet und erst nach deiner Bestätigung gebucht.`));
+    header.appendChild(copy);
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'primary';
+    addButton.textContent = '+ Wiederkehrende Ausgabe';
+    addButton.addEventListener('click', () => showSelfEmploymentRecurringExpenseEditor());
+    header.appendChild(addButton);
+    card.appendChild(header);
+
+    if (!templates.length) {
+      card.appendChild(createUiEl('div', 'notice info', 'Lege regelmäßige Kosten einmal an – zum Beispiel Software, Versicherung oder Plattformgebühren. Die App erinnert dich dann automatisch im richtigen Monat.'));
+      parent.appendChild(card);
+      return;
+    }
+
+    card.appendChild(createSummaryMetrics([
+      { label: `Fällig ${formatMonthLabel(currentMonth)}`, value: euro(due.reduce((sum, item) => sum + Number(item.amount || 0), 0)), kind: due.length ? 'warning' : 'success' },
+      { label: 'Noch zu bestätigen', value: String(openDue.length), kind: openDue.length ? 'danger' : 'success' },
+      { label: 'Aktive Vorlagen', value: String(templates.length) }
+    ]));
+
+    if (!due.length) {
+      card.appendChild(createUiEl('div', 'notice success', `Für ${formatMonthLabel(currentMonth)} ist keine wiederkehrende Betriebsausgabe fällig.`));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table compact-table recurring-expense-table';
+      table.innerHTML = '<thead><tr><th>Ausgabe</th><th>Betrag</th><th>Rhythmus</th><th>Status</th><th>Aktion</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      due.forEach((template) => {
+        const booking = getSelfEmploymentRecurringBooking(template.id, currentMonth);
+        const tr = document.createElement('tr');
+        const nameTd = document.createElement('td');
+        nameTd.appendChild(createUiEl('strong', '', template.name));
+        nameTd.appendChild(createUiEl('div', 'small muted', template.includeInPersonalBudget ? 'Auch bei Benny persönlich eingeplant' : 'Aus Betriebspuffer bezahlt'));
+        const amountTd = createUiEl('td', '', euro(template.amount));
+        const intervalTd = createUiEl('td', '', getSelfEmploymentRecurringIntervalLabel(template));
+        const statusTd = document.createElement('td');
+        statusTd.appendChild(createUiEl('span', booking ? 'pill success' : 'pill warning', booking ? 'Übernommen' : 'Offen'));
+        const actionTd = document.createElement('td');
+        if (booking) {
+          const editBooking = document.createElement('button');
+          editBooking.type = 'button';
+          editBooking.className = 'secondary';
+          editBooking.textContent = 'Buchung bearbeiten';
+          editBooking.addEventListener('click', () => showSelfEmploymentEntryEditor(booking));
+          actionTd.appendChild(editBooking);
+        } else {
+          const bookButton = document.createElement('button');
+          bookButton.type = 'button';
+          bookButton.className = 'success';
+          bookButton.textContent = 'Als bezahlt übernehmen';
+          bookButton.addEventListener('click', () => {
+            const saved = bookSelfEmploymentRecurringExpense(template, currentMonth);
+            if (!saved) return alert('Die Ausgabe konnte nicht übernommen werden.');
+            selfEmploymentReportYear = currentMonth.slice(0, 4);
+            addChangeLog('Selbständigkeit', `Wiederkehrende Ausgabe bezahlt übernommen: ${template.name} · ${euro(template.amount)}.`, currentMonth);
+            saveState();
+            render();
+          });
+          actionTd.appendChild(bookButton);
+        }
+        [nameTd, amountTd, intervalTd, statusTd, actionTd].forEach((td) => tr.appendChild(td));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      card.appendChild(table);
+    }
+
+    if (openDue.length > 1) {
+      const allButton = document.createElement('button');
+      allButton.type = 'button';
+      allButton.className = 'success recurring-book-all';
+      allButton.textContent = `Alle ${openDue.length} fälligen als bezahlt übernehmen`;
+      allButton.addEventListener('click', () => {
+        let booked = 0;
+        openDue.forEach((template) => {
+          if (bookSelfEmploymentRecurringExpense(template, currentMonth)) booked += 1;
+        });
+        if (!booked) return alert('Es konnte keine Ausgabe übernommen werden.');
+        selfEmploymentReportYear = currentMonth.slice(0, 4);
+        addChangeLog('Selbständigkeit', `${booked} wiederkehrende Betriebsausgaben als bezahlt übernommen.`, currentMonth);
+        saveState();
+        render();
+      });
+      card.appendChild(allButton);
+    }
+
+    const details = document.createElement('details');
+    details.className = 'details-box recurring-template-details';
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.textContent = `Vorlagen verwalten (${templates.length})`;
+    details.appendChild(detailsSummary);
+    const templateTable = document.createElement('table');
+    templateTable.className = 'list-table compact-table';
+    templateTable.innerHTML = '<thead><tr><th>Vorlage</th><th>Rhythmus</th><th>Nächste Fälligkeit</th><th>Privat eingeplant</th><th>Aktion</th></tr></thead>';
+    const templateBody = document.createElement('tbody');
+    templates.forEach((template) => {
+      const nextDue = getNextSelfEmploymentRecurringMonth(template, currentMonth);
+      const tr = document.createElement('tr');
+      const nameTd = document.createElement('td');
+      nameTd.appendChild(createUiEl('strong', '', template.name));
+      nameTd.appendChild(createUiEl('div', 'small muted', `${euro(template.amount)} · ${template.category}`));
+      const intervalTd = createUiEl('td', '', getSelfEmploymentRecurringIntervalLabel(template));
+      const nextTd = createUiEl('td', '', nextDue ? formatMonthLabel(nextDue) : 'Beendet');
+      const personalTd = createUiEl('td', '', template.includeInPersonalBudget ? 'Benny' : 'Nein');
+      const actionTd = document.createElement('td');
+      actionTd.appendChild(createActionMenu([
+        { label: 'Bearbeiten', className: 'primary', onClick: () => showSelfEmploymentRecurringExpenseEditor(template) },
+        { label: 'Vorlage löschen', className: 'danger', onClick: () => {
+          if (!confirm(`Vorlage „${template.name}“ löschen? Bereits übernommene EÜR-Buchungen bleiben erhalten.`)) return;
+          if (deleteSelfEmploymentRecurringExpense(template.id)) {
+            addChangeLog('Selbständigkeit', `Vorlage gelöscht: ${template.name}. Bereits gebuchte Ausgaben bleiben erhalten.`, currentMonth);
+            saveState();
+            render();
+          }
+        } }
+      ]));
+      [nameTd, intervalTd, nextTd, personalTd, actionTd].forEach((td) => tr.appendChild(td));
+      templateBody.appendChild(tr);
+    });
+    templateTable.appendChild(templateBody);
+    details.appendChild(templateTable);
+    card.appendChild(details);
+    parent.appendChild(card);
   }
 
   function buildSelfEmploymentReportHtml(year, summary) {
@@ -13087,6 +13571,7 @@ function showPersonalEditor(personId, editPost) {
     selfEmploymentSection.appendChild(hero);
 
     renderSelfEmploymentSettings(selfEmploymentSection);
+    renderSelfEmploymentRecurringExpenses(selfEmploymentSection);
 
     const monthsCard = document.createElement('div');
     monthsCard.className = 'card';

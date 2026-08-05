@@ -5041,7 +5041,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
-/* Developer Beta 2.55 – PC-Automatik, Sicherungen, Monatsübertrag und EÜR */
+/* Developer Beta 2.56 – PC-Automatik, Sicherungen, Monatsübertrag und EÜR */
 .simplified-side-nav {
   gap: .7rem !important;
 }
@@ -5160,6 +5160,41 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   margin-bottom: 1rem;
 }
 
+.self-employment-recurring-card {
+  border-color: rgba(196, 168, 106, .28);
+  background: linear-gradient(145deg, rgba(255, 252, 243, .98), rgba(255, 255, 255, .98));
+}
+
+.self-employment-recurring-card > .summary-grid,
+.self-employment-recurring-card > .summary-metrics {
+  margin-top: 1rem;
+}
+
+.recurring-personal-check {
+  margin-top: .35rem;
+  padding: .75rem .85rem;
+  border: 1px solid rgba(35, 79, 58, .14);
+  border-radius: 12px;
+  background: rgba(244, 251, 247, .84);
+}
+
+.recurring-book-all {
+  margin-top: .8rem;
+}
+
+.recurring-template-details {
+  margin-top: 1rem;
+}
+
+.recurring-template-details > table {
+  margin-top: .75rem;
+}
+
+.recurring-expense-table td:last-child,
+.recurring-expense-table th:last-child {
+  min-width: 170px;
+}
+
 .self-employment-table td:nth-child(5),
 .self-employment-table td:nth-child(6) {
   white-space: nowrap;
@@ -5178,6 +5213,10 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .self-employment-actions button,
   .self-employment-toolbar button,
   .self-employment-toolbar > div {
+    width: 100%;
+  }
+  .self-employment-recurring-card > .self-employment-head > button,
+  .recurring-book-all {
     width: 100%;
   }
 }
