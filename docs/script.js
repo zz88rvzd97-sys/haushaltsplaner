@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.53
+ * Haushaltsplaner Developer Beta 2.55
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.53';
+  const APP_VERSION = '2.55';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -235,14 +235,26 @@
     const stored = debt.creditorRule && typeof debt.creditorRule === 'object' ? debt.creditorRule : null;
     const isMkk = nameKey === 'mkk' || nameKey.includes('mkk') || nameKey.includes('meine krankenkasse');
     const isKreiskasse = nameKey.includes('kreiskasse') || nameKey.includes('opr');
+    const isRivertyAz1 = nameKey.includes('riverty') && nameKey.includes('az1');
     if (stored && stored.type) return stored;
+    if (isRivertyAz1) {
+      return {
+        type: 'regular_or_full_payoff',
+        label: 'Riverty AZ1: Im Portal sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Frei gewordene Raten werden deshalb bis zur Gesamtablösung zurückgelegt.',
+        allowExtraPayments: true,
+        allowSnowballTarget: true,
+        allowDynamicExtra: false,
+        extraPaymentMode: 'full_payoff_only'
+      };
+    }
     if (isMkk) {
       return {
         type: 'mkk_annual_review',
         label: 'MKK: Pflicht-Rate 40 € ab 01.05.2026; Ratenanpassung regulär nur jährlich zum 01.05. ab 2027. Sonderzahlungen, höhere freiwillige Zahlungen und Ablösung sind jederzeit erlaubt.',
         allowExtraPayments: true,
         allowSnowballTarget: true,
-        allowDynamicExtra: true
+        allowDynamicExtra: true,
+        extraPaymentMode: 'flexible'
       };
     }
     if (isKreiskasse) {
@@ -251,7 +263,8 @@
         label: 'Kreiskasse OPR: festgeschriebener Ratenplan. Keine freiwilligen Sonderzahlungen, keine dynamische Extra-Tilgung und keine zusätzliche Ratenerhöhung; vorhandene geplante Erhöhung bleibt bestehen.',
         allowExtraPayments: false,
         allowSnowballTarget: false,
-        allowDynamicExtra: false
+        allowDynamicExtra: false,
+        extraPaymentMode: 'none'
       };
     }
     return null;
@@ -265,6 +278,17 @@
   function isDebtAllowedAsSnowballTarget(debt) {
     const rule = getDebtCreditorRule(debt);
     return !(rule && rule.allowSnowballTarget === false);
+  }
+
+  function getDebtExtraPaymentMode(debt) {
+    const rule = getDebtCreditorRule(debt);
+    if (rule && rule.extraPaymentMode === 'full_payoff_only') return 'full_payoff_only';
+    if (rule && (rule.extraPaymentMode === 'none' || rule.allowExtraPayments === false)) return 'none';
+    return 'flexible';
+  }
+
+  function isDebtFullPayoffOnly(debt) {
+    return getDebtExtraPaymentMode(debt) === 'full_payoff_only';
   }
 
   function canModifyDebtRateForCreditor(debt, monthKey) {
@@ -287,7 +311,8 @@
         label: rule.label,
         allowExtraPayments: rule.allowExtraPayments !== false,
         allowSnowballTarget: rule.allowSnowballTarget !== false,
-        allowDynamicExtra: rule.allowDynamicExtra !== false
+        allowDynamicExtra: rule.allowDynamicExtra !== false,
+        extraPaymentMode: rule.extraPaymentMode || (rule.allowExtraPayments === false ? 'none' : 'flexible')
       };
       return debt.creditorRule;
     }
@@ -715,6 +740,11 @@
     taxRefunds: [],
     groceryExpenses: [],
     smokingExpenses: [],
+    selfEmployment: {
+      businessName: '',
+      taxMode: 'small_business',
+      entries: []
+    },
     commonAccount: {
       currentBalance: 0,
       manualBound: 0,
@@ -883,6 +913,7 @@
       + (Array.isArray(obj.taxRefunds) ? obj.taxRefunds.length * 4 : 0)
       + (Array.isArray(obj.groceryExpenses) ? obj.groceryExpenses.length * 2 : 0)
       + (Array.isArray(obj.smokingExpenses) ? obj.smokingExpenses.length * 2 : 0)
+      + (obj.selfEmployment && Array.isArray(obj.selfEmployment.entries) ? obj.selfEmployment.entries.length * 3 : 0)
       + (Array.isArray(obj.changeLog) ? Math.min(obj.changeLog.length, 50) : 0)
       + (obj.appMeta && obj.appMeta.selectedMonth ? 2 : 0);
   };
@@ -944,6 +975,7 @@
     if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
     if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
+    normalizeSelfEmployment();
     normalizeAllTaxRefunds();
     normalizeGroceryExpenses();
     normalizeSmokingExpenses();
@@ -2944,6 +2976,7 @@
     const allowFullPayoff = options.allowFullPayoff === true;
     const candidates = active
       .filter((debt) => debt.open > 0 && monthDiff(debt.nextDueMonth, month) >= 0 && isDebtAllowedAsSnowballTarget(debt))
+      .filter((debt) => !isDebtFullPayoffOnly(debt))
       .sort((a, b) => a.open - b.open || a.name.localeCompare(b.name));
     if (!candidates.length) return null;
 
@@ -3071,7 +3104,37 @@
 
   function getDebtFreedStandardRate(debt, completedMonth) {
     if (!debt || debt.paymentType !== 'installment' || !isMonthKey(completedMonth)) return 0;
-    return roundMoney(Math.max(0, Number(getDebtRateForMonth(debt, completedMonth) || debt.monthlyRate || 0)));
+    // Eine kleinere Schlussrate darf den festen Schulden-Pool nicht verkleinern.
+    // Deshalb bleibt mindestens die vereinbarte Monatsrate erhalten.
+    return roundMoney(Math.max(
+      0,
+      Number(debt.monthlyRate || 0),
+      Number(getDebtRateForMonth(debt, completedMonth) || 0)
+    ));
+  }
+
+  function getAutomaticFullPayoffPlan() {
+    const source = (state.debts || []).find((debt) => {
+      const key = normalizeTextKey(debt && debt.name || '');
+      return key.includes('pair') && key.includes('az1');
+    });
+    const target = (state.debts || []).find((debt) => Number(debt && debt.amountOpen || 0) > 0 && isDebtFullPayoffOnly(debt));
+    if (!source || !target) return null;
+    ensureDebtConfig(source);
+    ensureDebtConfig(target);
+    const completedMonth = getDebtCompletedMonth(source);
+    if (!isMonthKey(completedMonth)) return null;
+    const monthlyAmount = getDebtFreedStandardRate(source, completedMonth);
+    if (!(monthlyAmount > 0)) return null;
+    return {
+      sourceDebtId: source.id,
+      sourceDebt: source.name || 'ausgelaufene Schuld',
+      targetDebtId: target.id,
+      targetDebt: target.name || 'Schuld',
+      completedMonth,
+      firstReserveMonth: nextMonth(completedMonth),
+      monthlyAmount
+    };
   }
 
   function getHistoricalDebtRollover(startMonth) {
@@ -3120,7 +3183,16 @@
     const active = sourceDebts.filter((debt) => debt.snowballEligible);
     const rows = [];
     const events = [];
-    const rolloverStart = getHistoricalDebtRollover(startMonth);
+    const automaticPayoffPlan = getAutomaticFullPayoffPlan();
+    const payoffPlanActiveAtStart = automaticPayoffPlan
+      && monthDiff(automaticPayoffPlan.firstReserveMonth, startMonth) >= 0;
+    const dedicatedMonthlyAtStart = payoffPlanActiveAtStart ? Number(automaticPayoffPlan.monthlyAmount || 0) : 0;
+    const elapsedReserveMonths = payoffPlanActiveAtStart
+      ? Math.max(0, monthDiff(automaticPayoffPlan.firstReserveMonth, startMonth))
+      : 0;
+    let dedicatedReserve = roundMoney(dedicatedMonthlyAtStart * elapsedReserveMonths);
+    let dedicatedFinished = false;
+    const rolloverStart = roundMoney(Math.max(0, getHistoricalDebtRollover(startMonth) - dedicatedMonthlyAtStart));
     let rollover = rolloverStart;
     let month = startMonth;
     let debtFreeMonth = '';
@@ -3131,6 +3203,7 @@
       let newlyFreed = 0;
       const notes = [];
       const payments = [];
+      let payoffReserve = null;
       active.forEach((debt) => { debt.rate = getDebtRateForMonth(debt, month); });
       // Pflicht-/Normalraten müssen auch für feste Ratenpläne gezahlt werden.
       // isDebtAllowedAsSnowballTarget() darf hier NICHT filtern, sonst würden z. B.
@@ -3140,11 +3213,18 @@
       const dueDebts = active
         .filter((debt) => debt.open > 0 && monthDiff(debt.nextDueMonth, month) >= 0)
         .sort((a, b) => a.open - b.open || a.name.localeCompare(b.name));
+      const dedicatedContribution = automaticPayoffPlan
+        && !dedicatedFinished
+        && monthDiff(automaticPayoffPlan.firstReserveMonth, month) >= 0
+        && active.some((debt) => debt.id === automaticPayoffPlan.targetDebtId && debt.open > 0)
+        ? Number(automaticPayoffPlan.monthlyAmount || 0)
+        : 0;
       // Der gesamte Schulden-Pool bleibt erhalten: laufende Standardraten plus bereits
       // in früheren Monaten frei gewordene Standardraten. Eine kleinere Schlussrate
       // reduziert diesen reservierten Monatsbetrag nicht.
       const debtPool = roundMoney(
         rollover
+        + dedicatedContribution
         + dueDebts.reduce((sum, debt) => sum + Math.max(0, Number(debt.rate || 0)), 0)
         + (i === 0 ? getDebtStandardRatesCompletedInMonth(month) : 0)
       );
@@ -3162,6 +3242,61 @@
           newlyFreed += debt.rate;
         }
       });
+
+      if (dedicatedContribution > 0 && automaticPayoffPlan) {
+        const target = active.find((debt) => debt.id === automaticPayoffPlan.targetDebtId);
+        if (target && target.open > 0) {
+          const reserveBefore = dedicatedReserve;
+          dedicatedReserve = roundMoney(dedicatedReserve + dedicatedContribution);
+          // Der Monatsbetrag wird im Haushaltsbudget gebunden, auch wenn Riverty
+          // im Portal noch keine Teil-Sonderzahlung annimmt.
+          extra += dedicatedContribution;
+          const basePaymentIndex = payments.findIndex((payment) => payment.type === 'rate' && payment.debt === target.name);
+          const basePayment = basePaymentIndex >= 0 ? Number(payments[basePaymentIndex].amount || 0) : 0;
+          const portalPayoffAmount = roundMoney(target.open + basePayment);
+          const canPayoff = dedicatedReserve + 0.005 >= target.open;
+
+          payoffReserve = {
+            sourceDebt: automaticPayoffPlan.sourceDebt,
+            targetDebt: target.name,
+            reserveBefore,
+            reserveAdded: dedicatedContribution,
+            reserveBalance: dedicatedReserve,
+            currentOpenAfterRate: target.open,
+            portalPayoffAmount,
+            canPayoff,
+            leftoverAfterPayoff: 0
+          };
+
+          if (canPayoff) {
+            const reserveSpent = target.open;
+            dedicatedReserve = roundMoney(Math.max(0, dedicatedReserve - reserveSpent));
+            target.open = 0;
+            newlyFreed += Number(target.rate || 0) + dedicatedContribution;
+            dedicatedFinished = true;
+            payoffReserve.reserveBalance = dedicatedReserve;
+            payoffReserve.leftoverAfterPayoff = dedicatedReserve;
+            if (basePaymentIndex >= 0) payments.splice(basePaymentIndex, 1);
+            payments.push({
+              type: 'full_payoff',
+              debt: target.name,
+              amount: portalPayoffAmount,
+              budgetAmount: roundMoney(basePayment + dedicatedContribution),
+              rateAmount: basePayment,
+              snowballAmount: dedicatedContribution,
+              originalRate: target.rate,
+              remainingAfter: 0,
+              completed: true,
+              note: `Gesamtforderung bezahlen · ${euro(reserveBefore)} aus Vormonat zurückgelegt`
+            });
+            const oldNoteIndex = notes.findIndex((note) => note.startsWith(`${target.name}:`));
+            if (oldNoteIndex >= 0) notes.splice(oldNoteIndex, 1);
+            notes.push(`${target.name}: Gesamtforderung ${euro(portalPayoffAmount)} bezahlen`);
+          } else {
+            notes.push(`${euro(dedicatedContribution)} für die Gesamtablösung von ${target.name} zurücklegen`);
+          }
+        }
+      }
 
       if (rollover > 0) {
         let extraBudget = rollover;
@@ -3202,7 +3337,7 @@
           text: `${entry.sourceDebt} ausgelaufen – ${euro(entry.amount)} gehen ab ${formatMonthLabel(entry.transferMonth)} auf ${entry.targetDebt || 'keine weitere Schuld'}.`
         });
       });
-      rows.push({ month, base, extra, dynamicExtra: 0, total: base + extra, pool: debtPool, rolloverNext, remaining, targetNext: nextTarget ? nextTarget.name : '', freedTransfers: freedThisMonth, payments: payments.slice(), notes: notes.slice(0, 5).join(' · ') });
+      rows.push({ month, base, extra, dynamicExtra: 0, total: base + extra, pool: debtPool, rolloverNext, remaining, targetNext: nextTarget ? nextTarget.name : '', freedTransfers: freedThisMonth, payments: payments.slice(), payoffReserve, notes: notes.slice(0, 6).join(' · ') });
       if (remaining <= 0.005) {
         debtFreeMonth = month;
         break;
@@ -3210,7 +3345,7 @@
       rollover += newlyFreed;
       month = nextMonth(month);
     }
-    return { rows, events, noRate, scheduledOneTime, debtFreeMonth, rolloverStart };
+    return { rows, events, noRate, scheduledOneTime, debtFreeMonth, rolloverStart, automaticPayoffPlan };
   }
 
   function getDebtRolloverSuggestionsForMonth(monthKey, plan = null) {
@@ -3223,6 +3358,8 @@
     const nextPlan = buildSnowballPlan(nextMonth(monthKey), 1);
     const nextSnowballPayment = ((nextPlan.rows || [])[0]?.payments || [])
       .find((payment) => payment.type === 'snowball');
+    const nextPayoffReserve = (nextPlan.rows || [])[0]?.payoffReserve || null;
+    const automaticPayoffPlan = nextPlan.automaticPayoffPlan || getAutomaticFullPayoffPlan();
 
     (state.debts || []).forEach((debt) => {
       ensureDebtConfig(debt);
@@ -3231,12 +3368,20 @@
       if (knownSources.has(debt.name)) return;
       const amount = getDebtFreedStandardRate(debt, monthKey);
       if (!(amount > 0)) return;
+      const reserveForPayoff = !!(
+        automaticPayoffPlan
+        && automaticPayoffPlan.sourceDebtId === debt.id
+        && automaticPayoffPlan.targetDebtId
+      );
       suggestions.push({
         month: monthKey,
         sourceDebt: debt.name || 'Schuld',
         amount,
-        targetDebt: nextSnowballPayment ? nextSnowballPayment.debt : '',
+        targetDebt: reserveForPayoff
+          ? (nextPayoffReserve && nextPayoffReserve.targetDebt || automaticPayoffPlan.targetDebt)
+          : (nextSnowballPayment ? nextSnowballPayment.debt : ''),
         transferMonth: nextMonth(monthKey),
+        reserveForPayoff,
         status: 'completed'
       });
     });
@@ -3424,6 +3569,12 @@
         text: 'Ausgabe vom Rauchzeug-Budget erfassen',
         icon: '−',
         onClick: () => showSmokingExpenseEditor()
+      },
+      {
+        title: 'Selbständigkeit',
+        text: 'Betriebseinnahme oder Betriebsausgabe erfassen',
+        icon: '§',
+        onClick: () => showSelfEmploymentEntryEditor()
       },
       {
         title: 'Tankgeld',
@@ -4228,6 +4379,7 @@
   const tankCalcSection = document.getElementById('tankcalc');
   const grocerySection = document.getElementById('groceries');
   const smokingSection = document.getElementById('smoking');
+  const selfEmploymentSection = document.getElementById('selfemployment');
   const debtsSection = document.getElementById('debts');
   const settingsSection = document.getElementById('settings');
   const savingsSection = document.getElementById('savings');
@@ -4257,6 +4409,7 @@
   let bufferSearch = '';
   let bufferFilter = 'all';
   let debtSearch = '';
+  let selfEmploymentReportYear = String(currentMonth).slice(0, 4);
   let pendingSearchRenderTimer = null;
   let pendingSearchFocus = null;
   let changeLogFilter = 'all';
@@ -6222,6 +6375,213 @@
     return Array.from(totals.values()).sort((a, b) => b.month.localeCompare(a.month));
   }
 
+  function getSelfEmploymentIncomeCategories() {
+    return [
+      'Umsatzerlöse',
+      'Sonstige betriebliche Einnahmen',
+      'Umsatzsteuer-Erstattung',
+      'Private Nutzung / Entnahme'
+    ];
+  }
+
+  function getSelfEmploymentExpenseCategories() {
+    return [
+      'Wareneinkauf / Material',
+      'Fremdleistungen',
+      'Raumkosten',
+      'Telefon / Internet',
+      'Bürobedarf / Software',
+      'Porto / Versand',
+      'Werbung',
+      'Fortbildung',
+      'Reisekosten',
+      'Fahrtkosten / Kfz',
+      'Versicherungen / Beiträge',
+      'Rechts- / Steuerberatung',
+      'Abschreibung / GWG',
+      'Umsatzsteuer-Zahlung',
+      'Sonstige Betriebsausgaben'
+    ];
+  }
+
+  function getSelfEmploymentTaxModeLabel(mode) {
+    return mode === 'vat_registered'
+      ? 'Umsatzsteuerpflichtig'
+      : 'Kleinunternehmer / Beträge ohne Umsatzsteuer-Aufteilung';
+  }
+
+  function normalizeSelfEmploymentEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const amount = parseMoneyInput(entry.amount || entry.amountGross || 0);
+    if (!Number.isFinite(amount) || !(amount > 0)) return null;
+    const type = entry.type === 'expense' ? 'expense' : 'income';
+    const categories = type === 'expense' ? getSelfEmploymentExpenseCategories() : getSelfEmploymentIncomeCategories();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || ''))
+      ? String(entry.date)
+      : `${dateToMonthKey(new Date())}-01`;
+    const rawVatRate = Number(entry.vatRate || 0);
+    const vatRate = [0, 7, 19].includes(rawVatRate) ? rawVatRate : 0;
+    return {
+      id: typeof entry.id === 'string' && entry.id ? entry.id : generateId(),
+      date,
+      type,
+      description: typeof entry.description === 'string' && entry.description.trim()
+        ? entry.description.trim()
+        : (type === 'income' ? 'Betriebseinnahme' : 'Betriebsausgabe'),
+      category: typeof entry.category === 'string' && entry.category.trim()
+        ? entry.category.trim()
+        : categories[0],
+      amount: roundMoney(amount),
+      vatRate,
+      documentNumber: typeof entry.documentNumber === 'string' ? entry.documentNumber.trim() : '',
+      note: typeof entry.note === 'string' ? entry.note.trim() : ''
+    };
+  }
+
+  function normalizeSelfEmployment() {
+    if (!state.selfEmployment || typeof state.selfEmployment !== 'object') {
+      state.selfEmployment = JSON.parse(JSON.stringify(defaultState.selfEmployment));
+    }
+    if (typeof state.selfEmployment.businessName !== 'string') state.selfEmployment.businessName = '';
+    if (!['small_business', 'vat_registered'].includes(state.selfEmployment.taxMode)) {
+      state.selfEmployment.taxMode = 'small_business';
+    }
+    if (!Array.isArray(state.selfEmployment.entries)) state.selfEmployment.entries = [];
+    state.selfEmployment.entries = state.selfEmployment.entries
+      .map(normalizeSelfEmploymentEntry)
+      .filter(Boolean)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+    return state.selfEmployment;
+  }
+
+  function getSelfEmploymentEntries(year = '') {
+    const cfg = normalizeSelfEmployment();
+    const yearKey = String(year || '');
+    return cfg.entries.filter((entry) => !yearKey || entry.date.startsWith(`${yearKey}-`));
+  }
+
+  function getSelfEmploymentEntryBreakdown(entry) {
+    const cfg = normalizeSelfEmployment();
+    const gross = roundMoney(Math.max(0, Number(entry && entry.amount || 0)));
+    const vatRate = cfg.taxMode === 'vat_registered' ? Number(entry && entry.vatRate || 0) : 0;
+    const net = vatRate > 0 ? roundMoney(gross / (1 + vatRate / 100)) : gross;
+    return { gross, net, vat: roundMoney(gross - net), vatRate };
+  }
+
+  function getSelfEmploymentSummary(year) {
+    const entries = getSelfEmploymentEntries(year);
+    const summary = {
+      entries,
+      incomeGross: 0,
+      expenseGross: 0,
+      incomeNet: 0,
+      expenseNet: 0,
+      collectedVat: 0,
+      inputVat: 0,
+      result: 0,
+      months: new Map(),
+      categories: new Map()
+    };
+    entries.forEach((entry) => {
+      const amount = getSelfEmploymentEntryBreakdown(entry);
+      const sign = entry.type === 'income' ? 1 : -1;
+      if (entry.type === 'income') {
+        summary.incomeGross += amount.gross;
+        summary.incomeNet += amount.net;
+        summary.collectedVat += amount.vat;
+      } else {
+        summary.expenseGross += amount.gross;
+        summary.expenseNet += amount.net;
+        summary.inputVat += amount.vat;
+      }
+      const month = entry.date.slice(0, 7);
+      const monthRow = summary.months.get(month) || { month, income: 0, expense: 0, result: 0 };
+      if (entry.type === 'income') monthRow.income += amount.gross;
+      else monthRow.expense += amount.gross;
+      monthRow.result += sign * amount.gross;
+      summary.months.set(month, monthRow);
+      const categoryKey = `${entry.type}:${entry.category}`;
+      const categoryRow = summary.categories.get(categoryKey) || { type: entry.type, category: entry.category, amount: 0 };
+      categoryRow.amount += amount.gross;
+      summary.categories.set(categoryKey, categoryRow);
+    });
+    ['incomeGross', 'expenseGross', 'incomeNet', 'expenseNet', 'collectedVat', 'inputVat'].forEach((key) => {
+      summary[key] = roundMoney(summary[key]);
+    });
+    summary.result = roundMoney(summary.incomeGross - summary.expenseGross);
+    summary.months = Array.from(summary.months.values()).sort((a, b) => a.month.localeCompare(b.month));
+    summary.categories = Array.from(summary.categories.values()).sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'income' ? -1 : 1;
+      return b.amount - a.amount || a.category.localeCompare(b.category, 'de');
+    });
+    return summary;
+  }
+
+  function upsertSelfEmploymentEntry(entry) {
+    const cfg = normalizeSelfEmployment();
+    const normalized = normalizeSelfEmploymentEntry(entry);
+    if (!normalized) return null;
+    cfg.entries = cfg.entries.filter((item) => item.id !== normalized.id);
+    cfg.entries.push(normalized);
+    normalizeSelfEmployment();
+    return normalized;
+  }
+
+  function deleteSelfEmploymentEntry(entryId) {
+    const cfg = normalizeSelfEmployment();
+    const before = cfg.entries.length;
+    cfg.entries = cfg.entries.filter((entry) => entry.id !== entryId);
+    return cfg.entries.length !== before;
+  }
+
+  function getSelfEmploymentYears() {
+    const years = new Set([String(new Date().getFullYear()), String(currentMonth || '').slice(0, 4)]);
+    getSelfEmploymentEntries().forEach((entry) => years.add(entry.date.slice(0, 4)));
+    return Array.from(years).filter((year) => /^\d{4}$/.test(year)).sort((a, b) => b.localeCompare(a));
+  }
+
+  function csvField(value) {
+    const text = String(value == null ? '' : value);
+    return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function downloadTextFile(filename, content, type = 'text/plain;charset=utf-8') {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportSelfEmploymentCsv(year) {
+    const cfg = normalizeSelfEmployment();
+    const rows = [[
+      'Datum', 'Art', 'Kategorie', 'Beschreibung', 'Belegnummer', 'Bruttobetrag',
+      'USt-Satz', 'Nettobetrag', 'Umsatzsteuer', 'Notiz'
+    ]];
+    getSelfEmploymentEntries(year).slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((entry) => {
+      const amount = getSelfEmploymentEntryBreakdown(entry);
+      rows.push([
+        entry.date,
+        entry.type === 'income' ? 'Einnahme' : 'Ausgabe',
+        entry.category,
+        entry.description,
+        entry.documentNumber,
+        formatNumberInput(amount.gross),
+        cfg.taxMode === 'vat_registered' ? `${amount.vatRate} %` : '0 %',
+        formatNumberInput(amount.net),
+        formatNumberInput(amount.vat),
+        entry.note
+      ]);
+    });
+    const csv = `\uFEFF${rows.map((row) => row.map(csvField).join(';')).join('\r\n')}`;
+    downloadTextFile(`euer-buchungen-${year}.csv`, csv, 'text/csv;charset=utf-8');
+  }
+
   function getGroceryAverageStats(monthKey = currentMonth, maxMonths = 12) {
     const priorMonth = addMonths(monthKey, -1);
     const entries = getGroceryMonthlyTotals()
@@ -7149,6 +7509,7 @@
       tankcalc: ['Tankgeld', tankCalcSection, renderTankCalc],
       groceries: ['Einkaufsgeld', grocerySection, renderGroceries],
       smoking: ['Rauchzeug', smokingSection, renderSmokingExpenses],
+      selfemployment: ['Selbständigkeit & EÜR', selfEmploymentSection, renderSelfEmployment],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
       savings: ['Rücklagen & Sparen', savingsSection, renderSavings],
@@ -12432,6 +12793,402 @@ function showPersonalEditor(personId, editPost) {
     smokingSection.appendChild(history);
   }
 
+  function formatSelfEmploymentDate(dateValue) {
+    const parts = String(dateValue || '').split('-');
+    return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : String(dateValue || '-');
+  }
+
+  function getDefaultSelfEmploymentDate() {
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return localToday.startsWith(`${currentMonth}-`) ? localToday : `${currentMonth}-01`;
+  }
+
+  function showSelfEmploymentEntryEditor(entry = null, requestedType = 'income') {
+    const cfg = normalizeSelfEmployment();
+    const isNew = !entry;
+    const item = entry || {
+      id: generateId(),
+      date: getDefaultSelfEmploymentDate(),
+      type: requestedType === 'expense' ? 'expense' : 'income',
+      description: '',
+      category: '',
+      amount: 0,
+      vatRate: 0,
+      documentNumber: '',
+      note: ''
+    };
+    const content = document.createElement('div');
+    content.className = 'modal-form self-employment-form';
+
+    const firstRow = document.createElement('div');
+    firstRow.className = 'row';
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = item.date || getDefaultSelfEmploymentDate();
+    const typeSelect = document.createElement('select');
+    typeSelect.innerHTML = '<option value="income">Einnahme</option><option value="expense">Ausgabe</option>';
+    typeSelect.value = item.type === 'expense' ? 'expense' : 'income';
+    const amountInput = createMoneyField(item.amount || '');
+    amountInput.placeholder = 'z. B. 125,00';
+    firstRow.appendChild(createLabelInput('Zahlungsdatum', dateInput));
+    firstRow.appendChild(createLabelInput('Art', typeSelect));
+    firstRow.appendChild(createLabelInput('Bezahlter Betrag', amountInput));
+    content.appendChild(firstRow);
+
+    const secondRow = document.createElement('div');
+    secondRow.className = 'row';
+    const descriptionInput = document.createElement('input');
+    descriptionInput.type = 'text';
+    descriptionInput.value = item.description || '';
+    descriptionInput.placeholder = 'z. B. Rechnung Kunde Müller';
+    const categorySelect = document.createElement('select');
+    const vatSelect = document.createElement('select');
+    vatSelect.innerHTML = '<option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option>';
+    vatSelect.value = String(Number(item.vatRate || 0));
+    secondRow.appendChild(createLabelInput('Beschreibung', descriptionInput));
+    secondRow.appendChild(createLabelInput('EÜR-Kategorie', categorySelect));
+    secondRow.appendChild(createLabelInput('Umsatzsteuer im Betrag', vatSelect));
+    content.appendChild(secondRow);
+
+    const thirdRow = document.createElement('div');
+    thirdRow.className = 'row';
+    const documentInput = document.createElement('input');
+    documentInput.type = 'text';
+    documentInput.value = item.documentNumber || '';
+    documentInput.placeholder = 'optional, z. B. RE-2026-014';
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.value = item.note || '';
+    noteInput.placeholder = 'optional';
+    thirdRow.appendChild(createLabelInput('Beleg- / Rechnungsnummer', documentInput));
+    thirdRow.appendChild(createLabelInput('Notiz', noteInput));
+    content.appendChild(thirdRow);
+
+    const updateCategories = () => {
+      const categories = typeSelect.value === 'expense'
+        ? getSelfEmploymentExpenseCategories()
+        : getSelfEmploymentIncomeCategories();
+      const previous = categorySelect.value || item.category || categories[0];
+      categorySelect.innerHTML = '';
+      categories.forEach((category) => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        categorySelect.appendChild(option);
+      });
+      if (previous && !categories.includes(previous)) {
+        const custom = document.createElement('option');
+        custom.value = previous;
+        custom.textContent = previous;
+        categorySelect.appendChild(custom);
+      }
+      categorySelect.value = previous;
+      if (!categorySelect.value) categorySelect.value = categories[0];
+    };
+    typeSelect.addEventListener('change', updateCategories);
+    updateCategories();
+
+    if (cfg.taxMode !== 'vat_registered') {
+      vatSelect.value = '0';
+      vatSelect.disabled = true;
+      content.appendChild(createUiEl('div', 'notice info', 'Kleinunternehmer-Modus: Der bezahlte Gesamtbetrag wird ohne Umsatzsteuer-Aufteilung erfasst.'));
+    } else {
+      content.appendChild(createUiEl('p', 'small muted', 'Bitte den Steuersatz wählen, der im bezahlten Gesamtbetrag enthalten ist. Zahlungen an das Finanzamt werden mit 0 % erfasst.'));
+    }
+    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Der Eintrag bleibt vollständig getrennt vom privaten Haushaltsbudget.'));
+
+    showModal(isNew ? 'Betriebsvorgang erfassen' : 'Betriebsvorgang bearbeiten', content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: 'Speichern',
+        className: 'primary',
+        onClick: (close) => {
+          const amount = parseMoneyInput(amountInput.value);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput.value)) return alert('Bitte ein gültiges Zahlungsdatum eintragen.');
+          if (!Number.isFinite(amount) || !(amount > 0)) return alert('Bitte einen Betrag größer als 0 eintragen.');
+          const description = descriptionInput.value.trim();
+          if (!description) return alert('Bitte eine kurze Beschreibung eintragen.');
+          const saved = upsertSelfEmploymentEntry({
+            id: item.id,
+            date: dateInput.value,
+            type: typeSelect.value,
+            description,
+            category: categorySelect.value,
+            amount,
+            vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
+            documentNumber: documentInput.value,
+            note: noteInput.value
+          });
+          if (!saved) return alert('Der Betriebsvorgang konnte nicht gespeichert werden.');
+          selfEmploymentReportYear = saved.date.slice(0, 4);
+          addChangeLog(
+            'Selbständigkeit',
+            `${saved.type === 'income' ? 'Einnahme' : 'Ausgabe'} ${isNew ? 'erfasst' : 'geändert'}: ${saved.description} · ${euro(saved.amount)}.`,
+            saved.date.slice(0, 7)
+          );
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
+  function buildSelfEmploymentReportHtml(year, summary) {
+    const cfg = normalizeSelfEmployment();
+    const businessName = escapeHtml(cfg.businessName || 'Selbständigkeit');
+    const categoryRows = summary.categories.length
+      ? summary.categories.map((row) => `<tr><td>${row.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(row.category)}</td><td class="num">${euro(row.amount)}</td></tr>`).join('')
+      : '<tr><td colspan="3">Keine Buchungen vorhanden.</td></tr>';
+    const monthRows = summary.months.length
+      ? summary.months.map((row) => `<tr><td>${escapeHtml(formatMonthLabel(row.month))}</td><td class="num">${euro(row.income)}</td><td class="num">${euro(row.expense)}</td><td class="num">${euro(row.result)}</td></tr>`).join('')
+      : '<tr><td colspan="4">Keine Buchungen vorhanden.</td></tr>';
+    const entryRows = summary.entries.slice().sort((a, b) => a.date.localeCompare(b.date)).map((entry) => {
+      const amount = getSelfEmploymentEntryBreakdown(entry);
+      return `<tr><td>${escapeHtml(formatSelfEmploymentDate(entry.date))}</td><td>${entry.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.documentNumber || '-')}</td><td class="num">${euro(amount.gross)}</td><td>${escapeHtml(entry.note || '')}</td></tr>`;
+    }).join('') || '<tr><td colspan="7">Keine Buchungen vorhanden.</td></tr>';
+    const vatBlock = cfg.taxMode === 'vat_registered'
+      ? `<section><h2>Umsatzsteuer-Aufteilung</h2><div class="metrics"><div><span>Netto-Einnahmen</span><strong>${euro(summary.incomeNet)}</strong></div><div><span>Vereinnahmte Umsatzsteuer</span><strong>${euro(summary.collectedVat)}</strong></div><div><span>Netto-Ausgaben</span><strong>${euro(summary.expenseNet)}</strong></div><div><span>Enthaltene Vorsteuer</span><strong>${euro(summary.inputVat)}</strong></div></div></section>`
+      : '';
+    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>EÜR ${year} · ${businessName}</title><style>
+      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17231d;margin:32px;line-height:1.35}h1{margin:0 0 4px}h2{margin:28px 0 8px;font-size:18px}.muted{color:#5f6f66}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.metrics div{border:1px solid #cfdad3;border-radius:10px;padding:12px}.metrics span{display:block;color:#5f6f66;font-size:12px}.metrics strong{display:block;font-size:20px;margin-top:4px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #dce4df;text-align:left;padding:7px 6px;vertical-align:top}th{background:#eef5f0}.num{text-align:right;white-space:nowrap}.foot{margin-top:28px;font-size:11px;color:#5f6f66}@media print{body{margin:12mm}.no-print{display:none}}
+    </style></head><body><h1>Einnahmenüberschussrechnung ${year}</h1><p><strong>${businessName}</strong><br><span class="muted">${escapeHtml(getSelfEmploymentTaxModeLabel(cfg.taxMode))}</span></p>
+      <div class="metrics"><div><span>Betriebseinnahmen</span><strong>${euro(summary.incomeGross)}</strong></div><div><span>Betriebsausgaben</span><strong>${euro(summary.expenseGross)}</strong></div><div><span>${summary.result >= 0 ? 'Überschuss' : 'Verlust'}</span><strong>${euro(Math.abs(summary.result))}</strong></div></div>
+      ${vatBlock}<section><h2>Monatsübersicht</h2><table><thead><tr><th>Monat</th><th class="num">Einnahmen</th><th class="num">Ausgaben</th><th class="num">Ergebnis</th></tr></thead><tbody>${monthRows}</tbody></table></section>
+      <section><h2>Summen nach EÜR-Kategorie</h2><table><thead><tr><th>Art</th><th>Kategorie</th><th class="num">Summe</th></tr></thead><tbody>${categoryRows}</tbody></table></section>
+      <section><h2>Buchungsliste</h2><table><thead><tr><th>Datum</th><th>Art</th><th>Kategorie</th><th>Beschreibung</th><th>Beleg</th><th class="num">Betrag</th><th>Notiz</th></tr></thead><tbody>${entryRows}</tbody></table></section>
+      <p class="foot">Arbeitsübersicht aus dem Haushaltsplaner. Sie ersetzt weder die amtliche Anlage EÜR noch eine steuerliche Prüfung. Für Abschreibungen, gemischte Nutzung und Sonderfälle bitte die steuerliche Behandlung prüfen.</p>
+      <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),150));<\/script></body></html>`;
+  }
+
+  function printSelfEmploymentReport(year, summary) {
+    const reportWindow = window.open('', '_blank');
+    if (!reportWindow) return alert('Der EÜR-Bericht konnte nicht geöffnet werden. Bitte Pop-ups für diese Seite erlauben.');
+    reportWindow.document.open();
+    reportWindow.document.write(buildSelfEmploymentReportHtml(year, summary));
+    reportWindow.document.close();
+  }
+
+  function renderSelfEmploymentSettings(parent) {
+    const cfg = normalizeSelfEmployment();
+    const details = document.createElement('details');
+    details.className = 'details-box self-employment-settings';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Betrieb & Umsatzsteuer einstellen';
+    details.appendChild(summary);
+    const row = document.createElement('div');
+    row.className = 'row';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = cfg.businessName || '';
+    nameInput.placeholder = 'z. B. Benny Musterbetrieb';
+    const taxSelect = document.createElement('select');
+    taxSelect.innerHTML = '<option value="small_business">Kleinunternehmer / keine USt-Aufteilung</option><option value="vat_registered">Umsatzsteuerpflichtig</option>';
+    taxSelect.value = cfg.taxMode;
+    row.appendChild(createLabelInput('Name der Selbständigkeit', nameInput));
+    row.appendChild(createLabelInput('Umsatzsteuer-Modus', taxSelect));
+    details.appendChild(row);
+    details.appendChild(createUiEl('p', 'small muted', 'Die Einstellung steuert nur die Aufteilung in Netto und Umsatzsteuer. Bereits gespeicherte Zahlungen bleiben erhalten.'));
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'primary';
+    saveButton.textContent = 'Einstellung speichern';
+    saveButton.addEventListener('click', () => {
+      cfg.businessName = nameInput.value.trim();
+      cfg.taxMode = taxSelect.value === 'vat_registered' ? 'vat_registered' : 'small_business';
+      addChangeLog('Selbständigkeit', `Betriebseinstellung gespeichert: ${cfg.businessName || 'ohne Namen'} · ${getSelfEmploymentTaxModeLabel(cfg.taxMode)}.`, currentMonth);
+      saveState();
+      render();
+    });
+    details.appendChild(saveButton);
+    parent.appendChild(details);
+  }
+
+  function renderSelfEmployment() {
+    if (!selfEmploymentSection) return;
+    selfEmploymentSection.innerHTML = '';
+    const cfg = normalizeSelfEmployment();
+    const years = getSelfEmploymentYears();
+    if (!years.includes(selfEmploymentReportYear)) selfEmploymentReportYear = years[0];
+    const summary = getSelfEmploymentSummary(selfEmploymentReportYear);
+
+    const hero = document.createElement('div');
+    hero.className = 'card self-employment-hero';
+    const head = document.createElement('div');
+    head.className = 'self-employment-head';
+    const copy = document.createElement('div');
+    copy.appendChild(createUiEl('span', 'eyebrow', 'Betrieblich getrennt vom Haushalt'));
+    copy.appendChild(createUiEl('h2', '', cfg.businessName || 'Selbständigkeit & EÜR'));
+    copy.appendChild(createUiEl('p', 'small muted', 'Zahlungen nach ihrem tatsächlichen Zahlungsdatum erfassen. Die Jahresauswertung entsteht automatisch und verändert den privaten Monatsrest nicht.'));
+    head.appendChild(copy);
+    const actions = document.createElement('div');
+    actions.className = 'self-employment-actions';
+    const incomeButton = document.createElement('button');
+    incomeButton.type = 'button';
+    incomeButton.className = 'success';
+    incomeButton.textContent = '+ Einnahme';
+    incomeButton.addEventListener('click', () => showSelfEmploymentEntryEditor(null, 'income'));
+    const expenseButton = document.createElement('button');
+    expenseButton.type = 'button';
+    expenseButton.className = 'primary';
+    expenseButton.textContent = '+ Ausgabe';
+    expenseButton.addEventListener('click', () => showSelfEmploymentEntryEditor(null, 'expense'));
+    actions.appendChild(incomeButton);
+    actions.appendChild(expenseButton);
+    head.appendChild(actions);
+    hero.appendChild(head);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'self-employment-toolbar';
+    const yearSelect = document.createElement('select');
+    years.forEach((year) => {
+      const option = document.createElement('option');
+      option.value = year;
+      option.textContent = `EÜR ${year}`;
+      yearSelect.appendChild(option);
+    });
+    yearSelect.value = selfEmploymentReportYear;
+    yearSelect.addEventListener('change', () => {
+      selfEmploymentReportYear = yearSelect.value;
+      render();
+    });
+    toolbar.appendChild(createLabelInput('Auswertungsjahr', yearSelect));
+    const csvButton = document.createElement('button');
+    csvButton.type = 'button';
+    csvButton.className = 'secondary';
+    csvButton.textContent = 'CSV herunterladen';
+    csvButton.disabled = !summary.entries.length;
+    csvButton.addEventListener('click', () => exportSelfEmploymentCsv(selfEmploymentReportYear));
+    const printButton = document.createElement('button');
+    printButton.type = 'button';
+    printButton.className = 'secondary';
+    printButton.textContent = 'EÜR drucken / als PDF';
+    printButton.addEventListener('click', () => printSelfEmploymentReport(selfEmploymentReportYear, summary));
+    toolbar.appendChild(csvButton);
+    toolbar.appendChild(printButton);
+    hero.appendChild(toolbar);
+
+    hero.appendChild(createSummaryMetrics([
+      { label: `Betriebseinnahmen ${selfEmploymentReportYear}`, value: euro(summary.incomeGross), kind: summary.incomeGross > 0 ? 'success' : '' },
+      { label: 'Betriebsausgaben', value: euro(summary.expenseGross), kind: summary.expenseGross > 0 ? 'warning' : '' },
+      { label: summary.result >= 0 ? 'Überschuss' : 'Verlust', value: euro(Math.abs(summary.result)), kind: summary.result >= 0 ? 'success' : 'danger' },
+      { label: 'Erfasste Vorgänge', value: String(summary.entries.length) }
+    ]));
+    if (cfg.taxMode === 'vat_registered') {
+      hero.appendChild(createSummaryMetrics([
+        { label: 'Netto-Einnahmen', value: euro(summary.incomeNet) },
+        { label: 'Vereinnahmte Umsatzsteuer', value: euro(summary.collectedVat), kind: 'warning' },
+        { label: 'Netto-Ausgaben', value: euro(summary.expenseNet) },
+        { label: 'Enthaltene Vorsteuer', value: euro(summary.inputVat), kind: 'success' }
+      ]));
+    }
+    hero.appendChild(createUiEl('div', 'notice info', 'Die Auswertung ist eine vorbereitende Arbeitsübersicht. Abschreibungen, gemischt genutzte Kosten und steuerliche Sonderfälle müssen vor der Abgabe geprüft werden.'));
+    selfEmploymentSection.appendChild(hero);
+
+    renderSelfEmploymentSettings(selfEmploymentSection);
+
+    const monthsCard = document.createElement('div');
+    monthsCard.className = 'card';
+    monthsCard.appendChild(createUiEl('h3', '', `Monatsübersicht ${selfEmploymentReportYear}`));
+    if (!summary.months.length) {
+      monthsCard.appendChild(createUiEl('p', 'small muted', 'Noch keine betrieblichen Einnahmen oder Ausgaben in diesem Jahr erfasst.'));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table compact-table';
+      table.innerHTML = '<thead><tr><th>Monat</th><th>Einnahmen</th><th>Ausgaben</th><th>Ergebnis</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      summary.months.forEach((month) => {
+        const tr = document.createElement('tr');
+        const values = [formatMonthLabel(month.month), euro(month.income), euro(month.expense), euro(month.result)];
+        values.forEach((value, index) => {
+          const td = document.createElement('td');
+          td.textContent = value;
+          if (index === 3) td.className = month.result < 0 ? 'danger-text' : 'success-text';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      monthsCard.appendChild(table);
+    }
+    selfEmploymentSection.appendChild(monthsCard);
+
+    const categoriesCard = document.createElement('div');
+    categoriesCard.className = 'card';
+    categoriesCard.appendChild(createUiEl('h3', '', 'Summen nach EÜR-Kategorie'));
+    if (!summary.categories.length) {
+      categoriesCard.appendChild(createUiEl('p', 'small muted', 'Die Kategorien werden automatisch aus deinen Buchungen zusammengestellt.'));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table compact-table';
+      table.innerHTML = '<thead><tr><th>Art</th><th>Kategorie</th><th>Summe</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      summary.categories.forEach((category) => {
+        const tr = document.createElement('tr');
+        [category.type === 'income' ? 'Einnahme' : 'Ausgabe', category.category, euro(category.amount)].forEach((value) => {
+          const td = document.createElement('td');
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      categoriesCard.appendChild(table);
+    }
+    selfEmploymentSection.appendChild(categoriesCard);
+
+    const entriesCard = document.createElement('div');
+    entriesCard.className = 'card';
+    entriesCard.appendChild(createUiEl('h3', '', `Buchungen ${selfEmploymentReportYear}`));
+    entriesCard.appendChild(createUiEl('p', 'small muted', 'Belegnummern sind optional, erleichtern aber das spätere Wiederfinden der Rechnung oder Quittung.'));
+    if (!summary.entries.length) {
+      entriesCard.appendChild(createUiEl('p', 'small muted', 'Noch keine Buchungen vorhanden. Nutze oben „+ Einnahme“ oder „+ Ausgabe“.'));
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table self-employment-table';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>Art</th><th>Kategorie / Beschreibung</th><th>Beleg</th><th>Betrag</th><th>USt</th><th>Aktion</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      summary.entries.forEach((entry) => {
+        const amount = getSelfEmploymentEntryBreakdown(entry);
+        const tr = document.createElement('tr');
+        const dateTd = document.createElement('td');
+        dateTd.textContent = formatSelfEmploymentDate(entry.date);
+        const typeTd = document.createElement('td');
+        const typePill = createUiEl('span', entry.type === 'income' ? 'pill success' : 'pill warning', entry.type === 'income' ? 'Einnahme' : 'Ausgabe');
+        typeTd.appendChild(typePill);
+        const descTd = document.createElement('td');
+        descTd.appendChild(createUiEl('strong', '', entry.category));
+        descTd.appendChild(createUiEl('div', 'small', entry.description));
+        if (entry.note) descTd.appendChild(createUiEl('div', 'small muted', entry.note));
+        const documentTd = document.createElement('td');
+        documentTd.textContent = entry.documentNumber || '-';
+        const amountTd = document.createElement('td');
+        amountTd.textContent = euro(amount.gross);
+        amountTd.className = entry.type === 'income' ? 'success-text' : '';
+        const vatTd = document.createElement('td');
+        vatTd.textContent = cfg.taxMode === 'vat_registered' ? `${amount.vatRate} % · ${euro(amount.vat)}` : '-';
+        const actionTd = document.createElement('td');
+        actionTd.appendChild(createActionMenu([
+          { label: 'Bearbeiten', className: 'primary', onClick: () => showSelfEmploymentEntryEditor(entry) },
+          { label: 'Löschen', className: 'danger', onClick: () => {
+            if (!confirm(`„${entry.description}“ wirklich löschen?`)) return;
+            if (deleteSelfEmploymentEntry(entry.id)) {
+              addChangeLog('Selbständigkeit', `Buchung gelöscht: ${entry.description} · ${euro(entry.amount)}.`, entry.date.slice(0, 7));
+              saveState();
+              render();
+            }
+          } }
+        ]));
+        [dateTd, typeTd, descTd, documentTd, amountTd, vatTd, actionTd].forEach((td) => tr.appendChild(td));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      entriesCard.appendChild(table);
+    }
+    selfEmploymentSection.appendChild(entriesCard);
+  }
+
   function renderFuelTopUpCard(parent) {
     normalizeBudgetTopUpsConfig();
     const card = document.createElement('div');
@@ -13158,6 +13915,61 @@ function showPersonalEditor(personId, editPost) {
     return card;
   }
 
+  function renderFullPayoffReserveCard(monthKey, plan) {
+    const row = (plan && Array.isArray(plan.rows) ? plan.rows : [])
+      .find((entry) => entry.month === monthKey && entry.payoffReserve);
+    if (!row || !row.payoffReserve) return null;
+    const reserve = row.payoffReserve;
+    const target = (state.debts || []).find((debt) => debt && debt.name === reserve.targetDebt);
+    if (!target || !(Number(target.amountOpen || 0) > 0)) return null;
+
+    const card = document.createElement('div');
+    card.className = 'sub-card debt-rollover-card';
+    card.appendChild(createUiEl('span', reserve.canPayoff ? 'pill success' : 'pill warning', reserve.canPayoff ? 'Gesamtablösung möglich' : 'Für Gesamtablösung zurücklegen'));
+    card.appendChild(createUiEl('h3', '', `${reserve.targetDebt}: nur Rate oder Gesamtforderung`));
+
+    const futurePayoff = (plan.rows || []).find((entry) => entry.payoffReserve && entry.payoffReserve.canPayoff);
+    const text = reserve.canPayoff
+      ? 'Die Rücklage aus dem Vormonat und der aktuelle Schulden-Pool reichen jetzt. Im Riverty-Portal bitte „gesamte Forderung“ wählen und den dort aktuell angezeigten Betrag prüfen.'
+      : `${euro(reserve.reserveAdded)} werden in ${formatMonthLabel(monthKey)} nicht als Teilzahlung an Riverty geschickt, sondern automatisch für die spätere Gesamtablösung vorgemerkt.${futurePayoff ? ` Voraussichtlich reicht es in ${formatMonthLabel(futurePayoff.month)}.` : ''}`;
+    card.appendChild(createUiEl('p', 'small muted', text));
+
+    card.appendChild(createSummaryMetrics(reserve.canPayoff
+      ? [
+          { label: 'Aus Vormonaten zurückgelegt', value: euro(reserve.reserveBefore), kind: reserve.reserveBefore > 0 ? 'success' : '' },
+          { label: 'Diesen Monat aus freier Rate', value: euro(reserve.reserveAdded), kind: 'success' },
+          { label: 'Gesamtforderung laut Plan', value: euro(reserve.portalPayoffAmount), kind: 'warning' },
+          { label: 'Rest im Schulden-Pool danach', value: euro(reserve.leftoverAfterPayoff || 0) }
+        ]
+      : [
+          { label: 'Diesen Monat zurücklegen', value: euro(reserve.reserveAdded), kind: 'warning' },
+          { label: 'Danach angespart', value: euro(reserve.reserveBalance), kind: reserve.reserveBalance > 0 ? 'success' : '' },
+          { label: 'Rest nach normaler Rate', value: euro(reserve.currentOpenAfterRate) },
+          { label: 'Voraussichtliche Gesamtablösung', value: futurePayoff ? formatMonthLabel(futurePayoff.month) : 'noch offen' }
+        ]));
+
+    if (reserve.canPayoff) {
+      const actionRow = document.createElement('div');
+      actionRow.className = 'dynamic-debt-extra-actions';
+      actionRow.appendChild(createUiEl('p', 'small muted', 'Der Betrag wird erst nach deiner tatsächlichen Zahlung als bezahlt gespeichert.'));
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'success';
+      button.textContent = 'Gesamtforderung eintragen';
+      button.addEventListener('click', () => {
+        showDebtPaymentEditor(target, {
+          month: monthKey,
+          amount: reserve.portalPayoffAmount,
+          mode: 'extra',
+          note: `Gesamtablösung mit zurückgelegter Rate aus ${reserve.sourceDebt}`
+        });
+      });
+      actionRow.appendChild(button);
+      card.appendChild(actionRow);
+    }
+    return card;
+  }
+
   function showDebtBalanceCheckEditor(debt, monthKey = currentMonth) {
     if (!debt) return;
     ensureDebtConfig(debt);
@@ -13388,13 +14200,19 @@ function showPersonalEditor(personId, editPost) {
       currentSnowballRow.payments.forEach((payment) => {
         const name = payment.debt || 'Unbekannt';
         if (!currentDebtPlan.has(name)) {
-          currentDebtPlan.set(name, { rate: 0, snowball: 0, planned: 0, notes: [] });
+          currentDebtPlan.set(name, { rate: 0, snowball: 0, planned: 0, budget: 0, notes: [] });
         }
         const item = currentDebtPlan.get(name);
         const amount = Number(payment.amount || 0);
+        const budgetAmount = Number(payment.budgetAmount != null ? payment.budgetAmount : amount);
         item.planned += amount;
+        item.budget += budgetAmount;
         if (payment.type === 'rate') item.rate += amount;
         else if (payment.type === 'snowball') item.snowball += amount;
+        else if (payment.type === 'full_payoff') {
+          item.rate += Number(payment.rateAmount || 0);
+          item.snowball += Number(payment.snowballAmount || 0);
+        }
         if (payment.note) item.notes.push(payment.note);
       });
     }
@@ -13412,9 +14230,15 @@ function showPersonalEditor(personId, editPost) {
       const dueNowForDebt = isMonthKey(d.nextDueMonth) && monthDiff(d.nextDueMonth, currentMonth) >= 0;
       const fallbackRate = dueNowForDebt ? getDebtOpenAmountForMonth(d, currentMonth) : 0;
       const planned = Number(planItem && planItem.planned || 0) || fallbackRate;
-      currentOpenPlannedDebtTotal += planned;
+      const budget = Number(planItem && planItem.budget || 0) || planned;
+      currentOpenPlannedDebtTotal += budget;
       currentSnowballTotal += Number(planItem && planItem.snowball || 0);
     });
+    const currentPayoffReserve = currentSnowballRow && currentSnowballRow.payoffReserve;
+    if (currentPayoffReserve && !currentPayoffReserve.canPayoff) {
+      currentOpenPlannedDebtTotal += Number(currentPayoffReserve.reserveAdded || 0);
+      currentSnowballTotal += Number(currentPayoffReserve.reserveAdded || 0);
+    }
     const currentPlannedDebtTotal = paidSum + currentOpenPlannedDebtTotal;
     if (currentPlannedDebtTotal > 0) {
       dueSum = currentPlannedDebtTotal;
@@ -13432,6 +14256,8 @@ function showPersonalEditor(personId, editPost) {
     }
     const dynamicExtraCard = renderDynamicDebtSpecialPaymentCard(currentMonth, snowball);
     if (dynamicExtraCard) card.appendChild(dynamicExtraCard);
+    const fullPayoffReserveCard = renderFullPayoffReserveCard(currentMonth, snowball);
+    if (fullPayoffReserveCard) card.appendChild(fullPayoffReserveCard);
     card.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
 
     let visibleDebts = state.debts.filter((d) => shouldShowDebtInMonth(d, currentMonth));
@@ -13564,8 +14390,9 @@ function showPersonalEditor(personId, editPost) {
         });
 
         const reviewRuleText = getDebtRateChangeRuleText(d);
+        const creditorRuleText = getDebtCreditorRule(d)?.label || '';
         const latestBalanceCheck = getLatestDebtBalanceCheck(d, currentMonth);
-        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Zahlungsart:</span> ${typeHtml}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Regel:</span> ${reviewRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
+        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Zahlungsart:</span> ${typeHtml}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Ratenregel:</span> ${reviewRuleText}</div>` : ''}${creditorRuleText ? `<div><span>Zahlungsregel:</span> ${creditorRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
         actionCell.appendChild(createActionMenu([
           { label: 'Bearbeiten', className: 'primary', onClick: () => showDebtEditor(d) },
           { label: 'Rate ändern', className: 'secondary', onClick: () => showDebtRateEditor(d) },
@@ -13629,6 +14456,10 @@ function showPersonalEditor(personId, editPost) {
         if (payment.type === 'rate') item.regular += amount;
         else if (payment.type === 'snowball') item.snowball += amount;
         else if (payment.type === 'dynamic') item.dynamic += amount;
+        else if (payment.type === 'full_payoff') {
+          item.regular += Number(payment.rateAmount || 0);
+          item.snowball += Number(payment.snowballAmount || 0);
+        }
         item.remainingAfter = Number(payment.remainingAfter || item.remainingAfter || 0);
         item.completed = item.completed || !!payment.completed;
         if (payment.note) item.notes.push(payment.note);
@@ -13677,6 +14508,23 @@ function showPersonalEditor(personId, editPost) {
         tbody.appendChild(tr);
         rendered += 1;
       });
+
+      if (row.payoffReserve && !row.payoffReserve.canPayoff && Number(row.payoffReserve.reserveAdded || 0) > 0) {
+        const reserve = row.payoffReserve;
+        const tr = document.createElement('tr');
+        tr.className = 'soft-row';
+        tr.innerHTML = `
+          <td>${items.length === 0 ? formatMonthLabel(row.month) : ''}</td>
+          <td><strong>${reserve.targetDebt} · Rücklage</strong></td>
+          <td>-</td>
+          <td><span class="snowball-pill">+${euro(Number(reserve.reserveAdded || 0))}</span></td>
+          <td>-</td>
+          <td><strong>${euro(Number(reserve.reserveAdded || 0))}</strong></td>
+          <td>${euro(Number(reserve.currentOpenAfterRate || 0))}</td>
+          <td>Für spätere Gesamtforderung zurückgelegt · angespart ${euro(Number(reserve.reserveBalance || 0))}</td>`;
+        tbody.appendChild(tr);
+        rendered += 1;
+      }
 
       if (transferNotes.has('__free__')) {
         transferNotes.get('__free__').forEach((txt, idx) => {
@@ -13730,7 +14578,9 @@ function showPersonalEditor(personId, editPost) {
         'small',
         'muted',
         entry.targetDebt
-          ? `Vorschlag: ${euro(Number(entry.amount || 0))} monatlich auf „${entry.targetDebt}“ legen.`
+          ? (entry.reserveForPayoff
+              ? `Plan: ${euro(Number(entry.amount || 0))} monatlich für „${entry.targetDebt}“ zurücklegen. Sobald Rücklage plus Regelrate reichen, die Gesamtforderung bezahlen.`
+              : `Vorschlag: ${euro(Number(entry.amount || 0))} monatlich auf „${entry.targetDebt}“ legen.`)
           : 'Keine passende Ratenschuld offen – der Betrag bleibt im Schulden-Pool frei.'
       ));
       row.appendChild(source);
@@ -13856,6 +14706,7 @@ function showPersonalEditor(personId, editPost) {
   function showDebtPaymentEditor(debt, defaults = {}) {
     ensureDebtConfig(debt);
     const refs = {};
+    const fullPayoffOnly = isDebtFullPayoffOnly(debt);
     const content = document.createElement('div');
     content.className = 'modal-form';
 
@@ -13872,7 +14723,8 @@ function showPersonalEditor(personId, editPost) {
       ? defaults.month
       : (isMonthKey(debt.nextDueMonth) ? debt.nextDueMonth : currentMonth);
     const defaultRate = Number(getDebtRateForMonth(debt, currentMonth) || 0);
-    refs.amountInput = createMoneyField(Number(defaults.amount || 0) > 0 ? Number(defaults.amount) : (defaultRate > 0 ? defaultRate : ''));
+    const requestedAmount = Number(defaults.amount || 0) > 0 ? Number(defaults.amount) : 0;
+    refs.amountInput = createMoneyField(requestedAmount > 0 ? requestedAmount : (defaultRate > 0 ? defaultRate : ''));
     row1.appendChild(createLabelInput('Zahlungsmonat', refs.monthInput));
     row1.appendChild(createLabelInput('Betrag', refs.amountInput));
     content.appendChild(row1);
@@ -13880,12 +14732,17 @@ function showPersonalEditor(personId, editPost) {
     const row2 = document.createElement('div');
     row2.className = 'row';
     refs.typeSelect = document.createElement('select');
-    refs.typeSelect.innerHTML = `
-      <option value="regular">Regelrate als bezahlt markieren</option>
-      <option value="partial">Teilzahlung ohne Monatsabschluss</option>
-      <option value="extra">Sonderzahlung ohne Monatsabschluss</option>
-    `;
-    if (['regular', 'partial', 'extra'].includes(defaults.mode)) refs.typeSelect.value = defaults.mode;
+    refs.typeSelect.innerHTML = fullPayoffOnly
+      ? `
+        <option value="regular">Vereinbarte Rate bezahlen</option>
+        <option value="extra">Gesamte Forderung vollständig bezahlen</option>
+      `
+      : `
+        <option value="regular">Regelrate als bezahlt markieren</option>
+        <option value="partial">Teilzahlung ohne Monatsabschluss</option>
+        <option value="extra">Sonderzahlung ohne Monatsabschluss</option>
+      `;
+    if ((fullPayoffOnly ? ['regular', 'extra'] : ['regular', 'partial', 'extra']).includes(defaults.mode)) refs.typeSelect.value = defaults.mode;
     refs.noteInput = document.createElement('input');
     refs.noteInput.type = 'text';
     refs.noteInput.placeholder = 'Notiz optional';
@@ -13894,10 +14751,28 @@ function showPersonalEditor(personId, editPost) {
     row2.appendChild(createLabelInput('Notiz', refs.noteInput));
     content.appendChild(row2);
 
+    if (fullPayoffOnly) {
+      const creditorInfo = document.createElement('div');
+      creditorInfo.className = 'notice info';
+      creditorInfo.textContent = 'Riverty akzeptiert hier nur die vereinbarte Rate oder die vollständige Gesamtforderung. Teil-Sonderzahlungen werden deshalb nicht angeboten.';
+      content.appendChild(creditorInfo);
+      const syncFullPayoffAmount = () => {
+        const total = Math.max(0, Number(debt.amountOpen || 0));
+        const rate = Math.min(total, Math.max(0, Number(getDebtRateForMonth(debt, refs.monthInput.value || currentMonth) || defaultRate)));
+        refs.amountInput.value = formatNumberInput(refs.typeSelect.value === 'extra' ? total : rate);
+        refs.amountInput.readOnly = true;
+      };
+      refs.typeSelect.addEventListener('change', syncFullPayoffAmount);
+      refs.monthInput.addEventListener('change', syncFullPayoffAmount);
+      syncFullPayoffAmount();
+    }
+
     if (defaults.mode === 'extra') {
       const suggestionInfo = document.createElement('div');
       suggestionInfo.className = 'notice success';
-      suggestionInfo.textContent = 'Freiwilliger dynamischer Vorschlag: Betrag und Monat sind vorbereitet, werden aber erst mit „Speichern“ als echte Sonderzahlung übernommen.';
+      suggestionInfo.textContent = fullPayoffOnly
+        ? 'Die vollständige Ablösung ist vorbereitet. Bitte den aktuellen Gesamtbetrag im Riverty-Portal prüfen; erst mit „Speichern“ wird die Schuld als bezahlt übernommen.'
+        : 'Freiwilliger dynamischer Vorschlag: Betrag und Monat sind vorbereitet, werden aber erst mit „Speichern“ als echte Sonderzahlung übernommen.';
       content.appendChild(suggestionInfo);
     }
 
@@ -13928,12 +14803,22 @@ function showPersonalEditor(personId, editPost) {
           if (mode === 'extra' && !isDebtExtraPaymentAllowed(debt)) {
             return alert(`${debt.name}: Für diese Schuld sind keine freiwilligen Sonderzahlungen erlaubt.`);
           }
+          if (fullPayoffOnly) {
+            const open = Number(debt.amountOpen || 0);
+            const contractualRate = Math.min(open, Number(getDebtRateForMonth(debt, month) || defaultRate || 0));
+            if (mode === 'regular' && Math.abs(amount - contractualRate) > 0.01) {
+              return alert(`${debt.name}: Bitte die vereinbarte Rate von ${euro(contractualRate)} verwenden.`);
+            }
+            if (mode === 'extra' && Math.abs(amount - open) > 0.01) {
+              return alert(`${debt.name}: Eine zusätzliche Zahlung ist nur als vollständige Gesamtforderung von ${euro(open)} möglich.`);
+            }
+          }
           const markAsMonthly = mode === 'regular';
           if (markAsMonthly && !(getDebtRateForMonth(debt, currentMonth) > 0)) return alert('Für eine Regelrate muss zuerst eine Monatsrate hinterlegt sein.');
           if (addDebtPayment(debt, {
             month,
             amount,
-            source: mode === 'regular' ? 'Regelrate' : (mode === 'partial' ? 'Teilzahlung' : 'Sonderzahlung'),
+            source: mode === 'regular' ? 'Regelrate' : (mode === 'partial' ? 'Teilzahlung' : (fullPayoffOnly ? 'Gesamtablösung' : 'Sonderzahlung')),
             note: refs.noteInput.value.trim(),
             markAsMonthly,
             bookAccountTransaction: ACCOUNTS_ENABLED && refs.bookAccountCheck.checked
@@ -15025,6 +15910,7 @@ function renderPots() {
 
   function createBackupFile(options = {}) {
     normalizeAppMeta();
+    normalizeSelfEmployment();
     syncAllLinkedDebtRatesFromPosts(currentMonth, 36, { silent: true });
     normalizeAllPersonConfigs();
     normalizeAllPostConfigs();
@@ -16023,6 +16909,7 @@ function renderPots() {
             if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
             if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
             if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
+            if (!state.selfEmployment || typeof state.selfEmployment !== 'object') state.selfEmployment = JSON.parse(JSON.stringify(defaultState.selfEmployment));
             if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
             if (!Array.isArray(state.changeLog)) state.changeLog = [];
             if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = JSON.parse(JSON.stringify(defaultState.appMeta));
@@ -16030,6 +16917,7 @@ function renderPots() {
           runImportStep('Steuererstattung', () => normalizeAllTaxRefunds());
           runImportStep('Einkaufsgeld', () => normalizeGroceryExpenses());
           runImportStep('Rauchzeug', () => normalizeSmokingExpenses());
+          runImportStep('Selbständigkeit', () => normalizeSelfEmployment());
           runImportStep('Tankdaten', () => normalizeTankClosedMonths());
           runImportStep('Aufstockungen', () => normalizeBudgetTopUpsConfig());
           runImportStep('Gemeinschaftskonto', () => normalizeCommonAccountConfig());

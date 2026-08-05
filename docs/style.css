@@ -5041,7 +5041,7 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   }
 }
 
-/* Developer Beta 2.53 – PC-Automatik, Sicherungen, Monatsübertrag und Rauchzeug-Ausgaben */
+/* Developer Beta 2.55 – PC-Automatik, Sicherungen, Monatsübertrag und EÜR */
 .simplified-side-nav {
   gap: .7rem !important;
 }
@@ -5098,6 +5098,88 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .55rem;
   margin: .8rem 0;
+}
+
+.self-employment-hero {
+  border-color: rgba(35, 79, 58, .2);
+  background:
+    radial-gradient(circle at 95% 5%, rgba(109, 174, 135, .16), transparent 30%),
+    linear-gradient(145deg, rgba(244, 251, 247, .98), rgba(255, 255, 255, .98));
+}
+
+.self-employment-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.self-employment-head h2,
+.self-employment-head p {
+  margin-top: .25rem;
+  margin-bottom: 0;
+}
+
+.self-employment-actions,
+.self-employment-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  align-items: flex-end;
+}
+
+.self-employment-actions {
+  flex: 0 0 auto;
+}
+
+.self-employment-toolbar {
+  margin: 1rem 0;
+  padding: .85rem;
+  border: 1px solid rgba(35, 79, 58, .12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .74);
+}
+
+.self-employment-toolbar > div {
+  min-width: 155px;
+  margin-right: auto;
+}
+
+.self-employment-settings {
+  margin: 1rem 0;
+}
+
+.self-employment-settings > .row,
+.self-employment-settings > p,
+.self-employment-settings > button {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+
+.self-employment-settings > button {
+  margin-bottom: 1rem;
+}
+
+.self-employment-table td:nth-child(5),
+.self-employment-table td:nth-child(6) {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .self-employment-head {
+    flex-direction: column;
+  }
+  .self-employment-actions,
+  .self-employment-toolbar {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .self-employment-actions button,
+  .self-employment-toolbar button,
+  .self-employment-toolbar > div {
+    width: 100%;
+  }
 }
 
 .batch-payment-details {
