@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Developer Beta 2.58
+  Haushaltsplaner Version 2.59
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,9 +12,9 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
-  Aktualisierung Developer&nbsp;Beta&nbsp;2.58: Einnahmen und Ausgaben aus der
-  Selbstständigkeit werden automatisch im einen gesamten verfügbaren Betrag
-  berücksichtigt, ohne bereits erfasste sonstige oder persönliche Ausgaben doppelt abzuziehen.
+  Aktualisierung Version&nbsp;2.59: Die Oberfläche erhält eine ruhige, sachliche
+  Finanz-Optik mit weniger Effekten, klareren Tabellen und einer kompakteren
+  Navigation. Funktionen und lokale Daten bleiben unverändert.
 -->
 
 <!DOCTYPE html>
@@ -23,12 +23,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
-    <title>Haushaltsplaner Developer Beta 2.58</title>
-    <link rel="stylesheet" href="style.css?v=2.58">
-    <link rel="manifest" href="manifest.json?v=2.58">
+    <title>Haushaltsplaner – Benny &amp; Madeleine</title>
+    <link rel="stylesheet" href="style.css?v=2.59">
+    <link rel="manifest" href="manifest.json?v=2.59">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.58">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.58">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.59">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.59">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -38,7 +38,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true">⌂</div>
+          <div class="brand-logo" aria-hidden="true">H</div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -72,12 +72,12 @@
         <nav class="side-nav simplified-side-nav" aria-label="Hauptnavigation">
           <div class="side-nav-group">
             <div class="side-nav-heading">Täglich</div>
-            <button type="button" class="side-nav-link active" data-section="overview"><span class="nav-icon" aria-hidden="true">⌂</span><b>Übersicht</b></button>
-            <button type="button" class="side-nav-link" data-section="openpayments"><span class="nav-icon" aria-hidden="true">✓</span><b>Offene Zahlungen</b></button>
-            <button type="button" class="side-nav-link" data-section="common"><span class="nav-icon" aria-hidden="true">👥</span><b>Gemeinsame Kosten</b></button>
-            <button type="button" class="side-nav-link" data-section="personal"><span class="nav-icon" aria-hidden="true">●</span><b>Persönliche Ausgaben</b></button>
-            <button type="button" class="side-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true">€</span><b>Schulden</b></button>
-            <button type="button" class="side-nav-link" data-section="save"><span class="nav-icon" aria-hidden="true">◇</span><b>Sichern</b></button>
+            <button type="button" class="side-nav-link active" data-section="overview"><span class="nav-icon" aria-hidden="true">Ü</span><b>Übersicht</b></button>
+            <button type="button" class="side-nav-link" data-section="openpayments"><span class="nav-icon" aria-hidden="true">O</span><b>Offene Zahlungen</b></button>
+            <button type="button" class="side-nav-link" data-section="common"><span class="nav-icon" aria-hidden="true">G</span><b>Gemeinsame Kosten</b></button>
+            <button type="button" class="side-nav-link" data-section="personal"><span class="nav-icon" aria-hidden="true">P</span><b>Persönliche Ausgaben</b></button>
+            <button type="button" class="side-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true">S</span><b>Schulden</b></button>
+            <button type="button" class="side-nav-link" data-section="save"><span class="nav-icon" aria-hidden="true">B</span><b>Sichern</b></button>
           </div>
           <div class="side-nav-more-select-wrap">
             <label for="sideMoreSelect">Weitere Bereiche</label>
@@ -102,7 +102,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.58 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.59 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -131,9 +131,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Developer&nbsp;Beta&nbsp;2.58</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.59</footer>
       </div>
     </div>
-    <script src="script.js?v=2.58"></script>
+    <script src="script.js?v=2.59"></script>
   </body>
 </html>

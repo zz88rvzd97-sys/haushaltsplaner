@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.58
+ * Haushaltsplaner Version 2.59
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.58';
+  const APP_VERSION = '2.59';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -9676,14 +9676,14 @@
       label: 'Diesen Monat gemeinsam einzahlen',
       value: euro(commonAccountTarget.monthlyTarget),
       hint: `Jetzt noch für offene Abbuchungen nötig: ${euro(commonAccountTarget.openTotal)}`,
-      icon: '👥',
+      icon: 'G',
       accent: 'blue'
     }));
     kpiGrid.appendChild(createKpi({
       label: 'Persönliche Ausgaben',
       value: euro(totalPersonal),
       hint: `${percent(totalPersonal, totalIncome)} des Nettoeinkommens`,
-      icon: '◷',
+      icon: 'O',
       accent: 'violet'
     }));
     page.appendChild(kpiGrid);
@@ -9840,7 +9840,7 @@
       label: 'Jetzt für gemeinsame Kosten nötig',
       value: euro(commonAccountTarget.openTotal),
       hint: `Monatsbedarf ${euro(commonAccountTarget.dueTotal)} · bereits bezahlt ${euro(commonAccountTarget.paidTotal)}`,
-      icon: '👥',
+      icon: 'G',
       kind: commonAccountTarget.openTotal > 0 ? 'blue' : 'mint'
     });
     const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
@@ -9863,7 +9863,7 @@
       hint: openPayments.rows.length
         ? `Noch ${euro(openPayments.totalOpen)} zu prüfen oder zu bezahlen`
         : 'Keine offenen Zahlungen gefunden',
-      icon: '◷',
+      icon: 'O',
       kind: openPayments.rows.length ? 'violet' : 'mint'
     });
     page.appendChild(kpiGrid);
