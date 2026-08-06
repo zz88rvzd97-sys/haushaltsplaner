@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Developer Beta 2.57
+ * Haushaltsplaner Developer Beta 2.58
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.57';
+  const APP_VERSION = '2.58';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3812,6 +3812,68 @@
     return roundMoney(Math.max(0, Number(free || 0) - Number(savingsConfig.minFree || 0)));
   }
 
+  function getSelfEmploymentRecurringPersonalPostForMonth(template, monthKey) {
+    if (!template || !isMonthKey(monthKey)) return null;
+    const exact = template.personalCostId
+      ? (state.personalCosts || []).find((post) => post && post.id === template.personalCostId)
+      : null;
+    if (exact && isDue(exact, monthKey)) return exact;
+    return (state.personalCosts || []).find((post) => post
+      && post.selfEmploymentRecurringTemplateId === template.id
+      && isDue(post, monthKey)) || null;
+  }
+
+  function getSelfEmploymentBudgetImpactForMonth(monthKey) {
+    const empty = {
+      income: 0,
+      expensePaid: 0,
+      expenseOpen: 0,
+      expenseAlreadyHousehold: 0,
+      adjustment: 0,
+      hasActivity: false
+    };
+    if (!isMonthKey(monthKey)) return empty;
+    const cfg = normalizeSelfEmployment();
+    const monthEntries = cfg.entries.filter((entry) => String(entry.date || '').startsWith(`${monthKey}-`));
+    let income = 0;
+    let expensePaid = 0;
+    let expenseAlreadyHousehold = 0;
+
+    monthEntries.forEach((entry) => {
+      const amount = roundMoney(Number(entry.amount || 0));
+      if (entry.type === 'income') {
+        income += amount;
+        return;
+      }
+      expensePaid += amount;
+      // Standard für bestehende und neue EÜR-Ausgaben: Sie wurden bereits unter
+      // „Sonstige“ oder „Persönliche Ausgaben“ eingeplant und dürfen nicht doppelt zählen.
+      if (entry.budgetMode !== 'auto_count') expenseAlreadyHousehold += amount;
+    });
+
+    let expenseOpen = 0;
+    cfg.recurringExpenses.forEach((template) => {
+      if (!isSelfEmploymentRecurringDue(template, monthKey)) return;
+      if (getSelfEmploymentRecurringBooking(template.id, monthKey)) return;
+      if (getSelfEmploymentRecurringPersonalPostForMonth(template, monthKey)) return;
+      expenseOpen += Number(template.amount || 0);
+    });
+
+    income = roundMoney(income);
+    expensePaid = roundMoney(expensePaid);
+    expenseOpen = roundMoney(expenseOpen);
+    expenseAlreadyHousehold = roundMoney(expenseAlreadyHousehold);
+    const adjustment = roundMoney(income - expensePaid - expenseOpen + expenseAlreadyHousehold);
+    return {
+      income,
+      expensePaid,
+      expenseOpen,
+      expenseAlreadyHousehold,
+      adjustment,
+      hasActivity: monthEntries.length > 0 || expenseOpen > 0
+    };
+  }
+
   function computeMonthlyBudgetDetails(monthKey, options = {}) {
     const incomeResolver = typeof options.incomeResolver === 'function'
       ? options.incomeResolver
@@ -3860,7 +3922,8 @@
     const miscPlanned = roundMoney(getBufferExpensePlannedSumForMonth(monthKey));
     const miscOpen = roundMoney(Math.max(miscPlanned - miscPaid, 0));
     const carryoverIn = roundMoney(getCarryoverInForMonth(monthKey));
-    const freeBeforeMisc = roundMoney(totalIncome + carryoverIn - totalCommonRounded - totalPersonal);
+    const businessBudget = getSelfEmploymentBudgetImpactForMonth(monthKey);
+    const freeBeforeMisc = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment - totalCommonRounded - totalPersonal);
     const freeCurrent = roundMoney(freeBeforeMisc - miscPaid);
     const freeConservative = roundMoney(freeBeforeMisc - miscPlanned);
     const free = freeConservative;
@@ -3875,6 +3938,12 @@
       totalPersonalAssigned,
       unassignedPersonalDue: roundMoney(unassignedPersonalDue),
       carryoverIn,
+      businessIncome: businessBudget.income,
+      businessExpensePaid: businessBudget.expensePaid,
+      businessExpenseOpen: businessBudget.expenseOpen,
+      businessExpenseAlreadyHousehold: businessBudget.expenseAlreadyHousehold,
+      businessBudgetAdjustment: businessBudget.adjustment,
+      businessBudgetHasActivity: businessBudget.hasActivity,
       miscPaid,
       miscPlanned,
       miscOpen,
@@ -6446,6 +6515,9 @@
       vatRate,
       documentNumber: typeof entry.documentNumber === 'string' ? entry.documentNumber.trim() : '',
       note: typeof entry.note === 'string' ? entry.note.trim() : '',
+      budgetMode: type === 'income'
+        ? 'auto_count'
+        : (entry.budgetMode === 'auto_count' ? 'auto_count' : 'already_counted'),
       recurringTemplateId: typeof entry.recurringTemplateId === 'string' ? entry.recurringTemplateId : '',
       recurringMonth: isMonthKey(entry.recurringMonth) ? entry.recurringMonth : ''
     };
@@ -6653,6 +6725,7 @@
       vatRate: normalizeSelfEmployment().taxMode === 'vat_registered' ? template.vatRate : 0,
       documentNumber: '',
       note: template.note,
+      budgetMode: template.includeInPersonalBudget ? 'already_counted' : 'auto_count',
       recurringTemplateId: template.id,
       recurringMonth: monthKey
     });
@@ -9481,6 +9554,7 @@
     const miscOpen = details.miscOpen;
     const miscPlanned = details.miscPlanned;
     const totalAvail = details.free;
+    const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
 
     function percent(value, base) {
       if (!base) return '0,0 %';
@@ -9575,11 +9649,15 @@
     appendSafe(page, () => renderMonthStartChecklist(currentMonth, { compact: true }), 'Monatsstart');
 
     const kpiGrid = div('dash-kpi-grid');
-    const freeHint = miscOpen > 0
+    const baseFreeHint = miscOpen > 0
       ? `konservativ gerechnet: ${euro(miscOpen)} offen geplant schon abgezogen · aktuell nach bezahlten sonstigen Ausgaben: ${euro(details.freeCurrent)}`
       : (miscPaid > 0 ? `vor sonstigen Ausgaben: ${euro(totalAvailBeforeBuffer)}` : 'Monatsrest für Töpfe');
+    const businessHint = details.businessBudgetHasActivity
+      ? `Selbstständigkeit ${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''}${euro(Math.abs(businessAdjustment))} bereits enthalten`
+      : '';
+    const freeHint = [baseFreeHint, businessHint].filter(Boolean).join(' · ');
     kpiGrid.appendChild(createKpi({
-      label: 'Sicher verfügbar',
+      label: 'Insgesamt verfügbar',
       value: euro(totalAvail),
       hint: freeHint,
       icon: totalAvail >= 0 ? '▣' : '!',
@@ -9588,9 +9666,9 @@
       chip: totalAvail >= 0 ? 'Verfügbar' : 'Achtung'
     }));
     kpiGrid.appendChild(createKpi({
-      label: 'Netto gesamt',
+      label: 'Privates Netto',
       value: euro(totalIncome),
-      hint: 'Gesamte Nettoeinnahmen',
+      hint: 'Gehälter und private Einkommen; Selbstständigkeit ist im Gesamtbetrag enthalten',
       icon: '€',
       accent: 'mint'
     }));
@@ -9765,12 +9843,17 @@
       icon: '👥',
       kind: commonAccountTarget.openTotal > 0 ? 'blue' : 'mint'
     });
+    const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
+    const overviewFreeHints = [];
+    if (details.miscOpen > 0) overviewFreeHints.push(`${euro(details.miscOpen)} offene sonstige Ausgaben sind bereits abgezogen`);
+    else overviewFreeHints.push('Nach allen geplanten Kosten dieses Monats');
+    if (details.businessBudgetHasActivity) {
+      overviewFreeHints.push(`Selbstständigkeit ${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''}${euro(Math.abs(businessAdjustment))} enthalten`);
+    }
     addKpi({
-      label: 'Sicher frei',
+      label: 'Insgesamt verfügbar',
       value: euro(details.free),
-      hint: details.miscOpen > 0
-        ? `${euro(details.miscOpen)} offene sonstige Ausgaben sind bereits abgezogen`
-        : 'Nach allen geplanten Kosten dieses Monats',
+      hint: overviewFreeHints.join(' · '),
       icon: details.free >= 0 ? '✓' : '!',
       kind: details.free >= 0 ? 'mint' : 'danger'
     });
@@ -9795,7 +9878,7 @@
       if (carryoverStatus.isStart) {
         carryoverCopy.innerHTML = '<strong>Neustart ab August:</strong> Dieser Monat beginnt ohne alten Übertrag. Der Rest aus August wird beim Monatsabschluss automatisch nach September übernommen.';
       } else if (carryoverStatus.closed) {
-        carryoverCopy.innerHTML = `<strong>${euro(carryoverStatus.amount)} aus ${formatMonthLabel(carryoverStatus.previousMonth)} übernommen.</strong> Der Betrag ist bereits in „Sicher frei“ enthalten.`;
+        carryoverCopy.innerHTML = `<strong>${euro(carryoverStatus.amount)} aus ${formatMonthLabel(carryoverStatus.previousMonth)} übernommen.</strong> Der Betrag ist bereits in „Insgesamt verfügbar“ enthalten.`;
       } else {
         carryoverCopy.innerHTML = `<strong>Noch kein Übertrag aus ${formatMonthLabel(carryoverStatus.previousMonth)}.</strong> Sobald der Vormonat abgeschlossen ist, erscheint dessen Rest hier automatisch.`;
       }
@@ -10346,7 +10429,7 @@
 
     const table = document.createElement('table');
     table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Monat</th><th>Netto gesamt</th><th>Übertrag</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon übernommene Raten</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Sicher verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Monat</th><th>Privates Netto</th><th>Übertrag</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon übernommene Raten</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Insgesamt verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
     const tbody = document.createElement('tbody');
     months.forEach(({ key, label }) => {
       const rawDetails = hasScenario ? computeMonthDetailsWithScenario(key) : computeMonthDetails(key);
@@ -10410,12 +10493,17 @@
       };
     }) : [];
     return {
-      schema: 'monthCloseV252',
+      schema: 'monthCloseV258',
       closedAt: new Date().toISOString(),
       totalIncome: Number(details.totalIncome || 0),
       carryoverIn: Number(details.carryoverIn || 0),
       carryoverOut,
       carryoverToMonth: monthKey >= CARRYOVER_START_MONTH ? nextMonth(monthKey) : '',
+      businessIncome: Number(details.businessIncome || 0),
+      businessExpensePaid: Number(details.businessExpensePaid || 0),
+      businessExpenseOpen: Number(details.businessExpenseOpen || 0),
+      businessExpenseAlreadyHousehold: Number(details.businessExpenseAlreadyHousehold || 0),
+      businessBudgetAdjustment: Number(details.businessBudgetAdjustment || 0),
       totalCommonRounded: Number(details.totalCommonRounded || 0),
       totalPersonal: Number(details.totalPersonal || 0),
       linkedDebtCosts: Number(details.linkedDebtCosts || 0),
@@ -10441,14 +10529,15 @@
   function buildMonthCloseDiffs(liveDetails, closedSnapshot) {
     if (!closedSnapshot) return [];
     const checks = [
-      ['Netto gesamt', liveDetails.totalIncome, closedSnapshot.totalIncome],
+      ['Privates Netto', liveDetails.totalIncome, closedSnapshot.totalIncome],
       ['Übertrag aus Vormonat', liveDetails.carryoverIn || 0, closedSnapshot.carryoverIn || 0],
+      ['Selbstständigkeit im Gesamtbetrag', liveDetails.businessBudgetAdjustment || 0, closedSnapshot.businessBudgetAdjustment || 0],
       ['Gemeinsame Kosten', liveDetails.totalCommonRounded, closedSnapshot.totalCommonRounded],
       ['Persönliche Ausgaben', liveDetails.totalPersonal, closedSnapshot.totalPersonal],
       ['Schulden geplant', liveDetails.debtPlanned || 0, closedSnapshot.debtPlanned || 0],
       ['Sonstige bezahlt', liveDetails.miscPaid, closedSnapshot.miscPaid],
       ['Sonstige offen geplant', liveDetails.miscOpen || 0, closedSnapshot.miscOpen || 0],
-      ['Sicher verfügbar', liveDetails.free, closedSnapshot.free]
+      ['Insgesamt verfügbar', liveDetails.free, closedSnapshot.free]
     ];
     return checks
       .map(([label, live, saved]) => ({ label, live: Number(live || 0), saved: Number(saved || 0), diff: Number(live || 0) - Number(saved || 0) }))
@@ -10508,7 +10597,7 @@
       ? roundMoney(Math.max(0, Number(closedSnapshot.carryoverOut || 0)))
       : automaticCarryoverOut;
     card.appendChild(createSummaryMetrics([
-      { label: 'Sicher verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : '' },
+      { label: 'Insgesamt verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : 'Private und betriebliche Zahlungen zusammen.' },
       { label: 'Übertrag aus Vormonat', value: `${euro(details.carryoverIn || 0)}`, kind: Number(details.carryoverIn || 0) > 0 ? 'success' : '', hint: currentMonth === CARRYOVER_START_MONTH ? 'Neustart ab August ohne alten Übertrag.' : 'Bereits im sicheren freien Betrag enthalten.' },
       { label: `Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, value: `${euro(displayedCarryoverOut)}`, kind: displayedCarryoverOut > 0 ? 'success' : '', hint: carryoverActive ? 'Wird beim Abschluss automatisch gespeichert.' : 'Automatischer Übertrag startet ab August 2026.' },
       { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
@@ -10525,15 +10614,17 @@
     receiptHead.appendChild(createUiEl('strong', '', `Beleg für ${formatMonthLabel(currentMonth)}`));
     receiptHead.appendChild(createUiEl('span', closed ? 'pill success' : 'pill warning', closed ? 'Abgeschlossen' : 'Noch offen'));
     receipt.appendChild(receiptHead);
-    receipt.appendChild(createReceiptRow('Netto gesamt', euro(details.totalIncome)));
+    receipt.appendChild(createReceiptRow('Privates Netto', euro(details.totalIncome)));
     receipt.appendChild(createReceiptRow('Übertrag aus Vormonat', `+ ${euro(details.carryoverIn || 0)}`));
+    const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
+    receipt.appendChild(createReceiptRow('Selbstständigkeit im Gesamtbetrag', `${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''} ${euro(Math.abs(businessAdjustment))}`, businessAdjustment >= 0 ? 'success' : 'warning'));
     receipt.appendChild(createReceiptRow('Gemeinsame Kosten', `− ${euro(details.totalCommonRounded)}`));
     receipt.appendChild(createReceiptRow('Persönliche Ausgaben', `− ${euro(details.totalPersonal)}`));
     receipt.appendChild(createReceiptRow('Davon Schulden in den Kosten', euro(details.debtPlanned || 0)));
     receipt.appendChild(createReceiptRow('davon übernommene Standardraten', euro(details.debtSnowballExtra || 0)));
     receipt.appendChild(createReceiptRow('Sonstige bezahlt', `− ${euro(details.miscPaid)}`));
     receipt.appendChild(createReceiptRow('Sonstige offen geplant', `− ${euro(details.miscOpen || 0)}`));
-    receipt.appendChild(createReceiptRow('Sicher verfügbar', euro(details.free), details.free >= 0 ? 'success' : 'danger'));
+    receipt.appendChild(createReceiptRow('Insgesamt verfügbar', euro(details.free), details.free >= 0 ? 'success' : 'danger'));
     receipt.appendChild(createReceiptRow('Puffer bleibt frei', euro(details.keptFreeBuffer || 0)));
     receipt.appendChild(createReceiptRow('Davon Rücklagen', euro(details.reserves)));
     receipt.appendChild(createReceiptRow('Davon Sparen', euro(details.savings)));
@@ -13081,7 +13172,8 @@ function showPersonalEditor(personId, editPost) {
       amount: 0,
       vatRate: 0,
       documentNumber: '',
-      note: ''
+      note: '',
+      budgetMode: requestedType === 'expense' ? 'already_counted' : 'auto_count'
     };
     const content = document.createElement('div');
     content.className = 'modal-form self-employment-form';
@@ -13130,6 +13222,22 @@ function showPersonalEditor(personId, editPost) {
     thirdRow.appendChild(createLabelInput('Notiz', noteInput));
     content.appendChild(thirdRow);
 
+    const householdBudgetLabel = document.createElement('label');
+    householdBudgetLabel.className = 'check-line recurring-personal-check';
+    const householdBudgetCheck = document.createElement('input');
+    householdBudgetCheck.type = 'checkbox';
+    householdBudgetCheck.checked = item.budgetMode !== 'auto_count';
+    householdBudgetLabel.appendChild(householdBudgetCheck);
+    householdBudgetLabel.appendChild(document.createTextNode(' Ausgabe ist bereits unter „Sonstige Ausgaben“ oder „Persönliche Ausgaben“ erfasst'));
+    content.appendChild(householdBudgetLabel);
+    const householdBudgetHint = createUiEl('p', 'small muted', 'Aktiv lassen, wenn der Betrag dort schon abgezogen wird. Nur ausschalten, wenn diese EÜR-Buchung die Ausgabe erstmals in den gesamten verfügbaren Betrag aufnehmen soll.');
+    content.appendChild(householdBudgetHint);
+    const updateBudgetModeVisibility = () => {
+      const show = typeSelect.value === 'expense';
+      householdBudgetLabel.hidden = !show;
+      householdBudgetHint.hidden = !show;
+    };
+
     const updateCategories = () => {
       const categories = typeSelect.value === 'expense'
         ? getSelfEmploymentExpenseCategories()
@@ -13151,8 +13259,15 @@ function showPersonalEditor(personId, editPost) {
       categorySelect.value = previous;
       if (!categorySelect.value) categorySelect.value = categories[0];
     };
-    typeSelect.addEventListener('change', updateCategories);
+    let previousEntryType = typeSelect.value;
+    typeSelect.addEventListener('change', () => {
+      if (previousEntryType === 'income' && typeSelect.value === 'expense') householdBudgetCheck.checked = true;
+      previousEntryType = typeSelect.value;
+      updateCategories();
+      updateBudgetModeVisibility();
+    });
     updateCategories();
+    updateBudgetModeVisibility();
 
     if (cfg.taxMode !== 'vat_registered') {
       vatSelect.value = '0';
@@ -13161,7 +13276,7 @@ function showPersonalEditor(personId, editPost) {
     } else {
       content.appendChild(createUiEl('p', 'small muted', 'Bitte den Steuersatz wählen, der im bezahlten Gesamtbetrag enthalten ist. Zahlungen an das Finanzamt werden mit 0 % erfasst.'));
     }
-    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Der Eintrag bleibt vollständig getrennt vom privaten Haushaltsbudget.'));
+    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Einnahmen werden automatisch zugerechnet. Bei Ausgaben entscheidet die Auswahl oben, ob sie hier erstmals abgezogen werden oder schon im Haushalt enthalten sind.'));
 
     showModal(isNew ? 'Betriebsvorgang erfassen' : 'Betriebsvorgang bearbeiten', content, [
       { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
@@ -13184,6 +13299,7 @@ function showPersonalEditor(personId, editPost) {
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
             documentNumber: documentInput.value,
             note: noteInput.value,
+            budgetMode: typeSelect.value === 'expense' && !householdBudgetCheck.checked ? 'auto_count' : 'already_counted',
             recurringTemplateId: item.recurringTemplateId || '',
             recurringMonth: item.recurringMonth || ''
           });
@@ -13291,9 +13407,9 @@ function showPersonalEditor(personId, editPost) {
     personalCheck.type = 'checkbox';
     personalCheck.checked = item.includeInPersonalBudget !== false;
     personalLabel.appendChild(personalCheck);
-    personalLabel.appendChild(document.createTextNode(' Zusätzlich bei Benny als persönliche Ausgabe einplanen'));
+    personalLabel.appendChild(document.createTextNode(' Bei Benny unter „Persönliche Ausgaben“ anzeigen'));
     content.appendChild(personalLabel);
-    content.appendChild(createUiEl('p', 'small muted', 'Solange die Ausgabe vom Gehaltskonto bezahlt wird, bleibt der Schalter aktiv. Beim Übernehmen in die EÜR wird der persönliche Posten für denselben Monat automatisch als bezahlt markiert. Sobald genug Betriebspuffer vorhanden ist, kannst du den Schalter ausschalten.'));
+    content.appendChild(createUiEl('p', 'small muted', 'Der gesamte verfügbare Betrag wird immer nur einmal belastet. Der Schalter bestimmt nur, ob die Ausgabe zusätzlich in Bennys persönlicher Liste sichtbar ist.'));
 
     if (cfg.taxMode !== 'vat_registered') {
       vatSelect.value = '0';
@@ -13559,9 +13675,9 @@ function showPersonalEditor(personId, editPost) {
     const head = document.createElement('div');
     head.className = 'self-employment-head';
     const copy = document.createElement('div');
-    copy.appendChild(createUiEl('span', 'eyebrow', 'Betrieblich getrennt vom Haushalt'));
+    copy.appendChild(createUiEl('span', 'eyebrow', 'Automatisch im Gesamtbetrag'));
     copy.appendChild(createUiEl('h2', '', cfg.businessName || 'Selbständigkeit & EÜR'));
-    copy.appendChild(createUiEl('p', 'small muted', 'Zahlungen nach ihrem tatsächlichen Zahlungsdatum erfassen. Die Jahresauswertung entsteht automatisch und verändert den privaten Monatsrest nicht.'));
+    copy.appendChild(createUiEl('p', 'small muted', 'Zahlungen nach ihrem tatsächlichen Zahlungsdatum erfassen. Einnahmen erhöhen automatisch den einen gesamten verfügbaren Betrag. Ausgaben, die bereits unter „Sonstige“ oder „Persönliche Ausgaben“ stehen, werden nicht noch einmal abgezogen.'));
     head.appendChild(copy);
     const actions = document.createElement('div');
     actions.className = 'self-employment-actions';
@@ -13616,6 +13732,13 @@ function showPersonalEditor(personId, editPost) {
       { label: summary.result >= 0 ? 'Überschuss' : 'Verlust', value: euro(Math.abs(summary.result)), kind: summary.result >= 0 ? 'success' : 'danger' },
       { label: 'Erfasste Vorgänge', value: String(summary.entries.length) }
     ]));
+    const selectedMonthBusiness = getSelfEmploymentBudgetImpactForMonth(currentMonth);
+    const impactPrefix = selectedMonthBusiness.adjustment > 0 ? '+' : selectedMonthBusiness.adjustment < 0 ? '−' : '';
+    hero.appendChild(createUiEl(
+      'div',
+      selectedMonthBusiness.adjustment < 0 ? 'notice warning' : 'notice success',
+      `Im gesamten verfügbaren Betrag für ${formatMonthLabel(currentMonth)} bereits enthalten: ${impactPrefix}${euro(Math.abs(selectedMonthBusiness.adjustment))}. Betriebsausgaben, die schon unter „Sonstige“ oder „Persönliche Ausgaben“ stehen, werden nicht doppelt abgezogen.`
+    ));
     if (cfg.taxMode === 'vat_registered') {
       hero.appendChild(createSummaryMetrics([
         { label: 'Netto-Einnahmen', value: euro(summary.incomeNet) },
@@ -13702,6 +13825,15 @@ function showPersonalEditor(personId, editPost) {
         const descTd = document.createElement('td');
         descTd.appendChild(createUiEl('strong', '', entry.category));
         descTd.appendChild(createUiEl('div', 'small', entry.description));
+        if (entry.type === 'expense') {
+          descTd.appendChild(createUiEl(
+            'div',
+            'small muted',
+            entry.budgetMode === 'auto_count'
+              ? 'Wird im gesamten verfügbaren Betrag abgezogen'
+              : 'Im Haushalt bereits berücksichtigt'
+          ));
+        }
         if (entry.note) descTd.appendChild(createUiEl('div', 'small muted', entry.note));
         const documentTd = document.createElement('td');
         documentTd.textContent = entry.documentNumber || '-';
