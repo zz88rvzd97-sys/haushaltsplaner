@@ -5800,6 +5800,26 @@ header::after,
   }
 }
 
+/* Version 2.61 – die komplette PC-Seitenleiste scrollt */
+@media (min-width: 721px) {
+  .app-sidebar {
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .app-sidebar .side-nav {
+    flex: 0 0 auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    padding-right: 0 !important;
+  }
+
+  .app-sidebar .sidebar-bottom {
+    flex: 0 0 auto !important;
+  }
+}
+
 .list-table {
   border: 1px solid var(--ledger-line) !important;
   border-radius: 6px !important;
