@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.59
+ * Haushaltsplaner Version 2.60
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.59';
+  const APP_VERSION = '2.60';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -7791,21 +7791,24 @@
 
     const meta = document.createElement('div');
     meta.className = 'global-month-meta';
-    const free = document.createElement('span');
-    free.textContent = `Sicher frei: ${euro(details.free)}`;
-    free.className = details.free < 0 ? 'negative' : 'positive';
-    const common = document.createElement('span');
-    common.textContent = `Gemeinsam: ${euro(details.totalCommonRounded)}`;
-    const personal = document.createElement('span');
-    personal.textContent = `Persönlich: ${euro(details.totalPersonal)}`;
-    meta.appendChild(free);
-    meta.appendChild(common);
-    meta.appendChild(personal);
+    const createMetaRow = (label, value, tone = '') => {
+      const row = document.createElement('div');
+      row.className = `global-month-meta-row${tone ? ` ${tone}` : ''}`;
+      const rowLabel = document.createElement('span');
+      rowLabel.className = 'global-month-meta-label';
+      rowLabel.textContent = label;
+      const rowValue = document.createElement('strong');
+      rowValue.className = 'global-month-meta-value';
+      rowValue.textContent = value;
+      row.appendChild(rowLabel);
+      row.appendChild(rowValue);
+      return row;
+    };
+    meta.appendChild(createMetaRow('Sicher frei', euro(details.free), details.free < 0 ? 'negative' : 'positive'));
+    meta.appendChild(createMetaRow('Gemeinsam', euro(details.totalCommonRounded)));
+    meta.appendChild(createMetaRow('Persönlich', euro(details.totalPersonal)));
     if (runtimeIssues.length) {
-      const err = document.createElement('span');
-      err.className = 'negative';
-      err.textContent = `Fehlerwächter: ${runtimeIssues.length}`;
-      meta.appendChild(err);
+      meta.appendChild(createMetaRow('Fehlerwächter', String(runtimeIssues.length), 'negative'));
     }
 
     globalMonthBar.appendChild(labelWrap);

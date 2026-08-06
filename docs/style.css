@@ -5719,6 +5719,87 @@ header::after,
   font-weight: 450 !important;
 }
 
+/* Version 2.60 – klare Monatsbeträge in der Seitenleiste */
+.app-sidebar .global-month-meta {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 0 !important;
+  border-top: 1px solid rgba(255, 255, 255, .12) !important;
+}
+
+.app-sidebar .global-month-meta-row {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: baseline !important;
+  gap: .65rem !important;
+  width: 100% !important;
+  padding: .42rem 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, .08) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-sidebar .global-month-meta-row:last-child {
+  border-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.app-sidebar .global-month-meta-label,
+.app-sidebar .global-month-meta-value {
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  white-space: nowrap !important;
+}
+
+.app-sidebar .global-month-meta-label {
+  grid-column: 1 !important;
+  color: rgba(255, 255, 255, .64) !important;
+  font-size: .72rem !important;
+  font-weight: 600 !important;
+}
+
+.app-sidebar .global-month-meta-value {
+  grid-column: 2 !important;
+  color: #f5f2e9 !important;
+  font-size: .79rem !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750 !important;
+  text-align: right !important;
+}
+
+.app-sidebar .global-month-meta-row.positive .global-month-meta-value {
+  color: #b9ddc7 !important;
+}
+
+.app-sidebar .global-month-meta-row.negative .global-month-meta-value {
+  color: #f0bbb5 !important;
+}
+
+@media (max-width: 720px) {
+  .app-sidebar .global-month-meta {
+    border-top-color: var(--ledger-line) !important;
+  }
+
+  .app-sidebar .global-month-meta-row {
+    border-bottom-color: #e5e2da !important;
+  }
+
+  .app-sidebar .global-month-meta-label {
+    color: var(--ledger-muted) !important;
+  }
+
+  .app-sidebar .global-month-meta-value {
+    color: var(--ledger-ink) !important;
+  }
+}
+
 .list-table {
   border: 1px solid var(--ledger-line) !important;
   border-radius: 6px !important;
