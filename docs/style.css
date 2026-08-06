@@ -5805,7 +5805,6 @@ header::after,
   .app-sidebar {
     overflow-y: auto !important;
     overscroll-behavior: contain;
-    scrollbar-gutter: stable;
   }
 
   .app-sidebar .side-nav {
@@ -5817,6 +5816,22 @@ header::after,
 
   .app-sidebar .sidebar-bottom {
     flex: 0 0 auto !important;
+  }
+
+  .app-sidebar .global-month-controls .month-year-picker {
+    grid-template-columns: minmax(0, 1fr) 4.7rem !important;
+    gap: .5rem !important;
+  }
+
+  .app-sidebar .global-month-controls .month-year-picker-month,
+  .app-sidebar .global-month-controls .month-year-picker-year {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .app-sidebar .global-month-controls .month-year-picker-year {
+    padding-left: .48rem !important;
+    padding-right: .42rem !important;
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.61
+ * Haushaltsplaner Version 2.62
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.61';
+  const APP_VERSION = '2.62';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -17785,7 +17785,7 @@ function renderPots() {
       const opt = document.createElement('option');
       const optionKey = `${selectedYear}-${month}`;
       opt.value = month;
-      opt.textContent = selectedYear === actualYear && month === actualMonthNo ? `${label} · aktuell` : label;
+      opt.textContent = label;
       if (optionKey < APP_FIRST_DATA_MONTH) {
         opt.disabled = true;
         opt.textContent = `${label} · vor App-Start`;
@@ -17814,7 +17814,7 @@ function renderPots() {
     Array.from(years).sort().forEach((year) => {
       const opt = document.createElement('option');
       opt.value = year;
-      opt.textContent = year === actualYear ? `${year} · aktuell` : year;
+      opt.textContent = year;
       if (year === selectedYear) opt.selected = true;
       yearSelect.appendChild(opt);
     });
