@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.65
+ * Haushaltsplaner Version 2.66
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.65';
+  const APP_VERSION = '2.66';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3854,6 +3854,9 @@
 
     monthEntries.forEach((entry) => {
       const amount = roundMoney(Number(entry.amount || 0));
+      // Barzahlungen gehören vollständig in die EÜR, verändern aber nicht den
+      // verfügbaren Betrag auf den Haushaltskonten.
+      if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') return;
       if (entry.type === 'income') {
         income += amount;
         return;
@@ -3866,6 +3869,7 @@
 
     let expenseOpen = 0;
     cfg.recurringExpenses.forEach((template) => {
+      if (normalizeSelfEmploymentPaymentMethod(template.paymentMethod) === 'cash') return;
       if (!isSelfEmploymentRecurringDue(template, monthKey)) return;
       if (getSelfEmploymentRecurringBooking(template.id, monthKey)) return;
       if (getSelfEmploymentRecurringPersonalPostForMonth(template, monthKey)) return;
@@ -6545,7 +6549,9 @@
       note: typeof entry.note === 'string' ? entry.note.trim() : '',
       budgetMode: type === 'income'
         ? 'auto_count'
-        : (entry.budgetMode === 'auto_count' ? 'auto_count' : 'already_counted'),
+        : (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash'
+          ? 'cash_excluded'
+          : (entry.budgetMode === 'auto_count' ? 'auto_count' : 'already_counted')),
       recurringTemplateId: typeof entry.recurringTemplateId === 'string' ? entry.recurringTemplateId : '',
       recurringMonth: isMonthKey(entry.recurringMonth) ? entry.recurringMonth : '',
       linkedBufferExpenseId: type === 'expense' && typeof entry.linkedBufferExpenseId === 'string'
@@ -6600,6 +6606,11 @@
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
     state.selfEmployment.entries.forEach((entry) => {
       if (entry.type !== 'expense') return;
+      if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') {
+        removeSelfEmploymentBufferExpenseLink(entry);
+        entry.budgetMode = 'cash_excluded';
+        return;
+      }
       const linkedPost = getSelfEmploymentLinkedBufferExpense(entry);
       if (linkedPost) {
         entry.linkedBufferExpenseId = linkedPost.id;
@@ -6614,6 +6625,11 @@
       .map(normalizeSelfEmploymentRecurringExpense)
       .filter(Boolean)
       .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    state.selfEmployment.recurringExpenses.forEach((template) => {
+      if (normalizeSelfEmploymentPaymentMethod(template.paymentMethod) !== 'cash') return;
+      template.includeInPersonalBudget = false;
+      disableSelfEmploymentPersonalBudgetLink(template, true);
+    });
     return state.selfEmployment;
   }
 
@@ -6666,9 +6682,14 @@
       && (!post.endMonth || post.endMonth >= currentMonth)) || null;
   }
 
-  function disableSelfEmploymentPersonalBudgetLink(template) {
+  function disableSelfEmploymentPersonalBudgetLink(template, removeEntirely = false) {
     const post = getSelfEmploymentLinkedPersonalCost(template);
     if (!post) {
+      template.personalCostId = '';
+      return;
+    }
+    if (removeEntirely) {
+      state.personalCosts = state.personalCosts.filter((item) => item.id !== post.id);
       template.personalCostId = '';
       return;
     }
@@ -6684,6 +6705,11 @@
 
   function syncSelfEmploymentPersonalBudgetLink(template) {
     if (!template) return null;
+    if (normalizeSelfEmploymentPaymentMethod(template.paymentMethod) === 'cash') {
+      template.includeInPersonalBudget = false;
+      disableSelfEmploymentPersonalBudgetLink(template, true);
+      return null;
+    }
     if (!template.includeInPersonalBudget) {
       disableSelfEmploymentPersonalBudgetLink(template);
       return null;
@@ -6736,6 +6762,9 @@
     const previous = cfg.recurringExpenses.find((item) => item.id === template.id) || null;
     const normalized = normalizeSelfEmploymentRecurringExpense(template);
     if (!normalized) return null;
+    if (normalizeSelfEmploymentPaymentMethod(normalized.paymentMethod) === 'cash') {
+      normalized.includeInPersonalBudget = false;
+    }
     if (previous && previous.personalCostId && !normalized.personalCostId) normalized.personalCostId = previous.personalCostId;
     cfg.recurringExpenses = cfg.recurringExpenses.filter((item) => item.id !== normalized.id);
     cfg.recurringExpenses.push(normalized);
@@ -6867,6 +6896,11 @@
 
   function syncSelfEmploymentBufferExpense(entry) {
     if (!entry || entry.type !== 'expense') return null;
+    if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') {
+      removeSelfEmploymentBufferExpenseLink(entry);
+      entry.budgetMode = 'cash_excluded';
+      return null;
+    }
     if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
     const monthKey = String(entry.date || '').slice(0, 7);
     if (!isMonthKey(monthKey)) return null;
@@ -6916,7 +6950,9 @@
     const entry = getSelfEmploymentEntryForBufferExpense(post);
     if (entry) {
       entry.linkedBufferExpenseId = '';
-      entry.budgetMode = 'auto_count';
+      entry.budgetMode = normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash'
+        ? 'cash_excluded'
+        : 'auto_count';
     }
     state.bufferExpenses = (state.bufferExpenses || []).filter((item) => item.id !== post.id);
     return entry;
@@ -6927,7 +6963,10 @@
     const previous = cfg.entries.find((item) => item.id === entry.id) || null;
     const normalized = normalizeSelfEmploymentEntry(entry);
     if (!normalized) return null;
-    const householdMode = options.householdMode === 'buffer'
+    const isCashPayment = normalizeSelfEmploymentPaymentMethod(normalized.paymentMethod) === 'cash';
+    const householdMode = isCashPayment
+      ? 'cash_excluded'
+      : options.householdMode === 'buffer'
       ? 'buffer'
       : options.householdMode === 'auto_count' || (!options.householdMode && entry.budgetMode === 'auto_count')
         ? 'auto_count'
@@ -6938,7 +6977,11 @@
     normalized.linkedBufferExpenseId = householdMode === 'buffer'
       ? String((previous && previous.linkedBufferExpenseId) || normalized.linkedBufferExpenseId || '')
       : '';
-    if (normalized.type === 'expense') normalized.budgetMode = householdMode === 'auto_count' ? 'auto_count' : 'already_counted';
+    if (normalized.type === 'expense') {
+      normalized.budgetMode = householdMode === 'cash_excluded'
+        ? 'cash_excluded'
+        : (householdMode === 'auto_count' ? 'auto_count' : 'already_counted');
+    }
     else normalized.linkedBufferExpenseId = '';
     cfg.entries = cfg.entries.filter((item) => item.id !== normalized.id);
     cfg.entries.push(normalized);
@@ -13413,9 +13456,13 @@ function showPersonalEditor(personId, editPost) {
     const householdBudgetHint = createUiEl('p', 'small muted', 'Bei der automatischen Übernahme erscheint die bezahlte Ausgabe sofort unter „Sonstige Ausgaben“. Sie wird trotzdem nur einmal vom verfügbaren Betrag abgezogen.');
     content.appendChild(householdBudgetHint);
     const updateBudgetModeVisibility = () => {
-      const show = typeSelect.value === 'expense';
-      householdBudgetField.hidden = !show;
-      householdBudgetHint.hidden = !show;
+      const isExpense = typeSelect.value === 'expense';
+      const isCash = paymentMethodSelect.value === 'cash';
+      householdBudgetField.hidden = !isExpense || isCash;
+      householdBudgetHint.hidden = !isExpense;
+      householdBudgetHint.textContent = isCash
+        ? 'Bar bezahlt: Die Ausgabe bleibt in der EÜR, verändert den gesamten verfügbaren Betrag aber nicht.'
+        : 'Bei der automatischen Übernahme erscheint die bezahlte Ausgabe sofort unter „Sonstige Ausgaben“. Sie wird trotzdem nur einmal vom verfügbaren Betrag abgezogen.';
     };
 
     const updateCategories = () => {
@@ -13446,6 +13493,7 @@ function showPersonalEditor(personId, editPost) {
       updateCategories();
       updateBudgetModeVisibility();
     });
+    paymentMethodSelect.addEventListener('change', updateBudgetModeVisibility);
     updateCategories();
     updateBudgetModeVisibility();
 
@@ -13456,7 +13504,7 @@ function showPersonalEditor(personId, editPost) {
     } else {
       content.appendChild(createUiEl('p', 'small muted', 'Bitte den Steuersatz wählen, der im bezahlten Gesamtbetrag enthalten ist. Zahlungen an das Finanzamt werden mit 0 % erfasst.'));
     }
-    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Einnahmen werden automatisch zugerechnet. Bei Ausgaben entscheidet die Auswahl oben, ob sie hier erstmals abgezogen werden oder schon im Haushalt enthalten sind.'));
+    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Überwiesene Einnahmen werden dem verfügbaren Betrag zugerechnet; überwiesene Ausgaben werden abgezogen oder als bereits im Haushalt enthalten markiert. Barzahlungen verändern den verfügbaren Betrag nicht.'));
 
     showModal(isNew ? 'Betriebsvorgang erfassen' : 'Betriebsvorgang bearbeiten', content, [
       { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
@@ -13598,7 +13646,19 @@ function showPersonalEditor(personId, editPost) {
     personalLabel.appendChild(personalCheck);
     personalLabel.appendChild(document.createTextNode(' Bei Benny unter „Persönliche Ausgaben“ anzeigen'));
     content.appendChild(personalLabel);
-    content.appendChild(createUiEl('p', 'small muted', 'Der gesamte verfügbare Betrag wird immer nur einmal belastet. Der Schalter bestimmt nur, ob die Ausgabe zusätzlich in Bennys persönlicher Liste sichtbar ist.'));
+    const personalBudgetHint = createUiEl('p', 'small muted', 'Der gesamte verfügbare Betrag wird immer nur einmal belastet. Der Schalter bestimmt nur, ob die Ausgabe zusätzlich in Bennys persönlicher Liste sichtbar ist.');
+    content.appendChild(personalBudgetHint);
+    const updateRecurringPaymentMethod = () => {
+      const isCash = paymentMethodSelect.value === 'cash';
+      if (isCash) personalCheck.checked = false;
+      personalCheck.disabled = isCash;
+      personalLabel.hidden = isCash;
+      personalBudgetHint.textContent = isCash
+        ? 'Bar bezahlt: Die Ausgabe wird nur für die EÜR vorgemerkt und verändert den verfügbaren Betrag nicht.'
+        : 'Der gesamte verfügbare Betrag wird immer nur einmal belastet. Der Schalter bestimmt nur, ob die Ausgabe zusätzlich in Bennys persönlicher Liste sichtbar ist.';
+    };
+    paymentMethodSelect.addEventListener('change', updateRecurringPaymentMethod);
+    updateRecurringPaymentMethod();
 
     if (cfg.taxMode !== 'vat_registered') {
       vatSelect.value = '0';
@@ -13632,7 +13692,7 @@ function showPersonalEditor(personId, editPost) {
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
             paymentMethod: paymentMethodSelect.value,
             note: noteInput.value,
-            includeInPersonalBudget: personalCheck.checked,
+            includeInPersonalBudget: paymentMethodSelect.value === 'cash' ? false : personalCheck.checked,
             personalCostId: item.personalCostId || ''
           });
           if (!saved) return alert('Die wiederkehrende Ausgabe konnte nicht gespeichert werden.');
@@ -13689,7 +13749,10 @@ function showPersonalEditor(personId, editPost) {
         const tr = document.createElement('tr');
         const nameTd = document.createElement('td');
         nameTd.appendChild(createUiEl('strong', '', template.name));
-        nameTd.appendChild(createUiEl('div', 'small muted', `${template.includeInPersonalBudget ? 'Auch bei Benny persönlich eingeplant' : 'Aus Betriebspuffer bezahlt'} · ${getSelfEmploymentPaymentMethodLabel(template.paymentMethod)}`));
+        const recurringBudgetLabel = normalizeSelfEmploymentPaymentMethod(template.paymentMethod) === 'cash'
+          ? 'Nur in der EÜR; ohne Änderung des verfügbaren Betrags'
+          : (template.includeInPersonalBudget ? 'Auch bei Benny persönlich eingeplant' : 'Aus Betriebspuffer bezahlt');
+        nameTd.appendChild(createUiEl('div', 'small muted', `${recurringBudgetLabel} · ${getSelfEmploymentPaymentMethodLabel(template.paymentMethod)}`));
         const amountTd = createUiEl('td', '', euro(template.amount));
         const intervalTd = createUiEl('td', '', getSelfEmploymentRecurringIntervalLabel(template));
         const statusTd = document.createElement('td');
@@ -13865,9 +13928,9 @@ function showPersonalEditor(personId, editPost) {
     const head = document.createElement('div');
     head.className = 'self-employment-head';
     const copy = document.createElement('div');
-    copy.appendChild(createUiEl('span', 'eyebrow', 'Automatisch im Gesamtbetrag'));
+    copy.appendChild(createUiEl('span', 'eyebrow', 'EÜR und Haushaltsbetrag'));
     copy.appendChild(createUiEl('h2', '', cfg.businessName || 'Selbständigkeit & EÜR'));
-    copy.appendChild(createUiEl('p', 'small muted', 'Zahlungen nach ihrem tatsächlichen Zahlungsdatum erfassen. Einnahmen erhöhen automatisch den einen gesamten verfügbaren Betrag. Ausgaben, die bereits unter „Sonstige“ oder „Persönliche Ausgaben“ stehen, werden nicht noch einmal abgezogen.'));
+    copy.appendChild(createUiEl('p', 'small muted', 'Zahlungen nach ihrem tatsächlichen Zahlungsdatum erfassen. Überweisungen verändern automatisch den gesamten verfügbaren Betrag. Bar bezahlte Einnahmen und Ausgaben bleiben nur in der EÜR.'));
     head.appendChild(copy);
     const actions = document.createElement('div');
     actions.className = 'self-employment-actions';
@@ -13927,7 +13990,7 @@ function showPersonalEditor(personId, editPost) {
     hero.appendChild(createUiEl(
       'div',
       selectedMonthBusiness.adjustment < 0 ? 'notice warning' : 'notice success',
-      `Im gesamten verfügbaren Betrag für ${formatMonthLabel(currentMonth)} bereits enthalten: ${impactPrefix}${euro(Math.abs(selectedMonthBusiness.adjustment))}. Betriebsausgaben, die schon unter „Sonstige“ oder „Persönliche Ausgaben“ stehen, werden nicht doppelt abgezogen.`
+      `Im gesamten verfügbaren Betrag für ${formatMonthLabel(currentMonth)} bereits enthalten: ${impactPrefix}${euro(Math.abs(selectedMonthBusiness.adjustment))}. Barzahlungen werden hier nicht eingerechnet; bereits im Haushalt enthaltene Ausgaben werden nicht doppelt abgezogen.`
     ));
     if (cfg.taxMode === 'vat_registered') {
       hero.appendChild(createSummaryMetrics([
@@ -14016,7 +14079,11 @@ function showPersonalEditor(personId, editPost) {
         const descTd = document.createElement('td');
         descTd.appendChild(createUiEl('strong', '', entry.category));
         descTd.appendChild(createUiEl('div', 'small', entry.description));
-        if (entry.type === 'expense') {
+        if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') {
+          descTd.appendChild(createUiEl('div', 'small muted', 'Nur in der EÜR; Barzahlung ändert den verfügbaren Betrag nicht'));
+        } else if (entry.type === 'income') {
+          descTd.appendChild(createUiEl('div', 'small muted', 'Wird dem gesamten verfügbaren Betrag zugerechnet'));
+        } else {
           descTd.appendChild(createUiEl(
             'div',
             'small muted',
