@@ -6010,3 +6010,75 @@ footer {
   font-size: .75rem !important;
   font-weight: 500 !important;
 }
+
+/* Version 2.63 – Vertragsprüfung */
+.contracts-header {
+  align-items: end;
+}
+
+.contract-budget-notice {
+  margin: .85rem 0;
+}
+
+.contract-attention-list {
+  display: grid;
+  border-top: 1px solid var(--ledger-line);
+}
+
+.contract-attention-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .8rem;
+  align-items: center;
+  padding: .78rem 0;
+  border-bottom: 1px solid var(--ledger-line);
+}
+
+.contract-attention-row:last-child {
+  border-bottom: 0;
+}
+
+.contract-attention-copy,
+.contract-name-cell {
+  display: grid;
+  gap: .16rem;
+}
+
+.contract-attention-row.danger {
+  border-left: 3px solid #a95650;
+  padding-left: .65rem;
+}
+
+.contract-attention-row.warning {
+  border-left: 3px solid #b18a4a;
+  padding-left: .65rem;
+}
+
+.contract-note {
+  max-width: 28rem;
+  white-space: normal;
+}
+
+.contract-editor-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.contract-table td {
+  vertical-align: top;
+}
+
+@media (max-width: 720px) {
+  .contracts-header {
+    align-items: stretch;
+  }
+
+  .contracts-header > button,
+  .contract-attention-row > button {
+    width: 100%;
+  }
+
+  .contract-attention-row {
+    grid-template-columns: 1fr;
+  }
+}

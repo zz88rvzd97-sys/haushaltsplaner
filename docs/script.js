@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.62
+ * Haushaltsplaner Version 2.63
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.62';
+  const APP_VERSION = '2.63';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -765,6 +765,7 @@
     monthlyClosings: {},
     changeLog: [],
     debts: [],
+    contracts: [],
     pots: [],
     savingsGoals: [],
     // Liste der Monate, in denen die Rücklagen/Spar‑Beträge bereits
@@ -915,6 +916,7 @@
     return (Array.isArray(obj.commonCosts) ? obj.commonCosts.length * 5 : 0)
       + (Array.isArray(obj.personalCosts) ? obj.personalCosts.length * 5 : 0)
       + (Array.isArray(obj.debts) ? obj.debts.length * 8 : 0)
+      + (Array.isArray(obj.contracts) ? obj.contracts.length * 4 : 0)
       + (Array.isArray(obj.accounts) ? obj.accounts.length * 4 : 0)
       + (Array.isArray(obj.taxRefunds) ? obj.taxRefunds.length * 4 : 0)
       + (Array.isArray(obj.groceryExpenses) ? obj.groceryExpenses.length * 2 : 0)
@@ -982,6 +984,7 @@
     if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
     if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
+    if (!Array.isArray(state.contracts)) state.contracts = [];
     normalizeSelfEmployment();
     normalizeAllTaxRefunds();
     normalizeGroceryExpenses();
@@ -1003,6 +1006,7 @@
     normalizeAllPostConfigs();
     ensureGroceryMoneyFromJune2026();
     normalizeAllDebtConfigs();
+    normalizeContracts();
     autoLinkMatchingDebtPosts();
     migrateConfirmedMayDebtProofsV206();
     migrateCommonContributionPaymentsV221();
@@ -3584,6 +3588,12 @@
         onClick: () => showSelfEmploymentEntryEditor()
       },
       {
+        title: 'Vertrag erfassen',
+        text: 'Kosten, Laufzeit und Kündigungsfrist hinterlegen',
+        icon: 'V',
+        onClick: () => showContractEditor()
+      },
+      {
         title: 'Tankgeld',
         text: 'Kilometerstände, Bons und Monatswerte prüfen',
         icon: '⌁',
@@ -4300,6 +4310,11 @@
     if (openPersonal.length) add('Persönliche Ausgaben', `${openPersonal.length} persönliche Zahlung(en) offen`, 'personal');
     if (openBuffer.length) add('Sonstige Ausgaben', `${openBuffer.length} sonstige Ausgabe(n) offen`, 'buffer');
     if (dueDebts.length) add('Schulden', `${dueDebts.length} Schuld-Zahlung(en) fällig/offen`, 'debts', 'danger');
+    const contractAttention = getContractAttentionItems();
+    if (contractAttention.length) {
+      const urgentContracts = contractAttention.some((item) => item.kind === 'danger');
+      add('Verträge', `${contractAttention.length} Vertrags-Hinweis(e) prüfen`, 'contracts', urgentContracts ? 'danger' : 'warning');
+    }
     if (!isMonthClosed(monthKey)) add('Monatsabschluss', `${formatMonthLabel(monthKey)} ist noch nicht abgeschlossen`, 'monthclose', 'info');
     const dataWarnings = getDataCheckItems().filter((item) => item.kind === 'warning' || item.kind === 'danger').length;
     if (dataWarnings) add('Datencheck', `${dataWarnings} Datenhinweis(e) prüfen`, 'datacheck', 'warning');
@@ -4460,6 +4475,7 @@
   const grocerySection = document.getElementById('groceries');
   const smokingSection = document.getElementById('smoking');
   const selfEmploymentSection = document.getElementById('selfemployment');
+  const contractsSection = document.getElementById('contracts');
   const debtsSection = document.getElementById('debts');
   const settingsSection = document.getElementById('settings');
   const savingsSection = document.getElementById('savings');
@@ -7851,6 +7867,7 @@
       groceries: ['Einkaufsgeld', grocerySection, renderGroceries],
       smoking: ['Rauchzeug', smokingSection, renderSmokingExpenses],
       selfemployment: ['Selbständigkeit & EÜR', selfEmploymentSection, renderSelfEmployment],
+      contracts: ['Verträge', contractsSection, renderContracts],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
       savings: ['Rücklagen & Sparen', savingsSection, renderSavings],
@@ -8963,6 +8980,15 @@
         ? `${dueBalanceChecks.length} fällig · ${monthlyDue} monatlich, ${annualDue} jährlich.`
         : 'Alle aktuell fälligen Schuldenstände sind erfasst.';
       add('Schulden', 'Schuldenstände prüfen', dueBalanceChecks.length === 0, detail, 'debts', 'Stände prüfen');
+    }
+
+    const contractAttention = getContractAttentionItems();
+    if ((state.contracts || []).some((contract) => contract && contract.active !== false)) {
+      const urgentContracts = contractAttention.filter((item) => item.kind === 'danger').length;
+      const detail = contractAttention.length
+        ? `${contractAttention.length} Vertrag/Verträge prüfen${urgentContracts ? ` · ${urgentContracts} dringend` : ''}.`
+        : 'Keine Kündigungs- oder Prüffrist ist aktuell fällig.';
+      add('Verträge', 'Verträge und Kündigungsfristen prüfen', contractAttention.length === 0, detail, 'contracts', 'Verträge öffnen', urgentContracts > 0);
     }
 
     const openPayments = collectOpenPaymentsForMonth(monthKey);
@@ -15619,7 +15645,478 @@ function showPersonalEditor(personId, editPost) {
       }
     ]);
   }
-  // Rendert die Einstellungen
+  function isContractDateKey(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return false;
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+    return date.getFullYear() === Number(match[1])
+      && date.getMonth() === Number(match[2]) - 1
+      && date.getDate() === Number(match[3]);
+  }
+
+  function contractDateToKey(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function contractKeyToDate(value) {
+    if (!isContractDateKey(value)) return null;
+    const [year, month, day] = String(value).split('-').map(Number);
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  }
+
+  function addContractCalendarMonths(date, months) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+    const day = date.getDate();
+    const target = new Date(date.getFullYear(), date.getMonth() + Number(months || 0), 1, 12, 0, 0, 0);
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0, 12, 0, 0, 0).getDate();
+    target.setDate(Math.min(day, lastDay));
+    return target;
+  }
+
+  function formatContractDate(value) {
+    const date = typeof value === 'string' ? contractKeyToDate(value) : value;
+    return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('de-DE') : 'fehlt';
+  }
+
+  function getContractCategories() {
+    return ['Strom', 'Gas / Heizung', 'Internet', 'Mobilfunk', 'Versicherung', 'Abo', 'Mitgliedschaft', 'Leasing / Finanzierung', 'Sonstiges'];
+  }
+
+  function normalizeContract(contract) {
+    const item = contract && typeof contract === 'object' ? contract : {};
+    const numberOr = (value, fallback, min = 0, max = 600) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, parsed));
+    };
+    const categories = getContractCategories();
+    item.id = String(item.id || generateId());
+    item.name = String(item.name || '').trim();
+    item.provider = String(item.provider || '').trim();
+    item.category = categories.includes(item.category) ? item.category : 'Sonstiges';
+    item.amount = roundMoney(numberOr(item.amount, 0, 0, 1000000));
+    item.billingIntervalMonths = Math.max(1, Math.round(numberOr(item.billingIntervalMonths, 1, 1, 120)));
+    item.startDate = isContractDateKey(item.startDate) ? item.startDate : '';
+    item.minimumTermMonths = Math.round(numberOr(item.minimumTermMonths, 12, 0, 600));
+    item.noticePeriodValue = Math.round(numberOr(item.noticePeriodValue != null ? item.noticePeriodValue : item.noticePeriodMonths, 1, 0, 120));
+    item.noticePeriodUnit = ['days', 'weeks', 'months'].includes(item.noticePeriodUnit) ? item.noticePeriodUnit : 'months';
+    item.renewalMonths = Math.round(numberOr(item.renewalMonths, 12, 0, 120));
+    item.lastReviewedDate = isContractDateKey(item.lastReviewedDate) ? item.lastReviewedDate : '';
+    item.reviewIntervalMonths = Math.max(1, Math.round(numberOr(item.reviewIntervalMonths, 12, 1, 120)));
+    item.notes = String(item.notes || '').trim();
+    item.active = item.active !== false;
+    return item;
+  }
+
+  function normalizeContracts() {
+    if (!Array.isArray(state.contracts)) state.contracts = [];
+    state.contracts = state.contracts
+      .filter((contract) => contract && typeof contract === 'object')
+      .map((contract) => normalizeContract(contract));
+  }
+
+  function getContractMonthlyCost(contract) {
+    const interval = Math.max(1, Number(contract && contract.billingIntervalMonths || 1));
+    return roundMoney(Number(contract && contract.amount || 0) / interval);
+  }
+
+  function getContractAnnualCost(contract) {
+    return roundMoney(getContractMonthlyCost(contract) * 12);
+  }
+
+  function subtractContractNoticePeriod(date, contract) {
+    const result = new Date(date.getTime());
+    const value = Math.max(0, Number(contract.noticePeriodValue || 0));
+    if (contract.noticePeriodUnit === 'days') result.setDate(result.getDate() - value);
+    else if (contract.noticePeriodUnit === 'weeks') result.setDate(result.getDate() - value * 7);
+    else return addContractCalendarMonths(result, -value);
+    return result;
+  }
+
+  function getContractSchedule(contract, referenceDate = new Date()) {
+    normalizeContract(contract);
+    const today = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate(), 12, 0, 0, 0);
+    const start = contractKeyToDate(contract.startDate);
+    const monthlyCost = getContractMonthlyCost(contract);
+    const annualCost = getContractAnnualCost(contract);
+    if (!start) {
+      return {
+        valid: false,
+        monthlyCost,
+        annualCost,
+        kind: contract.active ? 'warning' : '',
+        status: contract.active ? 'Startdatum fehlt' : 'Inaktiv',
+        reviewDue: false,
+        daysUntilCancellation: null,
+        cancellationDeadline: null,
+        contractEnd: null,
+        nextReview: null
+      };
+    }
+
+    let contractEnd = addContractCalendarMonths(start, contract.minimumTermMonths);
+    let cancellationDeadline = subtractContractNoticePeriod(contractEnd, contract);
+    let guard = 0;
+    while (contract.renewalMonths > 0 && cancellationDeadline < today && guard < 240) {
+      contractEnd = addContractCalendarMonths(contractEnd, contract.renewalMonths);
+      cancellationDeadline = subtractContractNoticePeriod(contractEnd, contract);
+      guard += 1;
+    }
+
+    const reviewBase = contractKeyToDate(contract.lastReviewedDate) || start;
+    const nextReview = addContractCalendarMonths(reviewBase, contract.reviewIntervalMonths);
+    const reviewDue = contract.active && nextReview <= today;
+    const daysUntilCancellation = Math.ceil((cancellationDeadline.getTime() - today.getTime()) / 86400000);
+    let kind = 'success';
+    let status = 'In Ordnung';
+    if (!contract.active) {
+      kind = '';
+      status = 'Inaktiv';
+    } else if (contract.renewalMonths === 0 && daysUntilCancellation < 0) {
+      kind = 'danger';
+      status = 'Frist abgelaufen';
+    } else if (daysUntilCancellation <= 30) {
+      kind = 'danger';
+      status = 'Kündigung bald entscheiden';
+    } else if (reviewDue || daysUntilCancellation <= 90) {
+      kind = 'warning';
+      status = reviewDue ? 'Prüfung fällig' : 'Frist vormerken';
+    }
+    return {
+      valid: true,
+      monthlyCost,
+      annualCost,
+      kind,
+      status,
+      reviewDue,
+      daysUntilCancellation,
+      cancellationDeadline,
+      contractEnd,
+      nextReview
+    };
+  }
+
+  function getContractAttentionItems(referenceDate = new Date()) {
+    normalizeContracts();
+    const items = [];
+    state.contracts.filter((contract) => contract.active !== false).forEach((contract) => {
+      const schedule = getContractSchedule(contract, referenceDate);
+      if (!schedule.valid) {
+        items.push({ contract, kind: 'warning', type: 'missing-date', title: `${contract.name || 'Vertrag'}: Startdatum fehlt`, detail: 'Ohne Vertragsbeginn können Kündigung und nächste Prüfung nicht berechnet werden.' });
+        return;
+      }
+      if (schedule.daysUntilCancellation <= 30) {
+        const past = schedule.daysUntilCancellation < 0;
+        items.push({
+          contract,
+          kind: 'danger',
+          type: 'cancellation',
+          title: `${contract.name || 'Vertrag'}: ${past ? 'Kündigungsfrist überschritten' : 'Kündigung bald entscheiden'}`,
+          detail: `Voraussichtliche Frist ${formatContractDate(schedule.cancellationDeadline)} · Vertragsende ${formatContractDate(schedule.contractEnd)}.`
+        });
+      } else if (schedule.daysUntilCancellation <= 90) {
+        items.push({
+          contract,
+          kind: 'warning',
+          type: 'cancellation',
+          title: `${contract.name || 'Vertrag'}: Kündigungsfrist vormerken`,
+          detail: `Noch ${schedule.daysUntilCancellation} Tage bis ${formatContractDate(schedule.cancellationDeadline)}.`
+        });
+      }
+      if (schedule.reviewDue) {
+        items.push({
+          contract,
+          kind: 'warning',
+          type: 'review',
+          title: `${contract.name || 'Vertrag'}: Vertragsprüfung fällig`,
+          detail: `Geplant seit ${formatContractDate(schedule.nextReview)}. Preis und Bedarf kurz prüfen.`
+        });
+      }
+    });
+    const rank = { danger: 0, warning: 1, info: 2 };
+    return items.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || String(a.title).localeCompare(String(b.title), 'de'));
+  }
+
+  function markContractReviewed(contract) {
+    if (!contract) return;
+    contract.lastReviewedDate = contractDateToKey(new Date());
+    addChangeLog('Verträge', `${contract.name || 'Vertrag'} als geprüft markiert.`, currentMonth);
+    saveState();
+    render();
+  }
+
+  function showContractEditor(contract = null) {
+    const editing = !!contract;
+    const source = normalizeContract(contract ? { ...contract } : {
+      category: 'Sonstiges',
+      amount: 0,
+      billingIntervalMonths: 1,
+      startDate: '',
+      minimumTermMonths: 12,
+      noticePeriodValue: 1,
+      noticePeriodUnit: 'months',
+      renewalMonths: 12,
+      lastReviewedDate: contractDateToKey(new Date()),
+      reviewIntervalMonths: 12,
+      active: true
+    });
+    const content = createUiEl('div', 'modal-form contract-editor-form');
+    content.appendChild(createGuidedFormIntro(
+      editing ? 'Vertrag bearbeiten' : 'Vertrag erfassen',
+      'Trage nur die Angaben ein, die du kennst. Der Vertragsbeginn wird für die automatische Fristberechnung benötigt.'
+    ));
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'z. B. Internet zuhause';
+    nameInput.value = source.name;
+    const providerInput = document.createElement('input');
+    providerInput.type = 'text';
+    providerInput.placeholder = 'z. B. Telekom';
+    providerInput.value = source.provider;
+    const identityRow = createUiEl('div', 'row');
+    identityRow.appendChild(createLabelInput('Vertragsname', nameInput));
+    identityRow.appendChild(createLabelInput('Anbieter', providerInput));
+    content.appendChild(identityRow);
+
+    const categorySelect = document.createElement('select');
+    getContractCategories().forEach((category) => categorySelect.appendChild(new Option(category, category)));
+    categorySelect.value = source.category;
+    const amountInput = createMoneyField(source.amount);
+    const billingSelect = document.createElement('select');
+    [['1', 'monatlich'], ['3', 'vierteljährlich'], ['6', 'halbjährlich'], ['12', 'jährlich']].forEach(([value, label]) => billingSelect.appendChild(new Option(label, value)));
+    billingSelect.value = String(source.billingIntervalMonths);
+    const costRow = createUiEl('div', 'row contract-cost-fields');
+    costRow.appendChild(createLabelInput('Kategorie', categorySelect));
+    costRow.appendChild(createLabelInput('Betrag in €', amountInput));
+    costRow.appendChild(createLabelInput('Zahlungsweise', billingSelect));
+    content.appendChild(costRow);
+
+    const startInput = document.createElement('input');
+    startInput.type = 'date';
+    startInput.value = source.startDate;
+    const termInput = document.createElement('input');
+    termInput.type = 'number';
+    termInput.min = '0';
+    termInput.max = '600';
+    termInput.step = '1';
+    termInput.value = String(source.minimumTermMonths);
+    const durationRow = createUiEl('div', 'row');
+    durationRow.appendChild(createLabelInput('Vertragsbeginn', startInput));
+    durationRow.appendChild(createLabelInput('Mindestlaufzeit in Monaten', termInput));
+    content.appendChild(durationRow);
+
+    const noticeValueInput = document.createElement('input');
+    noticeValueInput.type = 'number';
+    noticeValueInput.min = '0';
+    noticeValueInput.max = '120';
+    noticeValueInput.step = '1';
+    noticeValueInput.value = String(source.noticePeriodValue);
+    const noticeUnitSelect = document.createElement('select');
+    [['months', 'Monate'], ['weeks', 'Wochen'], ['days', 'Tage']].forEach(([value, label]) => noticeUnitSelect.appendChild(new Option(label, value)));
+    noticeUnitSelect.value = source.noticePeriodUnit;
+    const renewalInput = document.createElement('input');
+    renewalInput.type = 'number';
+    renewalInput.min = '0';
+    renewalInput.max = '120';
+    renewalInput.step = '1';
+    renewalInput.value = String(source.renewalMonths);
+    const noticeRow = createUiEl('div', 'row contract-notice-fields');
+    noticeRow.appendChild(createLabelInput('Kündigungsfrist', noticeValueInput));
+    noticeRow.appendChild(createLabelInput('Einheit', noticeUnitSelect));
+    noticeRow.appendChild(createLabelInput('Verlängerung in Monaten (0 = keine)', renewalInput));
+    content.appendChild(noticeRow);
+
+    const reviewedInput = document.createElement('input');
+    reviewedInput.type = 'date';
+    reviewedInput.value = source.lastReviewedDate;
+    const reviewIntervalInput = document.createElement('input');
+    reviewIntervalInput.type = 'number';
+    reviewIntervalInput.min = '1';
+    reviewIntervalInput.max = '120';
+    reviewIntervalInput.step = '1';
+    reviewIntervalInput.value = String(source.reviewIntervalMonths);
+    const reviewRow = createUiEl('div', 'row');
+    reviewRow.appendChild(createLabelInput('Zuletzt geprüft', reviewedInput));
+    reviewRow.appendChild(createLabelInput('Erneut prüfen nach Monaten', reviewIntervalInput));
+    content.appendChild(reviewRow);
+
+    const notesInput = document.createElement('textarea');
+    notesInput.rows = 3;
+    notesInput.placeholder = 'Optional: Tarif, Kundennummer, Besonderheiten …';
+    notesInput.value = source.notes;
+    content.appendChild(createLabelInput('Notiz', notesInput));
+    content.appendChild(createUiEl('p', 'small muted', 'Die berechneten Termine sind eine Planungshilfe. Maßgeblich bleiben die Fristen im tatsächlichen Vertrag.'));
+
+    showModal(editing ? 'Vertrag bearbeiten' : 'Neuen Vertrag erfassen', content, [
+      { label: 'Abbrechen', className: 'secondary' },
+      {
+        label: 'Speichern',
+        className: 'primary',
+        onClick: (close) => {
+          const name = String(nameInput.value || '').trim();
+          const amount = parseMoneyInput(amountInput.value);
+          if (!name) return alert('Bitte einen Namen für den Vertrag eingeben.');
+          if (!Number.isFinite(amount) || amount < 0) return alert('Bitte einen gültigen Betrag eingeben.');
+          if (startInput.value && !isContractDateKey(startInput.value)) return alert('Bitte ein gültiges Startdatum eingeben.');
+
+          const savedContract = normalizeContract({
+            ...source,
+            id: editing ? contract.id : generateId(),
+            name,
+            provider: providerInput.value,
+            category: categorySelect.value,
+            amount,
+            billingIntervalMonths: Number(billingSelect.value || 1),
+            startDate: startInput.value,
+            minimumTermMonths: Number(termInput.value || 0),
+            noticePeriodValue: Number(noticeValueInput.value || 0),
+            noticePeriodUnit: noticeUnitSelect.value,
+            renewalMonths: Number(renewalInput.value || 0),
+            lastReviewedDate: reviewedInput.value,
+            reviewIntervalMonths: Number(reviewIntervalInput.value || 12),
+            notes: notesInput.value,
+            active: editing ? contract.active !== false : true
+          });
+          if (editing) Object.assign(contract, savedContract);
+          else state.contracts.push(savedContract);
+          addChangeLog('Verträge', `${savedContract.name} ${editing ? 'aktualisiert' : 'angelegt'}.`, currentMonth);
+          saveState();
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
+  function renderContracts() {
+    if (!contractsSection) return;
+    normalizeContracts();
+    contractsSection.innerHTML = '';
+    const page = createUiEl('div', 'dashboard-page contracts-page');
+    const header = createUiEl('div', 'dashboard-header contracts-header');
+    const titleWrap = createUiEl('div', 'dashboard-title-wrap');
+    titleWrap.appendChild(createUiEl('h2', '', 'Verträge'));
+    titleWrap.appendChild(createUiEl('p', '', 'Kosten prüfen, Kündigungsfristen im Blick behalten und rechtzeitig vergleichen.'));
+    header.appendChild(titleWrap);
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'primary';
+    addButton.textContent = 'Vertrag erfassen';
+    addButton.addEventListener('click', () => showContractEditor());
+    header.appendChild(addButton);
+    page.appendChild(header);
+
+    const activeContracts = state.contracts.filter((contract) => contract.active !== false);
+    const monthlyTotal = activeContracts.reduce((sum, contract) => sum + getContractMonthlyCost(contract), 0);
+    const annualTotal = activeContracts.reduce((sum, contract) => sum + getContractAnnualCost(contract), 0);
+    const attention = getContractAttentionItems();
+    const schedules = activeContracts
+      .map((contract) => ({ contract, schedule: getContractSchedule(contract) }))
+      .filter((entry) => entry.schedule.valid && entry.schedule.cancellationDeadline)
+      .sort((a, b) => a.schedule.cancellationDeadline - b.schedule.cancellationDeadline);
+    const nextDeadline = schedules[0];
+
+    page.appendChild(createSummaryMetrics([
+      { label: 'Aktive Verträge', value: String(activeContracts.length) },
+      { label: 'Kosten pro Monat', value: euro(monthlyTotal), hint: 'Nur Vergleichswert, kein zusätzlicher Abzug.' },
+      { label: 'Kosten pro Jahr', value: euro(annualTotal) },
+      { label: 'Jetzt prüfen', value: String(attention.length), kind: attention.some((item) => item.kind === 'danger') ? 'danger' : (attention.length ? 'warning' : 'success') },
+      { label: 'Nächste Kündigungsfrist', value: nextDeadline ? formatContractDate(nextDeadline.schedule.cancellationDeadline) : '-' }
+    ]));
+
+    const budgetNotice = createUiEl('div', 'notice info contract-budget-notice');
+    budgetNotice.innerHTML = '<strong>Keine Doppelzählung:</strong> Die Vertragskosten dienen hier nur zur Übersicht. Vom verfügbaren Betrag werden weiterhin ausschließlich die Posten unter „Gemeinsame Kosten“ oder „Persönliche Ausgaben“ abgezogen.';
+    page.appendChild(budgetNotice);
+
+    if (attention.length) {
+      const alertCard = createUiEl('div', 'card compact-card contract-attention-card');
+      const alertHead = createUiEl('div', 'compact-section-head');
+      alertHead.appendChild(createUiEl('h3', '', 'Jetzt prüfen'));
+      alertHead.appendChild(createUiEl('span', attention.some((item) => item.kind === 'danger') ? 'pill danger' : 'pill warning', `${attention.length} Hinweis(e)`));
+      alertCard.appendChild(alertHead);
+      const alertList = createUiEl('div', 'contract-attention-list');
+      attention.forEach((item) => {
+        const row = createUiEl('div', `contract-attention-row ${item.kind}`);
+        const copy = createUiEl('div', 'contract-attention-copy');
+        copy.appendChild(createUiEl('strong', '', item.title));
+        copy.appendChild(createUiEl('small', 'muted', item.detail));
+        row.appendChild(copy);
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = item.type === 'review' ? 'success compact' : 'secondary compact';
+        action.textContent = item.type === 'review' ? 'Heute geprüft' : 'Bearbeiten';
+        action.addEventListener('click', () => item.type === 'review' ? markContractReviewed(item.contract) : showContractEditor(item.contract));
+        row.appendChild(action);
+        alertList.appendChild(row);
+      });
+      alertCard.appendChild(alertList);
+      page.appendChild(alertCard);
+    }
+
+    const listCard = createUiEl('div', 'card contracts-list-card');
+    const listHead = createUiEl('div', 'compact-section-head');
+    listHead.appendChild(createUiEl('h3', '', 'Vertragsübersicht'));
+    listHead.appendChild(createUiEl('span', 'pill', `${state.contracts.length} gespeichert`));
+    listCard.appendChild(listHead);
+
+    if (!state.contracts.length) {
+      const empty = createUiEl('div', 'empty-state', 'Noch keine Verträge erfasst. Beginne zum Beispiel mit Strom, Internet oder Versicherungen.');
+      const emptyButton = document.createElement('button');
+      emptyButton.type = 'button';
+      emptyButton.className = 'primary compact';
+      emptyButton.textContent = 'Ersten Vertrag erfassen';
+      emptyButton.addEventListener('click', () => showContractEditor());
+      empty.appendChild(emptyButton);
+      listCard.appendChild(empty);
+    } else {
+      const table = document.createElement('table');
+      table.className = 'list-table contract-table';
+      table.innerHTML = '<thead><tr><th>Vertrag</th><th>Kategorie</th><th>Zahlung</th><th>Monatswert</th><th>Kündigungsfrist</th><th>Vertragsende</th><th>Nächste Prüfung</th><th>Status</th><th>Aktion</th></tr></thead>';
+      const body = document.createElement('tbody');
+      state.contracts
+        .slice()
+        .sort((a, b) => Number(b.active !== false) - Number(a.active !== false) || String(a.name).localeCompare(String(b.name), 'de'))
+        .forEach((contract) => {
+          const schedule = getContractSchedule(contract);
+          const row = document.createElement('tr');
+
+          const nameCell = createUiEl('td', 'contract-name-cell');
+          nameCell.appendChild(createUiEl('strong', '', contract.name || 'Vertrag'));
+          if (contract.provider) nameCell.appendChild(createUiEl('small', 'muted', contract.provider));
+          if (contract.notes) nameCell.appendChild(createUiEl('small', 'muted contract-note', contract.notes));
+          row.appendChild(nameCell);
+          row.appendChild(createUiEl('td', '', contract.category));
+          row.appendChild(createUiEl('td', '', `${euro(contract.amount)} · ${contract.billingIntervalMonths === 1 ? 'monatlich' : contract.billingIntervalMonths === 12 ? 'jährlich' : `alle ${contract.billingIntervalMonths} Monate`}`));
+          row.appendChild(createUiEl('td', '', euro(schedule.monthlyCost)));
+          row.appendChild(createUiEl('td', '', schedule.valid ? formatContractDate(schedule.cancellationDeadline) : 'Startdatum fehlt'));
+          row.appendChild(createUiEl('td', '', schedule.valid ? formatContractDate(schedule.contractEnd) : '-'));
+          row.appendChild(createUiEl('td', '', schedule.nextReview ? formatContractDate(schedule.nextReview) : '-'));
+          const statusCell = document.createElement('td');
+          statusCell.appendChild(createUiEl('span', `pill ${schedule.kind || ''}`.trim(), schedule.status));
+          row.appendChild(statusCell);
+
+          const actionCell = document.createElement('td');
+          actionCell.appendChild(createActionMenu([
+            { label: 'Bearbeiten', className: 'primary', onClick: () => showContractEditor(contract) },
+            contract.active !== false ? { label: 'Heute geprüft', className: 'success', onClick: () => markContractReviewed(contract) } : null,
+            { label: contract.active === false ? 'Aktivieren' : 'Deaktivieren', className: 'secondary', onClick: () => { contract.active = contract.active === false; addChangeLog('Verträge', `${contract.name || 'Vertrag'} ${contract.active ? 'aktiviert' : 'deaktiviert'}.`, currentMonth); saveState(); render(); } },
+            { label: 'Löschen', className: 'danger', onClick: () => { if (confirm(`Vertrag „${contract.name || 'Vertrag'}“ löschen?`)) { state.contracts = state.contracts.filter((item) => item.id !== contract.id); addChangeLog('Verträge', `${contract.name || 'Vertrag'} gelöscht.`, currentMonth); saveState(); render(); } } }
+          ]));
+          row.appendChild(actionCell);
+          body.appendChild(row);
+        });
+      table.appendChild(body);
+      listCard.appendChild(table);
+    }
+    page.appendChild(listCard);
+    contractsSection.appendChild(page);
+  }
+
   function renderSettings() {
     settingsSection.innerHTML = '';
     const card = document.createElement('div');
@@ -17396,6 +17893,7 @@ function renderPots() {
       { label: 'Personen', value: String(state.persons.length) },
       { label: 'Posten gesamt', value: String(totalPosts) },
       { label: 'Schulden', value: String(state.debts.length) },
+      { label: 'Verträge', value: String((state.contracts || []).length) },
       { label: 'Töpfe', value: String(state.pots.length) },
       { label: 'Aktiver Monat', value: formatMonthLabel(currentMonth) },
       { label: 'Zuletzt im Browser gespeichert', value: localStorage.getItem('budgetStateLastSavedAt') ? new Date(localStorage.getItem('budgetStateLastSavedAt')).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-' }
@@ -17589,6 +18087,7 @@ function renderPots() {
             if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
             if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
             if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
+            if (!Array.isArray(state.contracts)) state.contracts = [];
             if (!state.selfEmployment || typeof state.selfEmployment !== 'object') state.selfEmployment = JSON.parse(JSON.stringify(defaultState.selfEmployment));
             if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
             if (!Array.isArray(state.changeLog)) state.changeLog = [];
@@ -17614,6 +18113,7 @@ function renderPots() {
           runImportStep('Posten', () => normalizeAllPostConfigs());
           runImportStep('Einkaufsgeld-Ziel', () => ensureGroceryMoneyFromJune2026());
           runImportStep('Schulden', () => normalizeAllDebtConfigs());
+          runImportStep('Verträge', () => normalizeContracts());
           runImportStep('Schulden-Verknüpfungen', () => autoLinkMatchingDebtPosts());
           runImportStep('Mai-Nachweise', () => migrateConfirmedMayDebtProofsV206());
           runImportStep('Monatsanteile fixieren', () => migrateCommonContributionPaymentsV221());
