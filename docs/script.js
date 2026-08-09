@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.64
+ * Haushaltsplaner Version 2.65
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.64';
+  const APP_VERSION = '2.65';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -6509,6 +6509,14 @@
       : 'Kleinunternehmer / Beträge ohne Umsatzsteuer-Aufteilung';
   }
 
+  function normalizeSelfEmploymentPaymentMethod(value) {
+    return value === 'cash' ? 'cash' : 'transfer';
+  }
+
+  function getSelfEmploymentPaymentMethodLabel(value) {
+    return normalizeSelfEmploymentPaymentMethod(value) === 'cash' ? 'Bar' : 'Überweisung';
+  }
+
   function normalizeSelfEmploymentEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
     const amount = parseMoneyInput(entry.amount || entry.amountGross || 0);
@@ -6532,13 +6540,17 @@
         : categories[0],
       amount: roundMoney(amount),
       vatRate,
+      paymentMethod: normalizeSelfEmploymentPaymentMethod(entry.paymentMethod),
       documentNumber: typeof entry.documentNumber === 'string' ? entry.documentNumber.trim() : '',
       note: typeof entry.note === 'string' ? entry.note.trim() : '',
       budgetMode: type === 'income'
         ? 'auto_count'
         : (entry.budgetMode === 'auto_count' ? 'auto_count' : 'already_counted'),
       recurringTemplateId: typeof entry.recurringTemplateId === 'string' ? entry.recurringTemplateId : '',
-      recurringMonth: isMonthKey(entry.recurringMonth) ? entry.recurringMonth : ''
+      recurringMonth: isMonthKey(entry.recurringMonth) ? entry.recurringMonth : '',
+      linkedBufferExpenseId: type === 'expense' && typeof entry.linkedBufferExpenseId === 'string'
+        ? entry.linkedBufferExpenseId
+        : ''
     };
   }
 
@@ -6566,6 +6578,7 @@
       endMonth,
       paymentDay,
       vatRate,
+      paymentMethod: normalizeSelfEmploymentPaymentMethod(template.paymentMethod),
       note: typeof template.note === 'string' ? template.note.trim() : '',
       includeInPersonalBudget: template.includeInPersonalBudget !== false,
       personalCostId: typeof template.personalCostId === 'string' ? template.personalCostId : ''
@@ -6585,6 +6598,17 @@
       .map(normalizeSelfEmploymentEntry)
       .filter(Boolean)
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+    state.selfEmployment.entries.forEach((entry) => {
+      if (entry.type !== 'expense') return;
+      const linkedPost = getSelfEmploymentLinkedBufferExpense(entry);
+      if (linkedPost) {
+        entry.linkedBufferExpenseId = linkedPost.id;
+        entry.budgetMode = 'already_counted';
+      } else if (entry.linkedBufferExpenseId) {
+        entry.linkedBufferExpenseId = '';
+        entry.budgetMode = 'auto_count';
+      }
+    });
     if (!Array.isArray(state.selfEmployment.recurringExpenses)) state.selfEmployment.recurringExpenses = [];
     state.selfEmployment.recurringExpenses = state.selfEmployment.recurringExpenses
       .map(normalizeSelfEmploymentRecurringExpense)
@@ -6742,6 +6766,7 @@
       category: template.category,
       amount: template.amount,
       vatRate: normalizeSelfEmployment().taxMode === 'vat_registered' ? template.vatRate : 0,
+      paymentMethod: template.paymentMethod,
       documentNumber: '',
       note: template.note,
       budgetMode: template.includeInPersonalBudget ? 'already_counted' : 'auto_count',
@@ -6818,20 +6843,116 @@
     return summary;
   }
 
-  function upsertSelfEmploymentEntry(entry) {
+  function getSelfEmploymentLinkedBufferExpense(entry) {
+    if (!entry || !Array.isArray(state.bufferExpenses)) return null;
+    if (entry.linkedBufferExpenseId) {
+      const exact = state.bufferExpenses.find((post) => post && post.id === entry.linkedBufferExpenseId);
+      if (exact) return exact;
+    }
+    return state.bufferExpenses.find((post) => post && post.selfEmploymentEntryId === entry.id) || null;
+  }
+
+  function getSelfEmploymentEntryForBufferExpense(post) {
+    if (!post || !post.selfEmploymentEntryId) return null;
+    return getSelfEmploymentEntries().find((entry) => entry.id === post.selfEmploymentEntryId) || null;
+  }
+
+  function removeSelfEmploymentBufferExpenseLink(entry) {
+    if (!entry) return false;
+    const linkedPost = getSelfEmploymentLinkedBufferExpense(entry);
+    if (linkedPost) state.bufferExpenses = (state.bufferExpenses || []).filter((post) => post.id !== linkedPost.id);
+    entry.linkedBufferExpenseId = '';
+    return !!linkedPost;
+  }
+
+  function syncSelfEmploymentBufferExpense(entry) {
+    if (!entry || entry.type !== 'expense') return null;
+    if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
+    const monthKey = String(entry.date || '').slice(0, 7);
+    if (!isMonthKey(monthKey)) return null;
+    let post = getSelfEmploymentLinkedBufferExpense(entry);
+    if (!post) {
+      post = {
+        id: generateId(),
+        name: '',
+        amount: 0,
+        interval: 1,
+        startMonth: monthKey,
+        endMonth: monthKey,
+        oneTime: true,
+        paidMonths: [],
+        accountBalanceDebits: {},
+        amountTimeline: [],
+        amountOverrides: {},
+        linkedDebtId: '',
+        linkedSavingsGoalId: '',
+        accountId: '',
+        bookingType: 'expense',
+        transferToAccountId: '',
+        selfEmploymentEntryId: entry.id
+      };
+      state.bufferExpenses.push(post);
+    }
+    post.name = `Betrieblich: ${entry.description}`;
+    post.amount = roundMoney(entry.amount);
+    post.interval = 1;
+    post.startMonth = monthKey;
+    post.endMonth = monthKey;
+    post.oneTime = true;
+    post.paidMonths = [monthKey];
+    post.amountTimeline = [];
+    post.amountOverrides = {};
+    post.linkedDebtId = '';
+    post.linkedSavingsGoalId = '';
+    post.selfEmploymentEntryId = entry.id;
+    post.paymentMethod = normalizeSelfEmploymentPaymentMethod(entry.paymentMethod);
+    ensurePostConfig(post);
+    entry.linkedBufferExpenseId = post.id;
+    entry.budgetMode = 'already_counted';
+    return post;
+  }
+
+  function detachSelfEmploymentBufferExpense(post) {
+    const entry = getSelfEmploymentEntryForBufferExpense(post);
+    if (entry) {
+      entry.linkedBufferExpenseId = '';
+      entry.budgetMode = 'auto_count';
+    }
+    state.bufferExpenses = (state.bufferExpenses || []).filter((item) => item.id !== post.id);
+    return entry;
+  }
+
+  function upsertSelfEmploymentEntry(entry, options = {}) {
     const cfg = normalizeSelfEmployment();
+    const previous = cfg.entries.find((item) => item.id === entry.id) || null;
     const normalized = normalizeSelfEmploymentEntry(entry);
     if (!normalized) return null;
+    const householdMode = options.householdMode === 'buffer'
+      ? 'buffer'
+      : options.householdMode === 'auto_count' || (!options.householdMode && entry.budgetMode === 'auto_count')
+        ? 'auto_count'
+        : 'already_counted';
+    if (previous && (normalized.type !== 'expense' || householdMode !== 'buffer')) {
+      removeSelfEmploymentBufferExpenseLink(previous);
+    }
+    normalized.linkedBufferExpenseId = householdMode === 'buffer'
+      ? String((previous && previous.linkedBufferExpenseId) || normalized.linkedBufferExpenseId || '')
+      : '';
+    if (normalized.type === 'expense') normalized.budgetMode = householdMode === 'auto_count' ? 'auto_count' : 'already_counted';
+    else normalized.linkedBufferExpenseId = '';
     cfg.entries = cfg.entries.filter((item) => item.id !== normalized.id);
     cfg.entries.push(normalized);
+    if (normalized.type === 'expense' && householdMode === 'buffer') syncSelfEmploymentBufferExpense(normalized);
     normalizeSelfEmployment();
-    return normalized;
+    return cfg.entries.find((item) => item.id === normalized.id) || normalized;
   }
 
   function deleteSelfEmploymentEntry(entryId) {
     const cfg = normalizeSelfEmployment();
+    const entry = cfg.entries.find((item) => item.id === entryId);
+    if (entry) removeSelfEmploymentBufferExpenseLink(entry);
     const before = cfg.entries.length;
-    cfg.entries = cfg.entries.filter((entry) => entry.id !== entryId);
+    cfg.entries = cfg.entries.filter((item) => item.id !== entryId);
     return cfg.entries.length !== before;
   }
 
@@ -6861,7 +6982,7 @@
   function exportSelfEmploymentCsv(year) {
     const cfg = normalizeSelfEmployment();
     const rows = [[
-      'Datum', 'Art', 'Kategorie', 'Beschreibung', 'Belegnummer', 'Bruttobetrag',
+      'Datum', 'Art', 'Zahlungsart', 'Kategorie', 'Beschreibung', 'Belegnummer', 'Bruttobetrag',
       'USt-Satz', 'Nettobetrag', 'Umsatzsteuer', 'Notiz'
     ]];
     getSelfEmploymentEntries(year).slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((entry) => {
@@ -6869,6 +6990,7 @@
       rows.push([
         entry.date,
         entry.type === 'income' ? 'Einnahme' : 'Ausgabe',
+        getSelfEmploymentPaymentMethodLabel(entry.paymentMethod),
         entry.category,
         entry.description,
         entry.documentNumber,
@@ -10847,6 +10969,7 @@
       let visibleCount = 0;
       posts.forEach((post) => {
         ensurePostConfig(post);
+        const linkedBusinessEntry = getSelfEmploymentEntryForBufferExpense(post);
         const dueNow = isDue(post, currentMonth);
         const paidNow = isPostPaidForMonth(post, currentMonth);
         // Sonstige Ausgaben werden monatsrein angezeigt:
@@ -10873,6 +10996,9 @@
           <td class="account-only">${getAccountName(post.accountId)}</td>
           <td>${statusHtml}</td>
           <td></td>`;
+        if (linkedBusinessEntry) {
+          tr.children[0].appendChild(createUiEl('div', 'small muted', `Automatisch aus EÜR · ${getSelfEmploymentPaymentMethodLabel(linkedBusinessEntry.paymentMethod)}`));
+        }
         const actionCell = tr.children[9];
 
         const paidBtn = document.createElement('button');
@@ -10912,16 +11038,28 @@
         });
 
         const bookedNow = isPostBookedForMonth(post, currentMonth);
-        actionCell.appendChild(createActionMenu([
-          { label: linkedSavingsGoalName ? 'Zurücklegen' : (deductsBalance ? 'Bezahlt · Konto abziehen' : 'Bezahlt markieren'), className: 'success', disabled: !dueNow || paidNow, onClick: () => { setPostPaidForMonth(post, currentMonth, true); saveState(); render(); } },
-          !balanceDebitedNow && paidNow && deductsBalance ? { label: post.bookingType === 'transfer' ? 'Umbuchung nachholen' : 'Kontoabzug nachholen', className: 'success', onClick: () => { applyPostAccountBalanceDebit(post, currentMonth, true); saveState(); render(); } } : null,
-          ACCOUNTS_ENABLED ? { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : 'Bezahlt + buchen', className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(post, currentMonth); saveState(); render(); } } : null,
-          ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(post, currentMonth); saveState(); render(); } } : null,
-          { label: 'Zahlung zurücksetzen', className: 'secondary', disabled: !paidNow, onClick: () => { setPostPaidForMonth(post, currentMonth, false); saveState(); render(); } },
-          { label: 'In anderen Monat verschieben', className: 'secondary', onClick: () => showBufferMoveMonthModal(post) },
-          { label: 'Bearbeiten', className: 'primary', onClick: () => showBufferExpenseEditor(post) },
-          { label: 'Löschen', className: 'danger', onClick: () => { if (confirm(`"${post.name}" löschen?`)) { state.bufferExpenses = state.bufferExpenses.filter((x) => x.id !== post.id); saveState(); render(); } } }
-        ]));
+        const actionItems = linkedBusinessEntry
+          ? [
+              { label: 'EÜR-Buchung bearbeiten', className: 'primary', onClick: () => showSelfEmploymentEntryEditor(linkedBusinessEntry) },
+              { label: 'Nicht mehr unter Sonstige anzeigen', className: 'secondary', onClick: () => {
+                if (!confirm('Die EÜR-Buchung bleibt erhalten und wird weiterhin einmal vom gesamten verfügbaren Betrag abgezogen. Nur der zusätzliche Eintrag unter „Sonstige Ausgaben“ wird entfernt. Fortfahren?')) return;
+                detachSelfEmploymentBufferExpense(post);
+                addChangeLog('Selbständigkeit', `${linkedBusinessEntry.description}: nicht mehr unter Sonstige Ausgaben angezeigt.`, currentMonth);
+                saveState();
+                render();
+              } }
+            ]
+          : [
+              { label: linkedSavingsGoalName ? 'Zurücklegen' : (deductsBalance ? 'Bezahlt · Konto abziehen' : 'Bezahlt markieren'), className: 'success', disabled: !dueNow || paidNow, onClick: () => { setPostPaidForMonth(post, currentMonth, true); saveState(); render(); } },
+              !balanceDebitedNow && paidNow && deductsBalance ? { label: post.bookingType === 'transfer' ? 'Umbuchung nachholen' : 'Kontoabzug nachholen', className: 'success', onClick: () => { applyPostAccountBalanceDebit(post, currentMonth, true); saveState(); render(); } } : null,
+              ACCOUNTS_ENABLED ? { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : 'Bezahlt + buchen', className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(post, currentMonth); saveState(); render(); } } : null,
+              ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(post, currentMonth); saveState(); render(); } } : null,
+              { label: 'Zahlung zurücksetzen', className: 'secondary', disabled: !paidNow, onClick: () => { setPostPaidForMonth(post, currentMonth, false); saveState(); render(); } },
+              { label: 'In anderen Monat verschieben', className: 'secondary', onClick: () => showBufferMoveMonthModal(post) },
+              { label: 'Bearbeiten', className: 'primary', onClick: () => showBufferExpenseEditor(post) },
+              { label: 'Löschen', className: 'danger', onClick: () => { if (confirm(`"${post.name}" löschen?`)) { state.bufferExpenses = state.bufferExpenses.filter((x) => x.id !== post.id); saveState(); render(); } } }
+            ];
+        actionCell.appendChild(createActionMenu(actionItems));
         tbody.appendChild(tr);
       });
 
@@ -13203,9 +13341,11 @@ function showPersonalEditor(personId, editPost) {
       category: '',
       amount: 0,
       vatRate: 0,
+      paymentMethod: 'transfer',
       documentNumber: '',
       note: '',
-      budgetMode: requestedType === 'expense' ? 'already_counted' : 'auto_count'
+      budgetMode: requestedType === 'expense' ? 'already_counted' : 'auto_count',
+      linkedBufferExpenseId: ''
     };
     const content = document.createElement('div');
     content.className = 'modal-form self-employment-form';
@@ -13242,6 +13382,9 @@ function showPersonalEditor(personId, editPost) {
 
     const thirdRow = document.createElement('div');
     thirdRow.className = 'row';
+    const paymentMethodSelect = document.createElement('select');
+    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option>';
+    paymentMethodSelect.value = normalizeSelfEmploymentPaymentMethod(item.paymentMethod);
     const documentInput = document.createElement('input');
     documentInput.type = 'text';
     documentInput.value = item.documentNumber || '';
@@ -13250,23 +13393,28 @@ function showPersonalEditor(personId, editPost) {
     noteInput.type = 'text';
     noteInput.value = item.note || '';
     noteInput.placeholder = 'optional';
+    thirdRow.appendChild(createLabelInput('Bezahlt per', paymentMethodSelect));
     thirdRow.appendChild(createLabelInput('Beleg- / Rechnungsnummer', documentInput));
     thirdRow.appendChild(createLabelInput('Notiz', noteInput));
     content.appendChild(thirdRow);
 
-    const householdBudgetLabel = document.createElement('label');
-    householdBudgetLabel.className = 'check-line recurring-personal-check';
-    const householdBudgetCheck = document.createElement('input');
-    householdBudgetCheck.type = 'checkbox';
-    householdBudgetCheck.checked = item.budgetMode !== 'auto_count';
-    householdBudgetLabel.appendChild(householdBudgetCheck);
-    householdBudgetLabel.appendChild(document.createTextNode(' Ausgabe ist bereits unter „Sonstige Ausgaben“ oder „Persönliche Ausgaben“ erfasst'));
-    content.appendChild(householdBudgetLabel);
-    const householdBudgetHint = createUiEl('p', 'small muted', 'Aktiv lassen, wenn der Betrag dort schon abgezogen wird. Nur ausschalten, wenn diese EÜR-Buchung die Ausgabe erstmals in den gesamten verfügbaren Betrag aufnehmen soll.');
+    const householdModeSelect = document.createElement('select');
+    householdModeSelect.innerHTML = [
+      '<option value="buffer">Automatisch unter „Sonstige Ausgaben“ übernehmen</option>',
+      '<option value="already_counted">Bereits unter „Sonstige“ oder „Persönlich“ eingetragen</option>',
+      '<option value="auto_count">Nur hier im gesamten verfügbaren Betrag abziehen</option>'
+    ].join('');
+    const linkedBufferExpense = getSelfEmploymentLinkedBufferExpense(item);
+    householdModeSelect.value = linkedBufferExpense
+      ? 'buffer'
+      : (isNew && item.type === 'expense' ? 'buffer' : (item.budgetMode === 'auto_count' ? 'auto_count' : 'already_counted'));
+    const householdBudgetField = createLabelInput('Im Haushaltsplan berücksichtigen', householdModeSelect);
+    content.appendChild(householdBudgetField);
+    const householdBudgetHint = createUiEl('p', 'small muted', 'Bei der automatischen Übernahme erscheint die bezahlte Ausgabe sofort unter „Sonstige Ausgaben“. Sie wird trotzdem nur einmal vom verfügbaren Betrag abgezogen.');
     content.appendChild(householdBudgetHint);
     const updateBudgetModeVisibility = () => {
       const show = typeSelect.value === 'expense';
-      householdBudgetLabel.hidden = !show;
+      householdBudgetField.hidden = !show;
       householdBudgetHint.hidden = !show;
     };
 
@@ -13293,7 +13441,7 @@ function showPersonalEditor(personId, editPost) {
     };
     let previousEntryType = typeSelect.value;
     typeSelect.addEventListener('change', () => {
-      if (previousEntryType === 'income' && typeSelect.value === 'expense') householdBudgetCheck.checked = true;
+      if (previousEntryType === 'income' && typeSelect.value === 'expense') householdModeSelect.value = 'buffer';
       previousEntryType = typeSelect.value;
       updateCategories();
       updateBudgetModeVisibility();
@@ -13329,11 +13477,15 @@ function showPersonalEditor(personId, editPost) {
             category: categorySelect.value,
             amount,
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
+            paymentMethod: paymentMethodSelect.value,
             documentNumber: documentInput.value,
             note: noteInput.value,
-            budgetMode: typeSelect.value === 'expense' && !householdBudgetCheck.checked ? 'auto_count' : 'already_counted',
+            budgetMode: typeSelect.value === 'expense' && householdModeSelect.value === 'auto_count' ? 'auto_count' : 'already_counted',
             recurringTemplateId: item.recurringTemplateId || '',
-            recurringMonth: item.recurringMonth || ''
+            recurringMonth: item.recurringMonth || '',
+            linkedBufferExpenseId: item.linkedBufferExpenseId || ''
+          }, {
+            householdMode: typeSelect.value === 'expense' ? householdModeSelect.value : 'already_counted'
           });
           if (!saved) return alert('Der Betriebsvorgang konnte nicht gespeichert werden.');
           selfEmploymentReportYear = saved.date.slice(0, 4);
@@ -13363,6 +13515,7 @@ function showPersonalEditor(personId, editPost) {
       endMonth: '',
       paymentDay: 1,
       vatRate: 0,
+      paymentMethod: 'transfer',
       note: '',
       includeInPersonalBudget: true,
       personalCostId: ''
@@ -13424,11 +13577,15 @@ function showPersonalEditor(personId, editPost) {
     const vatSelect = document.createElement('select');
     vatSelect.innerHTML = '<option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option>';
     vatSelect.value = String(Number(item.vatRate || 0));
+    const paymentMethodSelect = document.createElement('select');
+    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option>';
+    paymentMethodSelect.value = normalizeSelfEmploymentPaymentMethod(item.paymentMethod);
     const noteInput = document.createElement('input');
     noteInput.type = 'text';
     noteInput.value = item.note || '';
     noteInput.placeholder = 'optional';
     thirdRow.appendChild(createLabelInput('Zahlungstag (1–28)', dayInput));
+    thirdRow.appendChild(createLabelInput('Bezahlt per', paymentMethodSelect));
     thirdRow.appendChild(createLabelInput('Umsatzsteuer im Betrag', vatSelect));
     thirdRow.appendChild(createLabelInput('Notiz', noteInput));
     content.appendChild(thirdRow);
@@ -13473,6 +13630,7 @@ function showPersonalEditor(personId, editPost) {
             endMonth: endInput.value,
             paymentDay,
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
+            paymentMethod: paymentMethodSelect.value,
             note: noteInput.value,
             includeInPersonalBudget: personalCheck.checked,
             personalCostId: item.personalCostId || ''
@@ -13531,7 +13689,7 @@ function showPersonalEditor(personId, editPost) {
         const tr = document.createElement('tr');
         const nameTd = document.createElement('td');
         nameTd.appendChild(createUiEl('strong', '', template.name));
-        nameTd.appendChild(createUiEl('div', 'small muted', template.includeInPersonalBudget ? 'Auch bei Benny persönlich eingeplant' : 'Aus Betriebspuffer bezahlt'));
+        nameTd.appendChild(createUiEl('div', 'small muted', `${template.includeInPersonalBudget ? 'Auch bei Benny persönlich eingeplant' : 'Aus Betriebspuffer bezahlt'} · ${getSelfEmploymentPaymentMethodLabel(template.paymentMethod)}`));
         const amountTd = createUiEl('td', '', euro(template.amount));
         const intervalTd = createUiEl('td', '', getSelfEmploymentRecurringIntervalLabel(template));
         const statusTd = document.createElement('td');
@@ -13599,7 +13757,7 @@ function showPersonalEditor(personId, editPost) {
       const tr = document.createElement('tr');
       const nameTd = document.createElement('td');
       nameTd.appendChild(createUiEl('strong', '', template.name));
-      nameTd.appendChild(createUiEl('div', 'small muted', `${euro(template.amount)} · ${template.category}`));
+      nameTd.appendChild(createUiEl('div', 'small muted', `${euro(template.amount)} · ${template.category} · ${getSelfEmploymentPaymentMethodLabel(template.paymentMethod)}`));
       const intervalTd = createUiEl('td', '', getSelfEmploymentRecurringIntervalLabel(template));
       const nextTd = createUiEl('td', '', nextDue ? formatMonthLabel(nextDue) : 'Beendet');
       const personalTd = createUiEl('td', '', template.includeInPersonalBudget ? 'Benny' : 'Nein');
@@ -13635,8 +13793,8 @@ function showPersonalEditor(personId, editPost) {
       : '<tr><td colspan="4">Keine Buchungen vorhanden.</td></tr>';
     const entryRows = summary.entries.slice().sort((a, b) => a.date.localeCompare(b.date)).map((entry) => {
       const amount = getSelfEmploymentEntryBreakdown(entry);
-      return `<tr><td>${escapeHtml(formatSelfEmploymentDate(entry.date))}</td><td>${entry.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.documentNumber || '-')}</td><td class="num">${euro(amount.gross)}</td><td>${escapeHtml(entry.note || '')}</td></tr>`;
-    }).join('') || '<tr><td colspan="7">Keine Buchungen vorhanden.</td></tr>';
+      return `<tr><td>${escapeHtml(formatSelfEmploymentDate(entry.date))}</td><td>${entry.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(getSelfEmploymentPaymentMethodLabel(entry.paymentMethod))}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.documentNumber || '-')}</td><td class="num">${euro(amount.gross)}</td><td>${escapeHtml(entry.note || '')}</td></tr>`;
+    }).join('') || '<tr><td colspan="8">Keine Buchungen vorhanden.</td></tr>';
     const vatBlock = cfg.taxMode === 'vat_registered'
       ? `<section><h2>Umsatzsteuer-Aufteilung</h2><div class="metrics"><div><span>Netto-Einnahmen</span><strong>${euro(summary.incomeNet)}</strong></div><div><span>Vereinnahmte Umsatzsteuer</span><strong>${euro(summary.collectedVat)}</strong></div><div><span>Netto-Ausgaben</span><strong>${euro(summary.expenseNet)}</strong></div><div><span>Enthaltene Vorsteuer</span><strong>${euro(summary.inputVat)}</strong></div></div></section>`
       : '';
@@ -13646,7 +13804,7 @@ function showPersonalEditor(personId, editPost) {
       <div class="metrics"><div><span>Betriebseinnahmen</span><strong>${euro(summary.incomeGross)}</strong></div><div><span>Betriebsausgaben</span><strong>${euro(summary.expenseGross)}</strong></div><div><span>${summary.result >= 0 ? 'Überschuss' : 'Verlust'}</span><strong>${euro(Math.abs(summary.result))}</strong></div></div>
       ${vatBlock}<section><h2>Monatsübersicht</h2><table><thead><tr><th>Monat</th><th class="num">Einnahmen</th><th class="num">Ausgaben</th><th class="num">Ergebnis</th></tr></thead><tbody>${monthRows}</tbody></table></section>
       <section><h2>Summen nach EÜR-Kategorie</h2><table><thead><tr><th>Art</th><th>Kategorie</th><th class="num">Summe</th></tr></thead><tbody>${categoryRows}</tbody></table></section>
-      <section><h2>Buchungsliste</h2><table><thead><tr><th>Datum</th><th>Art</th><th>Kategorie</th><th>Beschreibung</th><th>Beleg</th><th class="num">Betrag</th><th>Notiz</th></tr></thead><tbody>${entryRows}</tbody></table></section>
+      <section><h2>Buchungsliste</h2><table><thead><tr><th>Datum</th><th>Art</th><th>Zahlungsart</th><th>Kategorie</th><th>Beschreibung</th><th>Beleg</th><th class="num">Betrag</th><th>Notiz</th></tr></thead><tbody>${entryRows}</tbody></table></section>
       <p class="foot">Arbeitsübersicht aus dem Haushaltsplaner. Sie ersetzt weder die amtliche Anlage EÜR noch eine steuerliche Prüfung. Für Abschreibungen, gemischte Nutzung und Sonderfälle bitte die steuerliche Behandlung prüfen.</p>
       <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),150));<\/script></body></html>`;
   }
@@ -13844,7 +14002,7 @@ function showPersonalEditor(personId, editPost) {
     } else {
       const table = document.createElement('table');
       table.className = 'list-table self-employment-table';
-      table.innerHTML = '<thead><tr><th>Datum</th><th>Art</th><th>Kategorie / Beschreibung</th><th>Beleg</th><th>Betrag</th><th>USt</th><th>Aktion</th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>Art</th><th>Zahlungsart</th><th>Kategorie / Beschreibung</th><th>Beleg</th><th>Betrag</th><th>USt</th><th>Aktion</th></tr></thead>';
       const tbody = document.createElement('tbody');
       summary.entries.forEach((entry) => {
         const amount = getSelfEmploymentEntryBreakdown(entry);
@@ -13854,6 +14012,7 @@ function showPersonalEditor(personId, editPost) {
         const typeTd = document.createElement('td');
         const typePill = createUiEl('span', entry.type === 'income' ? 'pill success' : 'pill warning', entry.type === 'income' ? 'Einnahme' : 'Ausgabe');
         typeTd.appendChild(typePill);
+        const paymentTd = createUiEl('td', '', getSelfEmploymentPaymentMethodLabel(entry.paymentMethod));
         const descTd = document.createElement('td');
         descTd.appendChild(createUiEl('strong', '', entry.category));
         descTd.appendChild(createUiEl('div', 'small', entry.description));
@@ -13861,7 +14020,9 @@ function showPersonalEditor(personId, editPost) {
           descTd.appendChild(createUiEl(
             'div',
             'small muted',
-            entry.budgetMode === 'auto_count'
+            getSelfEmploymentLinkedBufferExpense(entry)
+              ? 'Automatisch unter „Sonstige Ausgaben“ übernommen'
+              : entry.budgetMode === 'auto_count'
               ? 'Wird im gesamten verfügbaren Betrag abgezogen'
               : 'Im Haushalt bereits berücksichtigt'
           ));
@@ -13886,7 +14047,7 @@ function showPersonalEditor(personId, editPost) {
             }
           } }
         ]));
-        [dateTd, typeTd, descTd, documentTd, amountTd, vatTd, actionTd].forEach((td) => tr.appendChild(td));
+        [dateTd, typeTd, paymentTd, descTd, documentTd, amountTd, vatTd, actionTd].forEach((td) => tr.appendChild(td));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
