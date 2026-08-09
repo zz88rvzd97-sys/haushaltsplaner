@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.63
+ * Haushaltsplaner Version 2.64
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.63';
+  const APP_VERSION = '2.64';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -766,6 +766,7 @@
     changeLog: [],
     debts: [],
     contracts: [],
+    contractSuggestionDismissals: [],
     pots: [],
     savingsGoals: [],
     // Liste der Monate, in denen die Rücklagen/Spar‑Beträge bereits
@@ -985,6 +986,7 @@
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
     if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
     if (!Array.isArray(state.contracts)) state.contracts = [];
+    if (!Array.isArray(state.contractSuggestionDismissals)) state.contractSuggestionDismissals = [];
     normalizeSelfEmployment();
     normalizeAllTaxRefunds();
     normalizeGroceryExpenses();
@@ -1022,6 +1024,7 @@
 
   function saveState() {
     try {
+      normalizeContracts();
       sanitizeStateTextValues(state);
       const payload = JSON.stringify(state);
       writeStatePayloadToStorage(payload);
@@ -15686,6 +15689,154 @@ function showPersonalEditor(personId, editPost) {
     return ['Strom', 'Gas / Heizung', 'Internet', 'Mobilfunk', 'Versicherung', 'Abo', 'Mitgliedschaft', 'Leasing / Finanzierung', 'Sonstiges'];
   }
 
+  function normalizeContractSourceType(value) {
+    return value === 'common' || value === 'personal' ? value : '';
+  }
+
+  function normalizeContractMatchKey(value) {
+    return String(value || '')
+      .toLocaleLowerCase('de-DE')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  function normalizeContractSuggestionDismissals() {
+    if (!Array.isArray(state.contractSuggestionDismissals)) state.contractSuggestionDismissals = [];
+    state.contractSuggestionDismissals = Array.from(new Set(state.contractSuggestionDismissals
+      .map((key) => String(key || '').trim())
+      .filter(Boolean)));
+  }
+
+  function getContractSourcePost(contract) {
+    if (!contract || !contract.sourcePostId) return null;
+    const sourceType = normalizeContractSourceType(contract.sourceType);
+    const list = sourceType === 'common'
+      ? state.commonCosts
+      : sourceType === 'personal'
+        ? state.personalCosts
+        : null;
+    return Array.isArray(list) ? list.find((post) => post && String(post.id || '') === String(contract.sourcePostId)) || null : null;
+  }
+
+  function getContractSourceReferenceMonth(post) {
+    const actualMonth = dateToMonthKey(new Date());
+    if (isPostActiveInMonth(post, actualMonth)) return actualMonth;
+    if (isMonthKey(post && post.endMonth)) return post.endMonth;
+    if (isMonthKey(post && post.startMonth)) return post.startMonth;
+    return actualMonth;
+  }
+
+  function syncContractFromSource(contract) {
+    const post = getContractSourcePost(contract);
+    if (!post) return contract;
+    ensurePostConfig(post);
+    const sourceMonth = getContractSourceReferenceMonth(post);
+    contract.amount = roundMoney(Math.max(0, Number(getEffectiveAmountForMonth(post, sourceMonth) || 0)));
+    contract.billingIntervalMonths = Math.max(1, Math.round(Number(post.interval || 1)));
+    if (!contract.name) contract.name = String(post.name || '').trim();
+    return contract;
+  }
+
+  function getContractSourceLabel(sourceType, post) {
+    if (sourceType === 'common') return 'Gemeinsame Kosten';
+    const person = post && post.personId ? getPersonById(post.personId) : null;
+    return person ? `Persönliche Ausgaben · ${person.name}` : 'Persönliche Ausgaben';
+  }
+
+  function getContractSuggestionKey(sourceType, post) {
+    const stableId = String(post && post.id || '').trim();
+    if (stableId) return `${sourceType}:${stableId}`;
+    return `${sourceType}:${String(post && post.personId || '')}:${normalizeContractMatchKey(post && post.name)}:${String(post && post.startMonth || '')}`;
+  }
+
+  function inferContractCategory(name) {
+    const key = normalizeContractMatchKey(name);
+    if (/strom|energie/.test(key)) return 'Strom';
+    if (/gas|heizung|waerme|fernwaerme/.test(key)) return 'Gas / Heizung';
+    if (/internet|festnetz|dsl|kabel/.test(key)) return 'Internet';
+    if (/mobilfunk|handy|smartphone/.test(key)) return 'Mobilfunk';
+    if (/versicherung|haftpflicht|hausrat|rechtsschutz|zahnzusatz|huk/.test(key)) return 'Versicherung';
+    if (/fitness|verein|partei|gewerkschaft|mitglied|beitrag|ver di|afd/.test(key)) return 'Mitgliedschaft';
+    if (/leasing|finanzierung/.test(key)) return 'Leasing / Finanzierung';
+    if (/prime|sky|stream|netflix|spotify|apple|chatgpt|abo/.test(key)) return 'Abo';
+    return 'Sonstiges';
+  }
+
+  function isLikelyContractPost(post) {
+    if (!post || typeof post !== 'object') return false;
+    ensurePostConfig(post);
+    if (post.oneTime === true || post.linkedDebtId || getLinkedDebtForPost(post)) return false;
+    if (post.linkedSavingsGoalId || getLinkedSavingsGoal(post)) return false;
+    const actualMonth = dateToMonthKey(new Date());
+    if (!isPostActiveInMonth(post, actualMonth)) return false;
+    if (!(Number(getEffectiveAmountForMonth(post, actualMonth)) > 0)) return false;
+    const nameKey = normalizeContractMatchKey(post.name);
+    if (!nameKey) return false;
+    return !/(^| )(einkaufsgeld|tankgeld|rauchzeug|friseur|taschengeld|haushaltsgeld|lebensmittel|kraftstoff|benzin|diesel|rucklage|ruecklage|sparen|sparbetrag|sonderausgabe)( |$)/.test(nameKey);
+  }
+
+  function getContractSuggestions(options = {}) {
+    normalizeContractSuggestionDismissals();
+    const includeDismissed = options.includeDismissed === true;
+    const linkedKeys = new Set(state.contracts
+      .filter((contract) => contract.sourcePostId && normalizeContractSourceType(contract.sourceType))
+      .map((contract) => `${contract.sourceType}:${contract.sourcePostId}`));
+    const existingNames = new Set(state.contracts
+      .filter((contract) => !contract.sourcePostId)
+      .map((contract) => normalizeContractMatchKey(contract.name))
+      .filter(Boolean));
+    const dismissed = new Set(state.contractSuggestionDismissals);
+    const seen = new Set();
+    const suggestions = [];
+    const addSuggestion = (sourceType, post) => {
+      if (!isLikelyContractPost(post)) return;
+      const key = getContractSuggestionKey(sourceType, post);
+      if (linkedKeys.has(key) || (!includeDismissed && dismissed.has(key))) return;
+      const nameKey = normalizeContractMatchKey(post.name);
+      const personKey = sourceType === 'personal' ? String(post.personId || '') : '';
+      const duplicateKey = `${sourceType}:${personKey}:${nameKey}`;
+      if (seen.has(duplicateKey) || existingNames.has(nameKey)) return;
+      seen.add(duplicateKey);
+      const referenceMonth = getContractSourceReferenceMonth(post);
+      suggestions.push({
+        key,
+        sourceType,
+        sourcePostId: String(post.id || ''),
+        post,
+        name: String(post.name || '').trim(),
+        category: inferContractCategory(post.name),
+        amount: roundMoney(Number(getEffectiveAmountForMonth(post, referenceMonth) || 0)),
+        billingIntervalMonths: Math.max(1, Math.round(Number(post.interval || 1))),
+        startDate: isMonthKey(post.startMonth) ? `${post.startMonth}-01` : '',
+        sourceLabel: getContractSourceLabel(sourceType, post),
+        dismissed: dismissed.has(key)
+      });
+    };
+    (state.commonCosts || []).forEach((post) => addSuggestion('common', post));
+    (state.personalCosts || []).forEach((post) => addSuggestion('personal', post));
+    return suggestions.sort((a, b) => a.sourceLabel.localeCompare(b.sourceLabel, 'de') || a.name.localeCompare(b.name, 'de'));
+  }
+
+  function dismissContractSuggestion(suggestion) {
+    if (!suggestion || !suggestion.key) return;
+    normalizeContractSuggestionDismissals();
+    if (!state.contractSuggestionDismissals.includes(suggestion.key)) state.contractSuggestionDismissals.push(suggestion.key);
+    addChangeLog('Verträge', `${suggestion.name || 'Kostenposten'} als „Kein Vertrag“ markiert.`, currentMonth);
+    saveState();
+    render();
+  }
+
+  function restoreDismissedContractSuggestions() {
+    normalizeContractSuggestionDismissals();
+    if (!state.contractSuggestionDismissals.length) return;
+    state.contractSuggestionDismissals = [];
+    addChangeLog('Verträge', 'Ausgeblendete Vertragsvorschläge wieder eingeblendet.', currentMonth);
+    saveState();
+    render();
+  }
+
   function normalizeContract(contract) {
     const item = contract && typeof contract === 'object' ? contract : {};
     const numberOr = (value, fallback, min = 0, max = 600) => {
@@ -15709,14 +15860,18 @@ function showPersonalEditor(personId, editPost) {
     item.reviewIntervalMonths = Math.max(1, Math.round(numberOr(item.reviewIntervalMonths, 12, 1, 120)));
     item.notes = String(item.notes || '').trim();
     item.active = item.active !== false;
+    item.sourceType = normalizeContractSourceType(item.sourceType);
+    item.sourcePostId = item.sourceType ? String(item.sourcePostId || '').trim() : '';
+    item.startDateEstimated = item.startDateEstimated === true;
     return item;
   }
 
   function normalizeContracts() {
     if (!Array.isArray(state.contracts)) state.contracts = [];
+    normalizeContractSuggestionDismissals();
     state.contracts = state.contracts
       .filter((contract) => contract && typeof contract === 'object')
-      .map((contract) => normalizeContract(contract));
+      .map((contract) => syncContractFromSource(normalizeContract(contract)));
   }
 
   function getContractMonthlyCost(contract) {
@@ -15849,9 +16004,9 @@ function showPersonalEditor(personId, editPost) {
     render();
   }
 
-  function showContractEditor(contract = null) {
+  function showContractEditor(contract = null, preset = null) {
     const editing = !!contract;
-    const source = normalizeContract(contract ? { ...contract } : {
+    const source = normalizeContract(contract ? { ...contract } : (preset ? { ...preset } : {
       category: 'Sonstiges',
       amount: 0,
       billingIntervalMonths: 1,
@@ -15863,12 +16018,20 @@ function showPersonalEditor(personId, editPost) {
       lastReviewedDate: contractDateToKey(new Date()),
       reviewIntervalMonths: 12,
       active: true
-    });
+    }));
+    const linkedSourcePost = getContractSourcePost(source);
     const content = createUiEl('div', 'modal-form contract-editor-form');
     content.appendChild(createGuidedFormIntro(
-      editing ? 'Vertrag bearbeiten' : 'Vertrag erfassen',
-      'Trage nur die Angaben ein, die du kennst. Der Vertragsbeginn wird für die automatische Fristberechnung benötigt.'
+      editing ? 'Vertrag bearbeiten' : (linkedSourcePost ? 'Erkannten Vertrag prüfen' : 'Vertrag erfassen'),
+      linkedSourcePost
+        ? 'Name, Betrag und Zahlungsweise wurden aus deinen laufenden Kosten übernommen. Ergänze oder prüfe jetzt die Vertragsdaten.'
+        : 'Trage nur die Angaben ein, die du kennst. Der Vertragsbeginn wird für die automatische Fristberechnung benötigt.'
     ));
+    if (linkedSourcePost) {
+      const sourceNotice = createUiEl('div', 'notice info contract-source-notice');
+      sourceNotice.innerHTML = `<strong>Automatisch verknüpft:</strong> ${escapeHtml(getContractSourceLabel(source.sourceType, linkedSourcePost))}. Betrag und Zahlungsweise bleiben mit diesem Kostenposten synchron.`;
+      content.appendChild(sourceNotice);
+    }
 
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
@@ -15887,9 +16050,11 @@ function showPersonalEditor(personId, editPost) {
     getContractCategories().forEach((category) => categorySelect.appendChild(new Option(category, category)));
     categorySelect.value = source.category;
     const amountInput = createMoneyField(source.amount);
-    const billingSelect = document.createElement('select');
-    [['1', 'monatlich'], ['3', 'vierteljährlich'], ['6', 'halbjährlich'], ['12', 'jährlich']].forEach(([value, label]) => billingSelect.appendChild(new Option(label, value)));
-    billingSelect.value = String(source.billingIntervalMonths);
+    const billingSelect = createIntervalSelect(source.billingIntervalMonths);
+    if (linkedSourcePost) {
+      amountInput.disabled = true;
+      billingSelect.disabled = true;
+    }
     const costRow = createUiEl('div', 'row contract-cost-fields');
     costRow.appendChild(createLabelInput('Kategorie', categorySelect));
     costRow.appendChild(createLabelInput('Betrag in €', amountInput));
@@ -15909,6 +16074,9 @@ function showPersonalEditor(personId, editPost) {
     durationRow.appendChild(createLabelInput('Vertragsbeginn', startInput));
     durationRow.appendChild(createLabelInput('Mindestlaufzeit in Monaten', termInput));
     content.appendChild(durationRow);
+    if (source.startDateEstimated) {
+      content.appendChild(createUiEl('p', 'small muted contract-estimated-date-note', 'Der 1. Tag des Startmonats wurde vorläufig eingesetzt. Bitte das genaue Vertragsdatum prüfen und bei Bedarf ändern.'));
+    }
 
     const noticeValueInput = document.createElement('input');
     noticeValueInput.type = 'number';
@@ -15980,10 +16148,17 @@ function showPersonalEditor(personId, editPost) {
             lastReviewedDate: reviewedInput.value,
             reviewIntervalMonths: Number(reviewIntervalInput.value || 12),
             notes: notesInput.value,
-            active: editing ? contract.active !== false : true
+            active: editing ? contract.active !== false : true,
+            startDateEstimated: false
           });
           if (editing) Object.assign(contract, savedContract);
-          else state.contracts.push(savedContract);
+          else {
+            state.contracts.push(savedContract);
+            if (savedContract.sourcePostId) {
+              const suggestionKey = `${savedContract.sourceType}:${savedContract.sourcePostId}`;
+              state.contractSuggestionDismissals = (state.contractSuggestionDismissals || []).filter((key) => key !== suggestionKey);
+            }
+          }
           addChangeLog('Verträge', `${savedContract.name} ${editing ? 'aktualisiert' : 'angelegt'}.`, currentMonth);
           saveState();
           close();
@@ -16012,6 +16187,9 @@ function showPersonalEditor(personId, editPost) {
     page.appendChild(header);
 
     const activeContracts = state.contracts.filter((contract) => contract.active !== false);
+    const allSuggestions = getContractSuggestions({ includeDismissed: true });
+    const suggestions = allSuggestions.filter((suggestion) => !suggestion.dismissed);
+    const dismissedSuggestionCount = allSuggestions.filter((suggestion) => suggestion.dismissed).length;
     const monthlyTotal = activeContracts.reduce((sum, contract) => sum + getContractMonthlyCost(contract), 0);
     const annualTotal = activeContracts.reduce((sum, contract) => sum + getContractAnnualCost(contract), 0);
     const attention = getContractAttentionItems();
@@ -16025,6 +16203,7 @@ function showPersonalEditor(personId, editPost) {
       { label: 'Aktive Verträge', value: String(activeContracts.length) },
       { label: 'Kosten pro Monat', value: euro(monthlyTotal), hint: 'Nur Vergleichswert, kein zusätzlicher Abzug.' },
       { label: 'Kosten pro Jahr', value: euro(annualTotal) },
+      { label: 'Erkannte Vorschläge', value: String(suggestions.length), kind: suggestions.length ? 'info' : 'success' },
       { label: 'Jetzt prüfen', value: String(attention.length), kind: attention.some((item) => item.kind === 'danger') ? 'danger' : (attention.length ? 'warning' : 'success') },
       { label: 'Nächste Kündigungsfrist', value: nextDeadline ? formatContractDate(nextDeadline.schedule.cancellationDeadline) : '-' }
     ]));
@@ -16032,6 +16211,82 @@ function showPersonalEditor(personId, editPost) {
     const budgetNotice = createUiEl('div', 'notice info contract-budget-notice');
     budgetNotice.innerHTML = '<strong>Keine Doppelzählung:</strong> Die Vertragskosten dienen hier nur zur Übersicht. Vom verfügbaren Betrag werden weiterhin ausschließlich die Posten unter „Gemeinsame Kosten“ oder „Persönliche Ausgaben“ abgezogen.';
     page.appendChild(budgetNotice);
+
+    if (suggestions.length || dismissedSuggestionCount) {
+      const suggestionCard = createUiEl('div', 'card compact-card contract-suggestions-card');
+      const suggestionHead = createUiEl('div', 'compact-section-head contract-suggestion-head');
+      const suggestionTitle = createUiEl('div', 'contract-suggestion-title');
+      suggestionTitle.appendChild(createUiEl('h3', '', 'Aus laufenden Kosten erkannt'));
+      suggestionTitle.appendChild(createUiEl('p', 'small muted', 'Regelmäßige Kosten werden vorgeschlagen. Verknüpfte Schulden, Rücklagen und typische Budgettöpfe sind bereits ausgefiltert.'));
+      suggestionHead.appendChild(suggestionTitle);
+      suggestionHead.appendChild(createUiEl('span', suggestions.length ? 'pill info' : 'pill success', `${suggestions.length} offen`));
+      suggestionCard.appendChild(suggestionHead);
+
+      if (suggestions.length) {
+        const suggestionList = createUiEl('div', 'contract-suggestion-list');
+        suggestions.forEach((suggestion) => {
+          const row = createUiEl('div', 'contract-suggestion-row');
+          const copy = createUiEl('div', 'contract-suggestion-copy');
+          copy.appendChild(createUiEl('strong', '', suggestion.name));
+          const intervalText = suggestion.billingIntervalMonths === 1
+            ? 'monatlich'
+            : suggestion.billingIntervalMonths === 12
+              ? 'jährlich'
+              : `alle ${suggestion.billingIntervalMonths} Monate`;
+          copy.appendChild(createUiEl('small', 'muted', `${suggestion.sourceLabel} · ${euro(suggestion.amount)} ${intervalText} · ${suggestion.category}`));
+          row.appendChild(copy);
+          const actions = createUiEl('div', 'contract-suggestion-actions');
+          const acceptButton = document.createElement('button');
+          acceptButton.type = 'button';
+          acceptButton.className = 'primary compact';
+          acceptButton.textContent = 'Prüfen & übernehmen';
+          acceptButton.addEventListener('click', () => showContractEditor(null, {
+            name: suggestion.name,
+            provider: '',
+            category: suggestion.category,
+            amount: suggestion.amount,
+            billingIntervalMonths: suggestion.billingIntervalMonths,
+            startDate: suggestion.startDate,
+            startDateEstimated: !!suggestion.startDate,
+            minimumTermMonths: 12,
+            noticePeriodValue: 1,
+            noticePeriodUnit: 'months',
+            renewalMonths: 12,
+            lastReviewedDate: contractDateToKey(new Date()),
+            reviewIntervalMonths: 12,
+            notes: '',
+            active: true,
+            sourceType: suggestion.sourceType,
+            sourcePostId: suggestion.sourcePostId
+          }));
+          actions.appendChild(acceptButton);
+          const dismissButton = document.createElement('button');
+          dismissButton.type = 'button';
+          dismissButton.className = 'secondary compact';
+          dismissButton.textContent = 'Kein Vertrag';
+          dismissButton.addEventListener('click', () => dismissContractSuggestion(suggestion));
+          actions.appendChild(dismissButton);
+          row.appendChild(actions);
+          suggestionList.appendChild(row);
+        });
+        suggestionCard.appendChild(suggestionList);
+      } else {
+        suggestionCard.appendChild(createUiEl('p', 'muted contract-suggestions-empty', 'Alle erkannten Kosten wurden bereits zugeordnet oder als „Kein Vertrag“ markiert.'));
+      }
+
+      if (dismissedSuggestionCount) {
+        const restoreRow = createUiEl('div', 'contract-suggestion-restore');
+        restoreRow.appendChild(createUiEl('small', 'muted', `${dismissedSuggestionCount} Vorschlag/Vorschläge als „Kein Vertrag“ ausgeblendet.`));
+        const restoreButton = document.createElement('button');
+        restoreButton.type = 'button';
+        restoreButton.className = 'secondary compact';
+        restoreButton.textContent = 'Wieder anzeigen';
+        restoreButton.addEventListener('click', restoreDismissedContractSuggestions);
+        restoreRow.appendChild(restoreButton);
+        suggestionCard.appendChild(restoreRow);
+      }
+      page.appendChild(suggestionCard);
+    }
 
     if (attention.length) {
       const alertCard = createUiEl('div', 'card compact-card contract-attention-card');
@@ -16088,6 +16343,9 @@ function showPersonalEditor(personId, editPost) {
           const nameCell = createUiEl('td', 'contract-name-cell');
           nameCell.appendChild(createUiEl('strong', '', contract.name || 'Vertrag'));
           if (contract.provider) nameCell.appendChild(createUiEl('small', 'muted', contract.provider));
+          const sourcePost = getContractSourcePost(contract);
+          if (sourcePost) nameCell.appendChild(createUiEl('small', 'contract-source-label', `Automatisch aus ${getContractSourceLabel(contract.sourceType, sourcePost)}`));
+          else if (contract.sourcePostId) nameCell.appendChild(createUiEl('small', 'contract-source-label missing', 'Verknüpfter Kostenposten fehlt'));
           if (contract.notes) nameCell.appendChild(createUiEl('small', 'muted contract-note', contract.notes));
           row.appendChild(nameCell);
           row.appendChild(createUiEl('td', '', contract.category));
@@ -18088,6 +18346,7 @@ function renderPots() {
             if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
             if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
             if (!Array.isArray(state.contracts)) state.contracts = [];
+            if (!Array.isArray(state.contractSuggestionDismissals)) state.contractSuggestionDismissals = [];
             if (!state.selfEmployment || typeof state.selfEmployment !== 'object') state.selfEmployment = JSON.parse(JSON.stringify(defaultState.selfEmployment));
             if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
             if (!Array.isArray(state.changeLog)) state.changeLog = [];
