@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.66
+ * Haushaltsplaner Version 2.67
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.66';
+  const APP_VERSION = '2.67';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -6521,11 +6521,50 @@
     return normalizeSelfEmploymentPaymentMethod(value) === 'cash' ? 'Bar' : 'Überweisung';
   }
 
+  function normalizeTaskrabbitBreakdown(value, fallbackAmount = 0) {
+    const source = value && typeof value === 'object' ? value : {};
+    const result = {
+      wage: roundMoney(Math.max(0, parseMoneyInput(source.wage || 0) || 0)),
+      material: roundMoney(Math.max(0, parseMoneyInput(source.material || 0) || 0)),
+      tip: roundMoney(Math.max(0, parseMoneyInput(source.tip || 0) || 0))
+    };
+    if (!(result.wage + result.material + result.tip > 0) && Number(fallbackAmount || 0) > 0) {
+      result.wage = roundMoney(Number(fallbackAmount));
+    }
+    return result;
+  }
+
+  function getTaskrabbitBreakdownTotal(value) {
+    const breakdown = normalizeTaskrabbitBreakdown(value);
+    return roundMoney(breakdown.wage + breakdown.material + breakdown.tip);
+  }
+
+  function getTaskrabbitBreakdownLabel(value) {
+    const breakdown = normalizeTaskrabbitBreakdown(value);
+    return `Lohn ${euro(breakdown.wage)} · Material ${euro(breakdown.material)} · Trinkgeld ${euro(breakdown.tip)}`;
+  }
+
   function normalizeSelfEmploymentEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
-    const amount = parseMoneyInput(entry.amount || entry.amountGross || 0);
-    if (!Number.isFinite(amount) || !(amount > 0)) return null;
     const type = entry.type === 'expense' ? 'expense' : 'income';
+    const legacyIncomeText = `${entry.description || ''} ${entry.category || ''}`;
+    const legacyTaskrabbitIncome = type === 'income'
+      && !Object.prototype.hasOwnProperty.call(entry, 'incomeSource')
+      && /task\s*rabb?it|(^|\s)(auftrag|material|trinkgeld)(\s|$)/i.test(legacyIncomeText);
+    const incomeSource = type === 'income' && (entry.incomeSource === 'taskrabbit' || legacyTaskrabbitIncome)
+      ? 'taskrabbit'
+      : 'other';
+    const rawAmount = parseMoneyInput(entry.amount || entry.amountGross || 0);
+    const legacyTaskrabbitBreakdown = legacyTaskrabbitIncome && !(entry.taskrabbitBreakdown && typeof entry.taskrabbitBreakdown === 'object')
+      ? (/trinkgeld/i.test(legacyIncomeText)
+        ? { wage: 0, material: 0, tip: rawAmount }
+        : /material/i.test(legacyIncomeText)
+          ? { wage: 0, material: rawAmount, tip: 0 }
+          : { wage: rawAmount, material: 0, tip: 0 })
+      : entry.taskrabbitBreakdown;
+    const taskrabbitBreakdown = normalizeTaskrabbitBreakdown(legacyTaskrabbitBreakdown, rawAmount);
+    const amount = incomeSource === 'taskrabbit' ? getTaskrabbitBreakdownTotal(taskrabbitBreakdown) : rawAmount;
+    if (!Number.isFinite(amount) || !(amount > 0)) return null;
     const categories = type === 'expense' ? getSelfEmploymentExpenseCategories() : getSelfEmploymentIncomeCategories();
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || ''))
       ? String(entry.date)
@@ -6539,12 +6578,18 @@
       description: typeof entry.description === 'string' && entry.description.trim()
         ? entry.description.trim()
         : (type === 'income' ? 'Betriebseinnahme' : 'Betriebsausgabe'),
-      category: typeof entry.category === 'string' && entry.category.trim()
-        ? entry.category.trim()
-        : categories[0],
+      category: incomeSource === 'taskrabbit'
+        ? 'Umsatzerlöse'
+        : (typeof entry.category === 'string' && entry.category.trim()
+          ? entry.category.trim()
+          : categories[0]),
       amount: roundMoney(amount),
       vatRate,
       paymentMethod: normalizeSelfEmploymentPaymentMethod(entry.paymentMethod),
+      incomeSource,
+      taskrabbitBreakdown: incomeSource === 'taskrabbit'
+        ? taskrabbitBreakdown
+        : { wage: 0, material: 0, tip: 0 },
       documentNumber: typeof entry.documentNumber === 'string' ? entry.documentNumber.trim() : '',
       note: typeof entry.note === 'string' ? entry.note.trim() : '',
       budgetMode: type === 'income'
@@ -6823,6 +6868,69 @@
     return { gross, net, vat: roundMoney(gross - net), vatRate };
   }
 
+  function getSelfEmploymentReportEntries(year) {
+    const entries = getSelfEmploymentEntries(year);
+    const taskrabbitEntries = entries.filter((entry) => entry.type === 'income' && entry.incomeSource === 'taskrabbit');
+    const reportEntries = entries.filter((entry) => !(entry.type === 'income' && entry.incomeSource === 'taskrabbit'));
+    if (!taskrabbitEntries.length) return reportEntries;
+
+    const taskrabbitBreakdown = taskrabbitEntries.reduce((totals, entry) => {
+      const breakdown = normalizeTaskrabbitBreakdown(entry.taskrabbitBreakdown, entry.amount);
+      totals.wage += breakdown.wage;
+      totals.material += breakdown.material;
+      totals.tip += breakdown.tip;
+      return totals;
+    }, { wage: 0, material: 0, tip: 0 });
+    Object.keys(taskrabbitBreakdown).forEach((key) => {
+      taskrabbitBreakdown[key] = roundMoney(taskrabbitBreakdown[key]);
+    });
+    const reportBreakdown = taskrabbitEntries.reduce((totals, entry) => {
+      const amount = getSelfEmploymentEntryBreakdown(entry);
+      totals.gross += amount.gross;
+      totals.net += amount.net;
+      totals.vat += amount.vat;
+      return totals;
+    }, { gross: 0, net: 0, vat: 0, vatRate: 0 });
+    ['gross', 'net', 'vat'].forEach((key) => {
+      reportBreakdown[key] = roundMoney(reportBreakdown[key]);
+    });
+    const paymentMethods = new Set(taskrabbitEntries.map((entry) => normalizeSelfEmploymentPaymentMethod(entry.paymentMethod)));
+    reportEntries.unshift({
+      id: `taskrabbit-annual-${year}`,
+      date: `${year}-12-31`,
+      reportYear: String(year),
+      type: 'income',
+      category: 'Umsatzerlöse',
+      description: `Taskrabbit-Einnahmen ${year}`,
+      documentNumber: `${taskrabbitEntries.length} Auszahlung${taskrabbitEntries.length === 1 ? '' : 'en'}`,
+      note: getTaskrabbitBreakdownLabel(taskrabbitBreakdown),
+      amount: reportBreakdown.gross,
+      vatRate: 0,
+      paymentMethod: paymentMethods.size === 1 ? Array.from(paymentMethods)[0] : 'mixed',
+      incomeSource: 'taskrabbit',
+      taskrabbitBreakdown,
+      reportBreakdown,
+      isTaskrabbitAnnualBundle: true,
+      sourceEntries: taskrabbitEntries
+    });
+    return reportEntries;
+  }
+
+  function getSelfEmploymentReportEntryBreakdown(entry) {
+    return entry && entry.reportBreakdown ? entry.reportBreakdown : getSelfEmploymentEntryBreakdown(entry);
+  }
+
+  function getSelfEmploymentReportDateLabel(entry) {
+    return entry && entry.isTaskrabbitAnnualBundle
+      ? `Jahr ${entry.reportYear}`
+      : formatSelfEmploymentDate(entry && entry.date);
+  }
+
+  function getSelfEmploymentReportPaymentMethodLabel(entry) {
+    if (entry && entry.paymentMethod === 'mixed') return 'Gemischt';
+    return getSelfEmploymentPaymentMethodLabel(entry && entry.paymentMethod);
+  }
+
   function getSelfEmploymentSummary(year) {
     const entries = getSelfEmploymentEntries(year);
     const summary = {
@@ -6869,6 +6977,8 @@
       if (a.type !== b.type) return a.type === 'income' ? -1 : 1;
       return b.amount - a.amount || a.category.localeCompare(b.category, 'de');
     });
+    summary.reportEntries = getSelfEmploymentReportEntries(year);
+    summary.taskrabbitEntries = entries.filter((entry) => entry.type === 'income' && entry.incomeSource === 'taskrabbit');
     return summary;
   }
 
@@ -7028,12 +7138,12 @@
       'Datum', 'Art', 'Zahlungsart', 'Kategorie', 'Beschreibung', 'Belegnummer', 'Bruttobetrag',
       'USt-Satz', 'Nettobetrag', 'Umsatzsteuer', 'Notiz'
     ]];
-    getSelfEmploymentEntries(year).slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((entry) => {
-      const amount = getSelfEmploymentEntryBreakdown(entry);
+    getSelfEmploymentReportEntries(year).slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((entry) => {
+      const amount = getSelfEmploymentReportEntryBreakdown(entry);
       rows.push([
-        entry.date,
+        getSelfEmploymentReportDateLabel(entry),
         entry.type === 'income' ? 'Einnahme' : 'Ausgabe',
-        getSelfEmploymentPaymentMethodLabel(entry.paymentMethod),
+        getSelfEmploymentReportPaymentMethodLabel(entry),
         entry.category,
         entry.description,
         entry.documentNumber,
@@ -13385,6 +13495,8 @@ function showPersonalEditor(personId, editPost) {
       amount: 0,
       vatRate: 0,
       paymentMethod: 'transfer',
+      incomeSource: requestedType === 'income' ? 'taskrabbit' : 'other',
+      taskrabbitBreakdown: { wage: 0, material: 0, tip: 0 },
       documentNumber: '',
       note: '',
       budgetMode: requestedType === 'expense' ? 'already_counted' : 'auto_count',
@@ -13407,6 +13519,43 @@ function showPersonalEditor(personId, editPost) {
     firstRow.appendChild(createLabelInput('Art', typeSelect));
     firstRow.appendChild(createLabelInput('Bezahlter Betrag', amountInput));
     content.appendChild(firstRow);
+
+    const incomeSourceRow = document.createElement('div');
+    incomeSourceRow.className = 'row';
+    const incomeSourceSelect = document.createElement('select');
+    incomeSourceSelect.innerHTML = [
+      '<option value="taskrabbit">Taskrabbit – am Jahresende bündeln</option>',
+      '<option value="other">Andere Einnahme – einzeln aufführen</option>'
+    ].join('');
+    incomeSourceSelect.value = item.incomeSource === 'taskrabbit' || (isNew && requestedType === 'income')
+      ? 'taskrabbit'
+      : 'other';
+    incomeSourceRow.appendChild(createLabelInput('Einnahmenquelle', incomeSourceSelect));
+    content.appendChild(incomeSourceRow);
+
+    const taskrabbitBox = document.createElement('div');
+    taskrabbitBox.className = 'details-box';
+    taskrabbitBox.appendChild(createUiEl('h3', '', 'Taskrabbit-Auszahlung aufteilen'));
+    taskrabbitBox.appendChild(createUiEl('p', 'small muted', 'Trage die drei Bestandteile der gemeinsamen Auszahlung ein. Der bezahlte Gesamtbetrag wird automatisch berechnet.'));
+    const taskrabbitRow = document.createElement('div');
+    taskrabbitRow.className = 'row';
+    const initialTaskrabbitBreakdown = normalizeTaskrabbitBreakdown(
+      item.taskrabbitBreakdown,
+      item.incomeSource === 'taskrabbit' ? item.amount : 0
+    );
+    const taskrabbitWageInput = createMoneyField(initialTaskrabbitBreakdown.wage || '');
+    const taskrabbitMaterialInput = createMoneyField(initialTaskrabbitBreakdown.material || '');
+    const taskrabbitTipInput = createMoneyField(initialTaskrabbitBreakdown.tip || '');
+    taskrabbitWageInput.placeholder = '0,00';
+    taskrabbitMaterialInput.placeholder = '0,00';
+    taskrabbitTipInput.placeholder = '0,00';
+    taskrabbitRow.appendChild(createLabelInput('Lohn', taskrabbitWageInput));
+    taskrabbitRow.appendChild(createLabelInput('Material', taskrabbitMaterialInput));
+    taskrabbitRow.appendChild(createLabelInput('Trinkgeld', taskrabbitTipInput));
+    taskrabbitBox.appendChild(taskrabbitRow);
+    const taskrabbitTotal = createUiEl('div', 'notice success', 'Gesamtauszahlung: 0,00 €');
+    taskrabbitBox.appendChild(taskrabbitTotal);
+    content.appendChild(taskrabbitBox);
 
     const secondRow = document.createElement('div');
     secondRow.className = 'row';
@@ -13486,16 +13635,53 @@ function showPersonalEditor(personId, editPost) {
       categorySelect.value = previous;
       if (!categorySelect.value) categorySelect.value = categories[0];
     };
+    const getEnteredTaskrabbitBreakdown = () => normalizeTaskrabbitBreakdown({
+      wage: taskrabbitWageInput.value,
+      material: taskrabbitMaterialInput.value,
+      tip: taskrabbitTipInput.value
+    });
+    const updateTaskrabbitTotal = () => {
+      const total = getTaskrabbitBreakdownTotal(getEnteredTaskrabbitBreakdown());
+      amountInput.value = total > 0 ? formatNumberInput(total) : '';
+      taskrabbitTotal.textContent = `Gesamtauszahlung: ${euro(total)}`;
+    };
+    const updateIncomeSourceVisibility = () => {
+      const isIncome = typeSelect.value === 'income';
+      const isTaskrabbit = isIncome && incomeSourceSelect.value === 'taskrabbit';
+      incomeSourceRow.hidden = !isIncome;
+      taskrabbitBox.hidden = !isTaskrabbit;
+      amountInput.readOnly = isTaskrabbit;
+      categorySelect.disabled = isTaskrabbit;
+      if (isTaskrabbit) {
+        const currentBreakdown = getEnteredTaskrabbitBreakdown();
+        if (!(getTaskrabbitBreakdownTotal(currentBreakdown) > 0)) {
+          const existingAmount = parseMoneyInput(amountInput.value);
+          if (Number.isFinite(existingAmount) && existingAmount > 0) {
+            taskrabbitWageInput.value = formatNumberInput(existingAmount);
+          }
+        }
+        categorySelect.value = 'Umsatzerlöse';
+        if (!descriptionInput.value.trim()) descriptionInput.value = 'Taskrabbit-Auszahlung';
+        updateTaskrabbitTotal();
+      }
+    };
     let previousEntryType = typeSelect.value;
     typeSelect.addEventListener('change', () => {
       if (previousEntryType === 'income' && typeSelect.value === 'expense') householdModeSelect.value = 'buffer';
       previousEntryType = typeSelect.value;
       updateCategories();
       updateBudgetModeVisibility();
+      updateIncomeSourceVisibility();
     });
     paymentMethodSelect.addEventListener('change', updateBudgetModeVisibility);
+    incomeSourceSelect.addEventListener('change', updateIncomeSourceVisibility);
+    [taskrabbitWageInput, taskrabbitMaterialInput, taskrabbitTipInput].forEach((input) => {
+      input.addEventListener('input', updateTaskrabbitTotal);
+      input.addEventListener('change', updateTaskrabbitTotal);
+    });
     updateCategories();
     updateBudgetModeVisibility();
+    updateIncomeSourceVisibility();
 
     if (cfg.taxMode !== 'vat_registered') {
       vatSelect.value = '0';
@@ -13504,7 +13690,7 @@ function showPersonalEditor(personId, editPost) {
     } else {
       content.appendChild(createUiEl('p', 'small muted', 'Bitte den Steuersatz wählen, der im bezahlten Gesamtbetrag enthalten ist. Zahlungen an das Finanzamt werden mit 0 % erfasst.'));
     }
-    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Überwiesene Einnahmen werden dem verfügbaren Betrag zugerechnet; überwiesene Ausgaben werden abgezogen oder als bereits im Haushalt enthalten markiert. Barzahlungen verändern den verfügbaren Betrag nicht.'));
+    content.appendChild(createUiEl('p', 'small muted', 'Für die EÜR zählt grundsätzlich das Zahlungsdatum. Taskrabbit-Auszahlungen wirken sofort auf den verfügbaren Betrag, werden in der EÜR-Liste, CSV und PDF aber erst als Jahressumme mit der Aufteilung in Lohn, Material und Trinkgeld gezeigt. Barzahlungen verändern den verfügbaren Betrag nicht.'));
 
     showModal(isNew ? 'Betriebsvorgang erfassen' : 'Betriebsvorgang bearbeiten', content, [
       { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
@@ -13512,10 +13698,18 @@ function showPersonalEditor(personId, editPost) {
         label: 'Speichern',
         className: 'primary',
         onClick: (close) => {
-          const amount = parseMoneyInput(amountInput.value);
+          const isTaskrabbit = typeSelect.value === 'income' && incomeSourceSelect.value === 'taskrabbit';
+          const taskrabbitBreakdown = getEnteredTaskrabbitBreakdown();
+          const amount = isTaskrabbit
+            ? getTaskrabbitBreakdownTotal(taskrabbitBreakdown)
+            : parseMoneyInput(amountInput.value);
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput.value)) return alert('Bitte ein gültiges Zahlungsdatum eintragen.');
-          if (!Number.isFinite(amount) || !(amount > 0)) return alert('Bitte einen Betrag größer als 0 eintragen.');
-          const description = descriptionInput.value.trim();
+          if (!Number.isFinite(amount) || !(amount > 0)) {
+            return alert(isTaskrabbit
+              ? 'Bitte mindestens einen Betrag bei Lohn, Material oder Trinkgeld eintragen.'
+              : 'Bitte einen Betrag größer als 0 eintragen.');
+          }
+          const description = descriptionInput.value.trim() || (isTaskrabbit ? 'Taskrabbit-Auszahlung' : '');
           if (!description) return alert('Bitte eine kurze Beschreibung eintragen.');
           const saved = upsertSelfEmploymentEntry({
             id: item.id,
@@ -13526,6 +13720,8 @@ function showPersonalEditor(personId, editPost) {
             amount,
             vatRate: cfg.taxMode === 'vat_registered' ? Number(vatSelect.value || 0) : 0,
             paymentMethod: paymentMethodSelect.value,
+            incomeSource: isTaskrabbit ? 'taskrabbit' : 'other',
+            taskrabbitBreakdown,
             documentNumber: documentInput.value,
             note: noteInput.value,
             budgetMode: typeSelect.value === 'expense' && householdModeSelect.value === 'auto_count' ? 'auto_count' : 'already_counted',
@@ -13854,9 +14050,9 @@ function showPersonalEditor(personId, editPost) {
     const monthRows = summary.months.length
       ? summary.months.map((row) => `<tr><td>${escapeHtml(formatMonthLabel(row.month))}</td><td class="num">${euro(row.income)}</td><td class="num">${euro(row.expense)}</td><td class="num">${euro(row.result)}</td></tr>`).join('')
       : '<tr><td colspan="4">Keine Buchungen vorhanden.</td></tr>';
-    const entryRows = summary.entries.slice().sort((a, b) => a.date.localeCompare(b.date)).map((entry) => {
-      const amount = getSelfEmploymentEntryBreakdown(entry);
-      return `<tr><td>${escapeHtml(formatSelfEmploymentDate(entry.date))}</td><td>${entry.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(getSelfEmploymentPaymentMethodLabel(entry.paymentMethod))}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.documentNumber || '-')}</td><td class="num">${euro(amount.gross)}</td><td>${escapeHtml(entry.note || '')}</td></tr>`;
+    const entryRows = summary.reportEntries.slice().sort((a, b) => a.date.localeCompare(b.date)).map((entry) => {
+      const amount = getSelfEmploymentReportEntryBreakdown(entry);
+      return `<tr><td>${escapeHtml(getSelfEmploymentReportDateLabel(entry))}</td><td>${entry.type === 'income' ? 'Einnahme' : 'Ausgabe'}</td><td>${escapeHtml(getSelfEmploymentReportPaymentMethodLabel(entry))}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.documentNumber || '-')}</td><td class="num">${euro(amount.gross)}</td><td>${escapeHtml(entry.note || '')}</td></tr>`;
     }).join('') || '<tr><td colspan="8">Keine Buchungen vorhanden.</td></tr>';
     const vatBlock = cfg.taxMode === 'vat_registered'
       ? `<section><h2>Umsatzsteuer-Aufteilung</h2><div class="metrics"><div><span>Netto-Einnahmen</span><strong>${euro(summary.incomeNet)}</strong></div><div><span>Vereinnahmte Umsatzsteuer</span><strong>${euro(summary.collectedVat)}</strong></div><div><span>Netto-Ausgaben</span><strong>${euro(summary.expenseNet)}</strong></div><div><span>Enthaltene Vorsteuer</span><strong>${euro(summary.inputVat)}</strong></div></div></section>`
@@ -14058,8 +14254,8 @@ function showPersonalEditor(personId, editPost) {
 
     const entriesCard = document.createElement('div');
     entriesCard.className = 'card';
-    entriesCard.appendChild(createUiEl('h3', '', `Buchungen ${selfEmploymentReportYear}`));
-    entriesCard.appendChild(createUiEl('p', 'small muted', 'Belegnummern sind optional, erleichtern aber das spätere Wiederfinden der Rechnung oder Quittung.'));
+    entriesCard.appendChild(createUiEl('h3', '', `EÜR-Buchungsliste ${selfEmploymentReportYear}`));
+    entriesCard.appendChild(createUiEl('p', 'small muted', 'Taskrabbit-Auszahlungen werden hier als eine Jahressumme mit Aufteilung gezeigt. Die einzelnen Auszahlungen bleiben darunter als interner Nachweis bearbeitbar.'));
     if (!summary.entries.length) {
       entriesCard.appendChild(createUiEl('p', 'small muted', 'Noch keine Buchungen vorhanden. Nutze oben „+ Einnahme“ oder „+ Ausgabe“.'));
     } else {
@@ -14067,19 +14263,21 @@ function showPersonalEditor(personId, editPost) {
       table.className = 'list-table self-employment-table';
       table.innerHTML = '<thead><tr><th>Datum</th><th>Art</th><th>Zahlungsart</th><th>Kategorie / Beschreibung</th><th>Beleg</th><th>Betrag</th><th>USt</th><th>Aktion</th></tr></thead>';
       const tbody = document.createElement('tbody');
-      summary.entries.forEach((entry) => {
-        const amount = getSelfEmploymentEntryBreakdown(entry);
+      summary.reportEntries.forEach((entry) => {
+        const amount = getSelfEmploymentReportEntryBreakdown(entry);
         const tr = document.createElement('tr');
         const dateTd = document.createElement('td');
-        dateTd.textContent = formatSelfEmploymentDate(entry.date);
+        dateTd.textContent = getSelfEmploymentReportDateLabel(entry);
         const typeTd = document.createElement('td');
         const typePill = createUiEl('span', entry.type === 'income' ? 'pill success' : 'pill warning', entry.type === 'income' ? 'Einnahme' : 'Ausgabe');
         typeTd.appendChild(typePill);
-        const paymentTd = createUiEl('td', '', getSelfEmploymentPaymentMethodLabel(entry.paymentMethod));
+        const paymentTd = createUiEl('td', '', getSelfEmploymentReportPaymentMethodLabel(entry));
         const descTd = document.createElement('td');
         descTd.appendChild(createUiEl('strong', '', entry.category));
         descTd.appendChild(createUiEl('div', 'small', entry.description));
-        if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') {
+        if (entry.isTaskrabbitAnnualBundle) {
+          descTd.appendChild(createUiEl('div', 'small muted', getTaskrabbitBreakdownLabel(entry.taskrabbitBreakdown)));
+        } else if (normalizeSelfEmploymentPaymentMethod(entry.paymentMethod) === 'cash') {
           descTd.appendChild(createUiEl('div', 'small muted', 'Nur in der EÜR; Barzahlung ändert den verfügbaren Betrag nicht'));
         } else if (entry.type === 'income') {
           descTd.appendChild(createUiEl('div', 'small muted', 'Wird dem gesamten verfügbaren Betrag zugerechnet'));
@@ -14094,7 +14292,7 @@ function showPersonalEditor(personId, editPost) {
               : 'Im Haushalt bereits berücksichtigt'
           ));
         }
-        if (entry.note) descTd.appendChild(createUiEl('div', 'small muted', entry.note));
+        if (entry.note && !entry.isTaskrabbitAnnualBundle) descTd.appendChild(createUiEl('div', 'small muted', entry.note));
         const documentTd = document.createElement('td');
         documentTd.textContent = entry.documentNumber || '-';
         const amountTd = document.createElement('td');
@@ -14103,22 +14301,65 @@ function showPersonalEditor(personId, editPost) {
         const vatTd = document.createElement('td');
         vatTd.textContent = cfg.taxMode === 'vat_registered' ? `${amount.vatRate} % · ${euro(amount.vat)}` : '-';
         const actionTd = document.createElement('td');
-        actionTd.appendChild(createActionMenu([
-          { label: 'Bearbeiten', className: 'primary', onClick: () => showSelfEmploymentEntryEditor(entry) },
-          { label: 'Löschen', className: 'danger', onClick: () => {
-            if (!confirm(`„${entry.description}“ wirklich löschen?`)) return;
-            if (deleteSelfEmploymentEntry(entry.id)) {
-              addChangeLog('Selbständigkeit', `Buchung gelöscht: ${entry.description} · ${euro(entry.amount)}.`, entry.date.slice(0, 7));
-              saveState();
-              render();
-            }
-          } }
-        ]));
+        if (entry.isTaskrabbitAnnualBundle) {
+          actionTd.appendChild(createUiEl('span', 'small muted', 'automatisch'));
+        } else {
+          actionTd.appendChild(createActionMenu([
+            { label: 'Bearbeiten', className: 'primary', onClick: () => showSelfEmploymentEntryEditor(entry) },
+            { label: 'Löschen', className: 'danger', onClick: () => {
+              if (!confirm(`„${entry.description}“ wirklich löschen?`)) return;
+              if (deleteSelfEmploymentEntry(entry.id)) {
+                addChangeLog('Selbständigkeit', `Buchung gelöscht: ${entry.description} · ${euro(entry.amount)}.`, entry.date.slice(0, 7));
+                saveState();
+                render();
+              }
+            } }
+          ]));
+        }
         [dateTd, typeTd, paymentTd, descTd, documentTd, amountTd, vatTd, actionTd].forEach((td) => tr.appendChild(td));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
       entriesCard.appendChild(table);
+
+      if (summary.taskrabbitEntries.length) {
+        const taskrabbitDetails = document.createElement('details');
+        taskrabbitDetails.className = 'details-box';
+        const taskrabbitSummary = document.createElement('summary');
+        taskrabbitSummary.textContent = `Taskrabbit-Einzelauszahlungen bearbeiten (${summary.taskrabbitEntries.length})`;
+        taskrabbitDetails.appendChild(taskrabbitSummary);
+        taskrabbitDetails.appendChild(createUiEl('p', 'small muted', 'Diese Einzelaufzeichnungen dienen der Kontrolle und werden in der EÜR-Liste, CSV und PDF nicht zusätzlich aufgeführt.'));
+        const detailTable = document.createElement('table');
+        detailTable.className = 'list-table compact-table';
+        detailTable.innerHTML = '<thead><tr><th>Datum</th><th>Aufteilung</th><th>Zahlungsart</th><th>Gesamt</th><th>Aktion</th></tr></thead>';
+        const detailBody = document.createElement('tbody');
+        summary.taskrabbitEntries.forEach((taskrabbitEntry) => {
+          const detailRow = document.createElement('tr');
+          const dateTd = createUiEl('td', '', formatSelfEmploymentDate(taskrabbitEntry.date));
+          const splitTd = document.createElement('td');
+          splitTd.appendChild(createUiEl('strong', '', taskrabbitEntry.description));
+          splitTd.appendChild(createUiEl('div', 'small muted', getTaskrabbitBreakdownLabel(taskrabbitEntry.taskrabbitBreakdown)));
+          const paymentTd = createUiEl('td', '', getSelfEmploymentPaymentMethodLabel(taskrabbitEntry.paymentMethod));
+          const amountTd = createUiEl('td', 'success-text', euro(taskrabbitEntry.amount));
+          const actionTd = document.createElement('td');
+          actionTd.appendChild(createActionMenu([
+            { label: 'Bearbeiten', className: 'primary', onClick: () => showSelfEmploymentEntryEditor(taskrabbitEntry) },
+            { label: 'Löschen', className: 'danger', onClick: () => {
+              if (!confirm(`„${taskrabbitEntry.description}“ wirklich löschen?`)) return;
+              if (deleteSelfEmploymentEntry(taskrabbitEntry.id)) {
+                addChangeLog('Selbständigkeit', `Taskrabbit-Auszahlung gelöscht: ${taskrabbitEntry.description} · ${euro(taskrabbitEntry.amount)}.`, taskrabbitEntry.date.slice(0, 7));
+                saveState();
+                render();
+              }
+            } }
+          ]));
+          [dateTd, splitTd, paymentTd, amountTd, actionTd].forEach((td) => detailRow.appendChild(td));
+          detailBody.appendChild(detailRow);
+        });
+        detailTable.appendChild(detailBody);
+        taskrabbitDetails.appendChild(detailTable);
+        entriesCard.appendChild(taskrabbitDetails);
+      }
     }
     selfEmploymentSection.appendChild(entriesCard);
   }
