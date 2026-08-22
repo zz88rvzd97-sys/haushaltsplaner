@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.71
+ * Haushaltsplaner Version 2.72
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.71';
+  const APP_VERSION = '2.72';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -243,6 +243,17 @@
     const isRivertyAz1 = nameKey.includes('riverty') && compactNameKey.includes('az1');
     const isRivertyS19 = nameKey.includes('riverty') && compactNameKey.includes('s19');
     const isCleverFit = compactNameKey.includes('cleverfit');
+    const isHuk24 = compactNameKey.includes('huk24');
+    if (isHuk24) {
+      return {
+        type: 'regular_only_payment_info_missing',
+        label: 'HUK24: Der Zahlungsweg für freiwillige Zahlungen ist nicht bekannt. Deshalb wird nur die vereinbarte Rate eingeplant; Sonderzahlungen und Gesamtablösung werden nicht vorgeschlagen.',
+        allowExtraPayments: false,
+        allowSnowballTarget: false,
+        allowDynamicExtra: false,
+        extraPaymentMode: 'none'
+      };
+    }
     if (isRivertyAz1 || isRivertyS19 || isCleverFit) {
       const planName = isCleverFit ? 'CleverFit' : (isRivertyS19 ? 'Riverty S.19' : 'Riverty AZ1');
       return {
@@ -8767,7 +8778,7 @@
         });
       }
       const creditorRule = getDebtCreditorRule(debt);
-      if (creditorRule && creditorRule.type === 'locked_plan_no_extra') {
+      if (creditorRule && creditorRule.allowExtraPayments === false) {
         items.push({
           kind: 'info',
           area: 'Schulden',
@@ -16042,7 +16053,9 @@ function showPersonalEditor(personId, editPost) {
   function showDebtPaymentEditor(debt, defaults = {}) {
     ensureDebtConfig(debt);
     const refs = {};
-    const fullPayoffOnly = isDebtFullPayoffOnly(debt);
+    const paymentMode = getDebtExtraPaymentMode(debt);
+    const fullPayoffOnly = paymentMode === 'full_payoff_only';
+    const regularOnly = paymentMode === 'none';
     const content = document.createElement('div');
     content.className = 'modal-form';
 
@@ -16073,12 +16086,15 @@ function showPersonalEditor(personId, editPost) {
         <option value="regular">Vereinbarte Rate bezahlen</option>
         <option value="extra">Gesamte Forderung vollständig bezahlen</option>
       `
-      : `
+      : (regularOnly
+        ? '<option value="regular">Vereinbarte Rate bezahlen</option>'
+        : `
         <option value="regular">Regelrate als bezahlt markieren</option>
         <option value="partial">Teilzahlung ohne Monatsabschluss</option>
         <option value="extra">Sonderzahlung ohne Monatsabschluss</option>
-      `;
-    if ((fullPayoffOnly ? ['regular', 'extra'] : ['regular', 'partial', 'extra']).includes(defaults.mode)) refs.typeSelect.value = defaults.mode;
+      `);
+    const allowedPaymentModes = fullPayoffOnly ? ['regular', 'extra'] : (regularOnly ? ['regular'] : ['regular', 'partial', 'extra']);
+    if (allowedPaymentModes.includes(defaults.mode)) refs.typeSelect.value = defaults.mode;
     refs.noteInput = document.createElement('input');
     refs.noteInput.type = 'text';
     refs.noteInput.placeholder = 'Notiz optional';
@@ -16101,6 +16117,19 @@ function showPersonalEditor(personId, editPost) {
       refs.typeSelect.addEventListener('change', syncFullPayoffAmount);
       refs.monthInput.addEventListener('change', syncFullPayoffAmount);
       syncFullPayoffAmount();
+    } else if (regularOnly) {
+      const creditorInfo = document.createElement('div');
+      creditorInfo.className = 'notice info';
+      creditorInfo.textContent = 'Für diese Schuld ist kein Zahlungsweg für freiwillige Zahlungen hinterlegt. Deshalb kann hier nur die vereinbarte Rate eingetragen werden.';
+      content.appendChild(creditorInfo);
+      const syncRegularPaymentAmount = () => {
+        const total = Math.max(0, Number(debt.amountOpen || 0));
+        const rate = Math.min(total, Math.max(0, Number(getDebtRateForMonth(debt, refs.monthInput.value || currentMonth) || defaultRate)));
+        refs.amountInput.value = formatNumberInput(rate);
+        refs.amountInput.readOnly = true;
+      };
+      refs.monthInput.addEventListener('change', syncRegularPaymentAmount);
+      syncRegularPaymentAmount();
     }
 
     if (defaults.mode === 'extra') {
@@ -16136,7 +16165,7 @@ function showPersonalEditor(personId, editPost) {
           if (!isMonthKey(month)) return alert('Bitte einen gültigen Monat wählen.');
           if (!Number.isFinite(amount) || amount <= 0) return alert('Bitte einen gültigen Betrag eingeben.');
           const mode = refs.typeSelect.value;
-          if (mode === 'extra' && !isDebtExtraPaymentAllowed(debt)) {
+          if ((mode === 'partial' || mode === 'extra') && !isDebtExtraPaymentAllowed(debt)) {
             return alert(`${debt.name}: Für diese Schuld sind keine freiwilligen Sonderzahlungen erlaubt.`);
           }
           if (fullPayoffOnly) {
@@ -16147,6 +16176,12 @@ function showPersonalEditor(personId, editPost) {
             }
             if (mode === 'extra' && Math.abs(amount - open) > 0.01) {
               return alert(`${debt.name}: Eine zusätzliche Zahlung ist nur als vollständige Gesamtforderung von ${euro(open)} möglich.`);
+            }
+          } else if (regularOnly) {
+            const open = Number(debt.amountOpen || 0);
+            const contractualRate = Math.min(open, Number(getDebtRateForMonth(debt, month) || defaultRate || 0));
+            if (mode !== 'regular' || Math.abs(amount - contractualRate) > 0.01) {
+              return alert(`${debt.name}: Bitte nur die vereinbarte Rate von ${euro(contractualRate)} verwenden.`);
             }
           }
           const markAsMonthly = mode === 'regular';
