@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.70
+ * Haushaltsplaner Version 2.71
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.70';
+  const APP_VERSION = '2.71';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -242,11 +242,12 @@
     const compactNameKey = nameKey.replace(/[^a-z0-9]/g, '');
     const isRivertyAz1 = nameKey.includes('riverty') && compactNameKey.includes('az1');
     const isRivertyS19 = nameKey.includes('riverty') && compactNameKey.includes('s19');
-    if (isRivertyAz1 || isRivertyS19) {
-      const planName = isRivertyS19 ? 'Riverty S.19' : 'Riverty AZ1';
+    const isCleverFit = compactNameKey.includes('cleverfit');
+    if (isRivertyAz1 || isRivertyS19 || isCleverFit) {
+      const planName = isCleverFit ? 'CleverFit' : (isRivertyS19 ? 'Riverty S.19' : 'Riverty AZ1');
       return {
         type: 'regular_or_full_payoff',
-        label: `${planName}: Im Portal sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden nicht vorgeschlagen.`,
+        label: `${planName}: Es sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden nicht vorgeschlagen.`,
         allowExtraPayments: true,
         allowSnowballTarget: true,
         allowDynamicExtra: false,
@@ -3223,8 +3224,8 @@
         if (target && target.open > 0) {
           const reserveBefore = dedicatedReserve;
           dedicatedReserve = roundMoney(dedicatedReserve + dedicatedContribution);
-          // Der Monatsbetrag wird im Haushaltsbudget gebunden, auch wenn Riverty
-          // im Portal noch keine Teil-Sonderzahlung annimmt.
+          // Der Monatsbetrag wird im Haushaltsbudget gebunden, auch wenn der
+          // Zahlungsplan noch keine Teil-Sonderzahlung annimmt.
           extra += dedicatedContribution;
           const basePaymentIndex = payments.findIndex((payment) => payment.type === 'rate' && payment.debt === target.name);
           const basePayment = basePaymentIndex >= 0 ? Number(payments[basePaymentIndex].amount || 0) : 0;
@@ -3316,7 +3317,8 @@
 
             // Reicht das aktuelle Monatsbudget noch nicht für die vollständige
             // Forderung, wird zunächst eine flexible Schuld vorgeschlagen. Die
-            // bereits vorgemerkte Pair-Rate für Riverty bleibt trotzdem erhalten.
+            // Eine bereits vorgemerkte Rücklage für den Gesamtausgleich bleibt
+            // trotzdem erhalten.
             if (neededFromBudget > availableBudget + 0.005) {
               const flexibleTarget = candidates.find((candidate) => !isDebtFullPayoffOnly(candidate));
               if (!flexibleTarget) break;
@@ -15251,8 +15253,8 @@ function showPersonalEditor(personId, editPost) {
 
     const futurePayoff = (plan.rows || []).find((entry) => entry.payoffReserve && entry.payoffReserve.canPayoff);
     const text = reserve.canPayoff
-      ? 'Die Rücklage aus dem Vormonat und der aktuelle Schulden-Pool reichen jetzt. Im Riverty-Portal bitte „gesamte Forderung“ wählen und den dort aktuell angezeigten Betrag prüfen.'
-      : `${euro(reserve.reserveAdded)} werden in ${formatMonthLabel(monthKey)} nicht als Teilzahlung an Riverty geschickt, sondern innerhalb des Schuldenbudgets für die spätere Gesamtablösung vorgemerkt.${futurePayoff ? ` Voraussichtlich reicht es in ${formatMonthLabel(futurePayoff.month)}.` : ''}`;
+      ? 'Die Rücklage aus dem Vormonat und der aktuelle Schulden-Pool reichen jetzt. Beim Anbieter bitte die vollständige Gesamtforderung wählen und den dort aktuell angezeigten Betrag prüfen.'
+      : `${euro(reserve.reserveAdded)} werden in ${formatMonthLabel(monthKey)} nicht als Teilzahlung an ${reserve.targetDebt} geschickt, sondern innerhalb des Schuldenbudgets für die spätere Gesamtablösung vorgemerkt.${futurePayoff ? ` Voraussichtlich reicht es in ${formatMonthLabel(futurePayoff.month)}.` : ''}`;
     card.appendChild(createUiEl('p', 'small muted', text));
 
     card.appendChild(createSummaryMetrics(reserve.canPayoff
@@ -16088,7 +16090,7 @@ function showPersonalEditor(personId, editPost) {
     if (fullPayoffOnly) {
       const creditorInfo = document.createElement('div');
       creditorInfo.className = 'notice info';
-      creditorInfo.textContent = 'Bei diesem Riverty-Plan sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden deshalb nicht angeboten.';
+      creditorInfo.textContent = 'Bei diesem Zahlungsplan sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden deshalb nicht angeboten.';
       content.appendChild(creditorInfo);
       const syncFullPayoffAmount = () => {
         const total = Math.max(0, Number(debt.amountOpen || 0));
@@ -16105,7 +16107,7 @@ function showPersonalEditor(personId, editPost) {
       const suggestionInfo = document.createElement('div');
       suggestionInfo.className = 'notice success';
       suggestionInfo.textContent = fullPayoffOnly
-        ? 'Die vollständige Ablösung ist vorbereitet. Bitte den aktuellen Gesamtbetrag im Riverty-Portal prüfen; erst mit „Speichern“ wird die Schuld als bezahlt übernommen.'
+        ? 'Die vollständige Ablösung ist vorbereitet. Bitte den aktuellen Gesamtbetrag beim Anbieter prüfen; erst mit „Speichern“ wird die Schuld als bezahlt übernommen.'
         : 'Freiwilliger dynamischer Vorschlag: Betrag und Monat sind vorbereitet, werden aber erst mit „Speichern“ als echte Sonderzahlung übernommen.';
       content.appendChild(suggestionInfo);
     }
