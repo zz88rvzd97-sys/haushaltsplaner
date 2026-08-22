@@ -4371,6 +4371,21 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   min-height: 42px;
 }
 
+.debt-month-assistant-card .debt-balance-review-row,
+.debt-clarification-card .debt-balance-review-row {
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, auto);
+}
+
+.debt-month-assistant-card .debt-balance-review-row > .row {
+  justify-content: flex-end;
+}
+
+.debt-month-assistant-card .debt-balance-review-row > .row > *,
+.debt-clarification-card .debt-balance-review-row > button {
+  flex: 0 1 auto;
+  width: auto;
+}
+
 .debt-balance-check-form .metric-grid {
   margin: 0.85rem 0;
 }
@@ -4379,6 +4394,11 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .debt-balance-review-row {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .debt-month-assistant-card .debt-balance-review-row,
+  .debt-clarification-card .debt-balance-review-row {
+    grid-template-columns: 1fr;
   }
 }
 
