@@ -1335,6 +1335,10 @@ header::after {
   overflow: hidden;
 }
 
+.debt-budget-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
 .buffer-strip-item {
   display: flex;
   align-items: center;

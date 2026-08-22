@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.73
+ * Haushaltsplaner Version 2.74
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.73';
+  const APP_VERSION = '2.74';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -833,7 +833,8 @@
       lastAutomaticBrowserBackupAt: '',
       externalBackupFolderName: '',
       lastExternalBackupAt: '',
-      lastBatchPayment: null
+      lastBatchPayment: null,
+      debtSavingsLedger: []
     }
   };
   let state;
@@ -1109,7 +1110,8 @@
         debtPlanLastRecalculatedDebtId: '',
         debtPlanLastRecalculatedDebtName: '',
         debtPlanLastImpact: null,
-        debtAssistantActionStatus: {}
+        debtAssistantActionStatus: {},
+        debtSavingsLedger: []
       };
     }
     if (!isMonthKey(state.appMeta.selectedMonth)) state.appMeta.selectedMonth = '';
@@ -1129,6 +1131,20 @@
       state.appMeta.debtAssistantActionStatus = Object.fromEntries(Object.entries(state.appMeta.debtAssistantActionStatus)
         .filter(([key, value]) => typeof key === 'string' && (value === 'later' || value === 'done')));
     }
+    if (!Array.isArray(state.appMeta.debtSavingsLedger)) state.appMeta.debtSavingsLedger = [];
+    state.appMeta.debtSavingsLedger = state.appMeta.debtSavingsLedger
+      .filter((entry) => entry && typeof entry === 'object' && isMonthKey(entry.month) && ['deposit', 'withdrawal'].includes(entry.type) && Number(entry.amount || 0) > 0)
+      .map((entry) => ({
+        id: typeof entry.id === 'string' && entry.id ? entry.id : generateId(),
+        month: entry.month,
+        type: entry.type,
+        amount: roundMoney(Math.max(0, Number(entry.amount || 0))),
+        actionKey: typeof entry.actionKey === 'string' ? entry.actionKey : '',
+        debtId: typeof entry.debtId === 'string' ? entry.debtId : '',
+        debtName: typeof entry.debtName === 'string' ? entry.debtName : '',
+        note: typeof entry.note === 'string' ? entry.note : '',
+        createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString()
+      }));
     if (!state.appMeta.lastBatchPayment || typeof state.appMeta.lastBatchPayment !== 'object') {
       state.appMeta.lastBatchPayment = null;
     } else {
@@ -2955,16 +2971,25 @@
   function buildDebtForecastProjection(startMonth = currentMonth, horizon = 24, options = {}) {
     const map = {};
     Array.from({ length: horizon }, (_, index) => addMonths(startMonth, index)).forEach((month) => {
-      map[month] = { planned: 0, base: 0, snowballExtra: 0, dynamicExtra: 0, notes: [] };
+      map[month] = { planned: 0, base: 0, snowballExtra: 0, dynamicExtra: 0, dayMoneyTransfer: 0, creditorPayments: 0, notes: [] };
     });
 
     const snowball = buildSnowballPlan(startMonth, horizon, { monthDetailsFn: options.monthDetailsFn });
     (snowball.rows || []).forEach((row) => {
       if (!map[row.month]) return;
-      map[row.month].planned += Number(row.total || 0);
+      const fixedPool = Number(row.monthlyTarget || 0) > 0
+        ? Number(row.pool || row.monthlyTarget || 0)
+        : Number(row.total || 0);
+      const dayMoneyTransfer = Number(row.debtSavingsDeposit != null
+        ? row.debtSavingsDeposit
+        : (Number(row.unallocatedBudget || 0)
+          + (row.payoffReserve && !row.payoffReserve.canPayoff ? Number(row.payoffReserve.reserveAdded || 0) : 0)));
+      map[row.month].planned += fixedPool;
       map[row.month].base += Number(row.base || 0);
       map[row.month].snowballExtra += Number(row.extra || 0);
       map[row.month].dynamicExtra = (Number(map[row.month].dynamicExtra || 0) + Number(row.dynamicExtra || 0));
+      map[row.month].dayMoneyTransfer += dayMoneyTransfer;
+      map[row.month].creditorPayments += Math.max(0, fixedPool - dayMoneyTransfer);
       if (row.notes) map[row.month].notes.push(row.notes);
     });
 
@@ -2989,9 +3014,10 @@
 
   function applyDebtProjectionToForecastDetails(details, monthKey, projectionMap) {
     const linkedDebtCosts = getLinkedDebtCostTotalForMonth(monthKey);
-    const projected = projectionMap && projectionMap[monthKey] ? projectionMap[monthKey] : { planned: 0, base: 0, snowballExtra: 0, dynamicExtra: 0, notes: [] };
+    const projected = projectionMap && projectionMap[monthKey] ? projectionMap[monthKey] : { planned: 0, base: 0, snowballExtra: 0, dynamicExtra: 0, dayMoneyTransfer: 0, creditorPayments: 0, notes: [] };
     const debtPlanned = Number(projected.planned || 0);
-    const debtAdjustment = linkedDebtCosts - debtPlanned;
+    const debtAlreadyReserved = Number(details.debtBudgetReserved != null ? details.debtBudgetReserved : linkedDebtCosts);
+    const debtAdjustment = debtAlreadyReserved - debtPlanned;
     const free = roundMoney(Number(details.free || 0) + debtAdjustment);
     const freeCurrent = roundMoney(Number(details.freeCurrent != null ? details.freeCurrent : details.free || 0) + debtAdjustment);
     const freeConservative = free;
@@ -3003,6 +3029,8 @@
       debtBase: Number(projected.base || 0),
       debtSnowballExtra: Number(projected.snowballExtra || 0),
       debtDynamicExtra: Number(projected.dynamicExtra || 0),
+      debtDayMoneyTransfer: Number(projected.dayMoneyTransfer || 0),
+      debtCreditorPayments: Number(projected.creditorPayments || 0),
       debtNotes: projected.notes || [],
       freeCurrent,
       freeConservative,
@@ -3038,6 +3066,30 @@
   function getMonthlyDebtBudgetForMonth(monthKey) {
     if (!isMonthKey(monthKey) || monthKey < snowballConfig.monthlyTargetStartMonth) return 0;
     return roundMoney(Math.max(0, Number(snowballConfig.monthlyTarget || 0)));
+  }
+
+  function getDebtBudgetReservationForMonth(monthKey) {
+    const linkedDebtCosts = roundMoney(Math.max(0, getLinkedDebtCostTotalForMonth(monthKey)));
+    const hasDebtActivity = (state.debts || []).some((debt) => Number(debt && debt.amountOpen || 0) > 0.005
+      || getDebtCompletedMonth(debt) === monthKey
+      || getDebtCoveredAmountForMonth(debt, monthKey) > 0.005);
+    const monthlyTarget = hasDebtActivity ? getMonthlyDebtBudgetForMonth(monthKey) : 0;
+    // Vor dem Start des festen 800-Euro-Pools bleibt die bisherige Haushaltsrechnung
+    // unverändert. Ab September zählen bereits in den Kosten enthaltene Raten in die
+    // 800 Euro hinein; nur die Differenz wird zusätzlich vom Monatsrest gebunden.
+    const requiredDebtPayments = monthlyTarget > 0
+      ? roundMoney(Math.max(0, Number(getDebtPlanForMonth(monthKey).planned || 0)))
+      : 0;
+    const reservedTotal = monthlyTarget > 0
+      ? roundMoney(Math.max(monthlyTarget, linkedDebtCosts, requiredDebtPayments))
+      : linkedDebtCosts;
+    return {
+      monthlyTarget,
+      linkedDebtCosts,
+      requiredDebtPayments,
+      reservedTotal,
+      additionalReservation: roundMoney(Math.max(0, reservedTotal - linkedDebtCosts))
+    };
   }
 
   function getFixedDebtBudgetCandidates(debts, options = {}) {
@@ -3101,7 +3153,11 @@
       const key = normalizeTextKey(debt && debt.name || '');
       return key.includes('pair') && key.includes('az1');
     });
-    const target = (state.debts || []).find((debt) => Number(debt && debt.amountOpen || 0) > 0 && isDebtFullPayoffOnly(debt));
+    const target = (state.debts || []).find((debt) => {
+      if (!(Number(debt && debt.amountOpen || 0) > 0) || !isDebtFullPayoffOnly(debt)) return false;
+      const key = normalizeTextKey(debt && debt.name || '');
+      return key.includes('riverty') && key.includes('az1');
+    });
     if (!source || !target) return null;
     ensureDebtConfig(source);
     ensureDebtConfig(target);
@@ -3178,6 +3234,11 @@
       ? Math.max(0, monthDiff(automaticPayoffPlan.firstReserveMonth, startMonth))
       : 0;
     let dedicatedReserve = roundMoney(dedicatedMonthlyAtStart * elapsedReserveMonths);
+    // Allgemeine Tagesgeld-Rücklage innerhalb des Schulden-Pools. Sie entsteht,
+    // wenn ein Teil der 800 Euro wegen Zahlungsregeln noch nicht sinnvoll an
+    // einen Gläubiger geschickt werden kann, und bleibt in Folgemonaten für
+    // eine spätere Gesamtablösung gebunden.
+    let debtSavingsReserve = getRecordedDebtSavingsReserveBeforeMonth(startMonth);
     let dedicatedFinished = false;
     const rolloverStart = roundMoney(Math.max(0, getHistoricalDebtRollover(startMonth) - dedicatedMonthlyAtStart));
     let rollover = rolloverStart;
@@ -3192,6 +3253,10 @@
       const notes = [];
       const payments = [];
       let payoffReserve = null;
+      const debtSavingsReserveBefore = roundMoney(debtSavingsReserve + dedicatedReserve);
+      let debtSavingsWithdrawal = 0;
+      let generalDebtSavingsWithdrawal = 0;
+      let generalDebtSavingsWithdrawalDebtId = '';
       const monthlyTarget = getMonthlyDebtBudgetForMonth(month);
       const alreadyPaid = i === 0 ? roundMoney(getDebtPaidAmountForMonth(month)) : 0;
       active.forEach((debt) => { debt.rate = getDebtRateForMonth(debt, month); });
@@ -3242,7 +3307,7 @@
         ? roundMoney(Math.max(0, monthlyTarget - alreadyPaid - base))
         : 0;
       const fullPayoffCandidateBeforeSplit = monthlyTarget > 0
-        ? findFullPayoffCandidateBeforeSplit(planDebts, fullPayoffBudgetBeforeSplit, {
+        ? findFullPayoffCandidateBeforeSplit(planDebts, fullPayoffBudgetBeforeSplit + debtSavingsReserve, {
           reserveDebtId: automaticPayoffPlan ? automaticPayoffPlan.targetDebtId : '',
           reserveAmount: dedicatedReserve
         })
@@ -3250,12 +3315,6 @@
       let priorityFullPayoffDebtId = fullPayoffCandidateBeforeSplit
         ? fullPayoffCandidateBeforeSplit.id
         : '';
-      if (fullPayoffCandidateBeforeSplit
-        && automaticPayoffPlan
-        && fullPayoffCandidateBeforeSplit.id !== automaticPayoffPlan.targetDebtId) {
-        dedicatedContribution = 0;
-      }
-
       if (dedicatedContribution > 0 && automaticPayoffPlan) {
         const target = active.find((debt) => debt.id === automaticPayoffPlan.targetDebtId);
         if (target && target.open > 0) {
@@ -3283,12 +3342,19 @@
 
           if (canPayoff) {
             const reserveSpent = target.open;
+            debtSavingsWithdrawal = roundMoney(debtSavingsWithdrawal + Math.min(reserveBefore, reserveSpent));
             dedicatedReserve = roundMoney(Math.max(0, dedicatedReserve - reserveSpent));
             target.open = 0;
             newlyFreed += Number(target.rate || 0) + dedicatedContribution;
             dedicatedFinished = true;
             payoffReserve.reserveBalance = dedicatedReserve;
             payoffReserve.leftoverAfterPayoff = dedicatedReserve;
+            if (dedicatedReserve > 0.005) {
+              debtSavingsReserve = roundMoney(debtSavingsReserve + dedicatedReserve);
+              dedicatedReserve = 0;
+              payoffReserve.reserveBalance = debtSavingsReserve;
+              payoffReserve.leftoverAfterPayoff = debtSavingsReserve;
+            }
             if (basePaymentIndex >= 0) payments.splice(basePaymentIndex, 1);
             payments.push({
               type: 'full_payoff',
@@ -3346,10 +3412,16 @@
           let target = candidates.find((candidate) => candidate.id === priorityFullPayoffDebtId) || candidates[0];
           priorityFullPayoffDebtId = '';
 
-          if (isDebtFullPayoffOnly(target)) {
-            const reserveForTarget = payoffReserve && payoffReserve.targetDebt === target.name
+          const isAutomaticReserveTarget = !!(automaticPayoffPlan && target.id === automaticPayoffPlan.targetDebtId);
+          const targetDedicatedReserve = isAutomaticReserveTarget
+            ? Math.max(0, Number(dedicatedReserve || 0))
+            : 0;
+          const targetCanBeClosedWithReserve = Number(target.open || 0) <= availableBudget + debtSavingsReserve + targetDedicatedReserve + 0.005;
+          if (isDebtFullPayoffOnly(target) || targetCanBeClosedWithReserve) {
+            const dedicatedForTarget = isAutomaticReserveTarget
               ? Math.max(0, Number(dedicatedReserve || 0))
               : 0;
+            const reserveForTarget = roundMoney(dedicatedForTarget + debtSavingsReserve);
             const neededFromBudget = roundMoney(Math.max(0, Number(target.open || 0) - reserveForTarget));
 
             // Reicht das aktuelle Monatsbudget noch nicht für die vollständige
@@ -3365,13 +3437,26 @@
               const basePayment = basePaymentIndex >= 0 ? Number(payments[basePaymentIndex].amount || 0) : 0;
               const payoffAfterRate = Math.max(0, Number(target.open || 0));
               const portalPayoffAmount = roundMoney(payoffAfterRate + basePayment);
-              const reserveBefore = payoffReserve && payoffReserve.targetDebt === target.name
-                ? Number(payoffReserve.reserveBefore || 0)
-                : 0;
-              const reserveAddedBeforeBudget = payoffReserve && payoffReserve.targetDebt === target.name
+              const reserveBefore = isAutomaticReserveTarget && payoffReserve && payoffReserve.targetDebt === target.name
+                ? Number(payoffReserve.reserveBefore || 0) + debtSavingsReserve
+                : debtSavingsReserve;
+              const reserveAddedBeforeBudget = isAutomaticReserveTarget && payoffReserve && payoffReserve.targetDebt === target.name
                 ? Number(payoffReserve.reserveAdded || 0)
                 : 0;
               const amountFromBudget = roundMoney(Math.min(availableBudget, neededFromBudget));
+              let reserveStillNeeded = roundMoney(Math.max(0, payoffAfterRate - amountFromBudget));
+              const dedicatedUsed = roundMoney(Math.min(dedicatedForTarget, reserveStillNeeded));
+              reserveStillNeeded = roundMoney(Math.max(0, reserveStillNeeded - dedicatedUsed));
+              const generalReserveUsed = roundMoney(Math.min(debtSavingsReserve, reserveStillNeeded));
+              const priorDedicatedUsed = roundMoney(Math.min(
+                isAutomaticReserveTarget && payoffReserve && payoffReserve.targetDebt === target.name ? Number(payoffReserve.reserveBefore || 0) : 0,
+                dedicatedUsed
+              ));
+              debtSavingsWithdrawal = roundMoney(debtSavingsWithdrawal + priorDedicatedUsed + generalReserveUsed);
+              generalDebtSavingsWithdrawal = roundMoney(generalDebtSavingsWithdrawal + generalReserveUsed);
+              if (generalReserveUsed > 0) generalDebtSavingsWithdrawalDebtId = target.id;
+              dedicatedReserve = roundMoney(Math.max(0, dedicatedReserve - dedicatedUsed));
+              debtSavingsReserve = roundMoney(Math.max(0, debtSavingsReserve - generalReserveUsed));
 
               extra = roundMoney(extra + amountFromBudget);
               budgetExtra = roundMoney(budgetExtra + amountFromBudget);
@@ -3379,8 +3464,11 @@
               target.open = 0;
               newlyFreed += Number(target.rate || 0);
               if (automaticPayoffPlan && target.id === automaticPayoffPlan.targetDebtId) {
-                dedicatedReserve = roundMoney(Math.max(0, reserveForTarget + amountFromBudget - payoffAfterRate));
                 dedicatedFinished = true;
+                if (dedicatedReserve > 0.005) {
+                  debtSavingsReserve = roundMoney(debtSavingsReserve + dedicatedReserve);
+                  dedicatedReserve = 0;
+                }
               }
               if (basePaymentIndex >= 0) payments.splice(basePaymentIndex, 1);
               payments.push({
@@ -3395,17 +3483,18 @@
                 completed: true,
                 note: 'Vorschlag: Gesamtforderung vollständig bezahlen'
               });
-              payoffReserve = {
+              const completedPayoffReserve = {
                 sourceDebt: payoffReserve && payoffReserve.sourceDebt ? payoffReserve.sourceDebt : 'festes Schuldenbudget',
                 targetDebt: target.name,
                 reserveBefore,
                 reserveAdded: roundMoney(reserveAddedBeforeBudget + amountFromBudget),
-                reserveBalance: Math.max(0, Number(dedicatedReserve || 0)),
+                reserveBalance: roundMoney(debtSavingsReserve + dedicatedReserve),
                 currentOpenAfterRate: payoffAfterRate,
                 portalPayoffAmount,
                 canPayoff: true,
-                leftoverAfterPayoff: Math.max(0, Number(dedicatedReserve || 0))
+                leftoverAfterPayoff: roundMoney(debtSavingsReserve + dedicatedReserve)
               };
+              if (isAutomaticReserveTarget || !payoffReserve || payoffReserve.canPayoff) payoffReserve = completedPayoffReserve;
               const oldNoteIndex = notes.findIndex((note) => note.startsWith(`${target.name}:`));
               if (oldNoteIndex >= 0) notes.splice(oldNoteIndex, 1);
               notes.push(`${target.name}: Gesamtforderung ${euro(portalPayoffAmount)} vollständig bezahlen`);
@@ -3438,9 +3527,16 @@
         }
         unallocatedBudget = roundMoney(Math.max(0, availableBudget));
         if (unallocatedBudget > 0.005) {
-          notes.push(`${euro(unallocatedBudget)} können wegen Zahlungsregeln oder zu geringer Restschuld nicht zusätzlich eingeplant werden.`);
+          debtSavingsReserve = roundMoney(debtSavingsReserve + unallocatedBudget);
+          notes.push(`${euro(unallocatedBudget)} gehen als gebundene Schulden-Rücklage aufs Tagesgeld.`);
         }
       }
+
+      const dedicatedDeposit = payoffReserve && !payoffReserve.canPayoff
+        ? Number(payoffReserve.reserveAdded || 0)
+        : 0;
+      const debtSavingsDeposit = roundMoney(dedicatedDeposit + unallocatedBudget);
+      const debtSavingsReserveBalance = roundMoney(debtSavingsReserve + dedicatedReserve);
 
       const remaining = planDebts.reduce((sum, debt) => sum + Math.max(0, debt.open), 0);
       const nextTarget = monthlyTarget > 0
@@ -3474,6 +3570,12 @@
         pool: roundMoney(Math.max(debtPool, alreadyPaid + base + extra)),
         monthlyTarget,
         unallocatedBudget,
+        debtSavingsReserveBefore,
+        debtSavingsDeposit,
+        debtSavingsWithdrawal,
+        generalDebtSavingsWithdrawal,
+        generalDebtSavingsWithdrawalDebtId,
+        debtSavingsReserveBalance,
         rolloverNext,
         remaining,
         targetNext: nextTarget ? nextTarget.name : '',
@@ -3490,6 +3592,28 @@
       month = nextMonth(month);
     }
     return { rows, events, noRate, scheduledOneTime, debtFreeMonth, rolloverStart, automaticPayoffPlan };
+  }
+
+  function getDebtBudgetAllocationSummary(monthKey, plan = null) {
+    const reservation = getDebtBudgetReservationForMonth(monthKey);
+    const activePlan = plan || buildSnowballPlan(monthKey, 1);
+    const row = getDebtPlanRowForMonth(activePlan, monthKey);
+    const reservedTotal = roundMoney(Math.max(
+      Number(reservation.reservedTotal || 0),
+      row ? Number(row.pool || row.total || 0) : 0
+    ));
+    const dayMoneyTransfer = roundMoney(row
+      ? Number(row.debtSavingsDeposit || 0)
+      : Math.max(0, reservedTotal - getDebtPaidAmountForMonth(monthKey)));
+    return {
+      ...reservation,
+      reservedTotal,
+      row,
+      dayMoneyTransfer,
+      creditorBudget: roundMoney(Math.max(0, reservedTotal - dayMoneyTransfer)),
+      reserveWithdrawal: roundMoney(row ? Number(row.debtSavingsWithdrawal || 0) : 0),
+      reserveBalance: roundMoney(row ? Number(row.debtSavingsReserveBalance || 0) : 0)
+    };
   }
 
   function getDebtPlanNextTarget(plan, fromMonth = currentMonth) {
@@ -4137,7 +4261,9 @@
     const miscOpen = roundMoney(Math.max(miscPlanned - miscPaid, 0));
     const carryoverIn = roundMoney(getCarryoverInForMonth(monthKey));
     const businessBudget = getSelfEmploymentBudgetImpactForMonth(monthKey);
-    const freeBeforeMisc = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment - totalCommonRounded - totalPersonal);
+    const debtBudget = getDebtBudgetReservationForMonth(monthKey);
+    const freeBeforeDebtBudget = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment - totalCommonRounded - totalPersonal);
+    const freeBeforeMisc = roundMoney(freeBeforeDebtBudget - debtBudget.additionalReservation);
     const freeCurrent = roundMoney(freeBeforeMisc - miscPaid);
     const freeConservative = roundMoney(freeBeforeMisc - miscPlanned);
     const free = freeConservative;
@@ -4158,6 +4284,11 @@
       businessExpenseAlreadyHousehold: businessBudget.expenseAlreadyHousehold,
       businessBudgetAdjustment: businessBudget.adjustment,
       businessBudgetHasActivity: businessBudget.hasActivity,
+      debtBudgetTarget: Number(debtBudget.monthlyTarget || 0),
+      debtBudgetReserved: Number(debtBudget.reservedTotal || 0),
+      debtBudgetAlreadyInCosts: Number(debtBudget.linkedDebtCosts || 0),
+      debtBudgetAdditionalReservation: Number(debtBudget.additionalReservation || 0),
+      freeBeforeDebtBudget,
       miscPaid,
       miscPlanned,
       miscOpen,
@@ -10059,6 +10190,9 @@
     const miscPlanned = details.miscPlanned;
     const totalAvail = details.free;
     const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
+    const debtBudgetSummary = Number(details.debtBudgetTarget || 0) > 0
+      ? getDebtBudgetAllocationSummary(currentMonth)
+      : null;
 
     function percent(value, base) {
       if (!base) return '0,0 %';
@@ -10159,7 +10293,10 @@
     const businessHint = details.businessBudgetHasActivity
       ? `Selbstständigkeit ${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''}${euro(Math.abs(businessAdjustment))} bereits enthalten`
       : '';
-    const freeHint = [baseFreeHint, businessHint].filter(Boolean).join(' · ');
+    const debtBudgetHint = debtBudgetSummary
+      ? `${euro(debtBudgetSummary.reservedTotal)} Schulden-Pool vollständig abgezogen`
+      : '';
+    const freeHint = [baseFreeHint, businessHint, debtBudgetHint].filter(Boolean).join(' · ');
     kpiGrid.appendChild(createKpi({
       label: 'Insgesamt verfügbar',
       value: euro(totalAvail),
@@ -10191,6 +10328,17 @@
       accent: 'violet'
     }));
     page.appendChild(kpiGrid);
+
+    if (debtBudgetSummary) {
+      const debtStrip = div('buffer-strip debt-budget-strip');
+      debtStrip.appendChild(createBufferItem('S', 'Schulden-Pool im verfügbaren Betrag', euro(debtBudgetSummary.reservedTotal)));
+      debtStrip.appendChild(createBufferItem('✓', 'Davon schon in persönlichen/gemeinsamen Kosten', euro(debtBudgetSummary.linkedDebtCosts)));
+      debtStrip.appendChild(createBufferItem('+', 'Zusätzlich für Schulden gebunden', euro(debtBudgetSummary.additionalReservation)));
+      debtStrip.appendChild(createBufferItem('T', 'Diesen Monat aufs Tagesgeld', euro(debtBudgetSummary.dayMoneyTransfer)));
+      const debtChip = div('buffer-status-chip success', 'Bleibt vollständig für Schulden');
+      debtStrip.appendChild(debtChip);
+      page.appendChild(debtStrip);
+    }
 
     if (miscPaid > 0 || miscOpen > 0) {
       const miscStrip = div('buffer-strip misc-expense-strip');
@@ -10927,13 +11075,13 @@
     const projectionMap = buildDebtForecastProjection(currentMonth, forecastHorizon, { monthDetailsFn: hasScenario ? computeMonthDetailsWithScenario : computeMonthDetails });
     const debtInfo = document.createElement('div');
     debtInfo.className = 'notice success';
-    debtInfo.textContent = 'Ab September 2026 rechnet die Vorschau mit einem festen Schuldenziel von 800 € pro Monat. Standardraten zählen zuerst; die fehlende Summe wird unabhängig vom freien Haushaltsbetrag auf geeignete Schulden verteilt.';
+    debtInfo.textContent = 'Ab September 2026 zieht die Vorschau jeden Monat den vollständigen 800-€-Schulden-Pool vom verfügbaren Betrag ab. Standardraten zählen hinein; vorerst nicht sinnvoll einsetzbare Beträge gehen als gebundene Schulden-Rücklage aufs Tagesgeld.';
     card.appendChild(debtInfo);
     card.appendChild(renderForecastTimelineCard(months, hasScenario, projectionMap));
 
     const table = document.createElement('table');
     table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Monat</th><th>Privates Netto</th><th>Übertrag</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden geplant</th><th>davon zusätzlich vorgeschlagen</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Insgesamt verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Monat</th><th>Privates Netto</th><th>Übertrag</th><th>Gemeinsame Kosten</th><th>Persönliche Ausgaben</th><th>Schulden-Pool</th><th>davon zusätzlich vorgeschlagen</th><th>davon Schulden-Rücklage Tagesgeld</th><th>Sonstige bezahlt</th><th>Sonstige offen</th><th>Insgesamt verfügbar</th><th>Rücklagen ab 200 €</th><th>Sparen ab 200 €</th></tr></thead>';
     const tbody = document.createElement('tbody');
     months.forEach(({ key, label }) => {
       const rawDetails = hasScenario ? computeMonthDetailsWithScenario(key) : computeMonthDetails(key);
@@ -10941,7 +11089,7 @@
       const free = details.free;
       const distributable = details.distributable;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.carryoverIn || 0)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
+      tr.innerHTML = `<td>${label}</td><td>${euro(details.totalIncome)}</td><td>${euro(details.carryoverIn || 0)}</td><td>${euro(details.totalCommonRounded)}</td><td>${euro(details.totalPersonal)}</td><td title="Bisher in Fixkosten verknüpft: ${euro(details.linkedDebtCosts)}">${euro(details.debtPlanned)}</td><td>${euro(details.debtSnowballExtra)}</td><td>${euro(details.debtDayMoneyTransfer || 0)}</td><td>${euro(details.miscPaid)}</td><td>${euro(Number(details.miscOpen || 0))}</td><td><span class="pill ${free < 0 ? 'danger' : 'success'}">${euro(free)}</span></td><td>${euro(details.reserves)}</td><td>${euro(details.savings)}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -10959,13 +11107,16 @@
     const details = computeMonthDetails(monthKey);
     const debtPlan = getDebtPlanForMonth(monthKey);
     const linkedDebtCosts = getLinkedDebtCostTotalForMonth(monthKey);
+    const debtBudgetSummary = getDebtBudgetAllocationSummary(monthKey);
     return {
       ...details,
       linkedDebtCosts,
-      debtPlanned: Number(debtPlan.planned || 0),
+      debtPlanned: Number(debtBudgetSummary.reservedTotal || debtPlan.planned || 0),
       debtBase: Number(debtPlan.planned || 0),
       debtSnowballExtra: 0,
       debtDynamicExtra: 0,
+      debtDayMoneyTransfer: Number(debtBudgetSummary.dayMoneyTransfer || 0),
+      debtReserveBalance: Number(debtBudgetSummary.reserveBalance || 0),
       debtPaid: Number(debtPlan.paid || 0),
       debtOpen: Number(debtPlan.open || 0),
       debtNotes: ['Monatsabschluss nutzt Ist-Daten; keine Schulden-Zukunftsprognose.']
@@ -10997,7 +11148,7 @@
       };
     }) : [];
     return {
-      schema: 'monthCloseV258',
+      schema: 'monthCloseV274',
       closedAt: new Date().toISOString(),
       totalIncome: Number(details.totalIncome || 0),
       carryoverIn: Number(details.carryoverIn || 0),
@@ -11015,6 +11166,9 @@
       debtBase: Number(details.debtBase || 0),
       debtSnowballExtra: Number(details.debtSnowballExtra || 0),
       debtDynamicExtra: Number(details.debtDynamicExtra || 0),
+      debtDayMoneyTransfer: Number(details.debtDayMoneyTransfer || 0),
+      debtReserveBalance: Number(details.debtReserveBalance || 0),
+      debtBudgetAdditionalReservation: Number(details.debtBudgetAdditionalReservation || 0),
       debtPaid: Number(debtPlan.paid || 0),
       debtOpen: Number(debtPlan.open || 0),
       miscPaid: Number(details.miscPaid || 0),
@@ -11107,7 +11261,8 @@
       { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
       { label: 'Rücklagen 70 % über Puffer', value: `${euro(details.reserves)}` },
       { label: 'Sparen 30 % über Puffer', value: `${euro(details.savings)}` },
-      { label: 'Schulden im Monat', value: `${euro(Number(details.debtPlanned || 0))}`, hint: 'Bereits in Gemeinsame/Persönliche Kosten enthalten.' },
+      { label: 'Schulden-Pool im Monat', value: `${euro(Number(details.debtPlanned || 0))}`, hint: 'Normale Raten zählen hinein; die Differenz ist zusätzlich im verfügbaren Betrag abgezogen.' },
+      { label: 'Davon aufs Tagesgeld', value: `${euro(Number(details.debtDayMoneyTransfer || 0))}`, kind: Number(details.debtDayMoneyTransfer || 0) > 0 ? 'warning' : 'success', hint: 'Bleibt als Schulden-Rücklage gebunden.' },
       { label: 'Sonstige bezahlt', value: `${euro(details.miscPaid)}` },
       { label: 'Sonstige offen geplant', value: `${euro(Number(details.miscOpen || 0))}`, kind: Number(details.miscOpen || 0) > 0 ? 'warning' : 'success' },
       { label: 'Status', value: closed ? '<span class="pill success">Abgeschlossen</span>' : '<span class="pill warning">Offen</span>' }
@@ -11124,8 +11279,11 @@
     receipt.appendChild(createReceiptRow('Selbstständigkeit im Gesamtbetrag', `${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''} ${euro(Math.abs(businessAdjustment))}`, businessAdjustment >= 0 ? 'success' : 'warning'));
     receipt.appendChild(createReceiptRow('Gemeinsame Kosten', `− ${euro(details.totalCommonRounded)}`));
     receipt.appendChild(createReceiptRow('Persönliche Ausgaben', `− ${euro(details.totalPersonal)}`));
-    receipt.appendChild(createReceiptRow('Davon Schulden in den Kosten', euro(details.debtPlanned || 0)));
+    receipt.appendChild(createReceiptRow('Schulden-Pool insgesamt', euro(details.debtPlanned || 0)));
+    receipt.appendChild(createReceiptRow('Davon bereits in den Kosten', euro(details.linkedDebtCosts || 0)));
+    receipt.appendChild(createReceiptRow('Zusätzlich zum Kostenplan gebunden', `− ${euro(details.debtBudgetAdditionalReservation || 0)}`));
     receipt.appendChild(createReceiptRow('davon zusätzlich vorgeschlagen', euro(details.debtSnowballExtra || 0)));
+    receipt.appendChild(createReceiptRow('Davon Schulden-Rücklage Tagesgeld', euro(details.debtDayMoneyTransfer || 0)));
     receipt.appendChild(createReceiptRow('Sonstige bezahlt', `− ${euro(details.miscPaid)}`));
     receipt.appendChild(createReceiptRow('Sonstige offen geplant', `− ${euro(details.miscOpen || 0)}`));
     receipt.appendChild(createReceiptRow('Insgesamt verfügbar', euro(details.free), details.free >= 0 ? 'success' : 'danger'));
@@ -15143,6 +15301,60 @@ function showPersonalEditor(personId, editPost) {
     else delete state.appMeta.debtAssistantActionStatus[actionKey];
   }
 
+  function getRecordedDebtSavingsReserveBeforeMonth(monthKey) {
+    normalizeAppMeta();
+    if (!isMonthKey(monthKey)) return 0;
+    const balance = state.appMeta.debtSavingsLedger.reduce((sum, entry) => {
+      if (!entry || !isMonthKey(entry.month) || entry.month > monthKey) return sum;
+      // Einzahlungen des laufenden Planmonats entstehen erst aus dessen Rest.
+      // Bereits dokumentierte Entnahmen müssen dagegen sofort berücksichtigt
+      // werden, damit dieselbe Rücklage nicht ein zweites Mal vorgeschlagen wird.
+      if (entry.month === monthKey && entry.type !== 'withdrawal') return sum;
+      return sum + (entry.type === 'deposit' ? Number(entry.amount || 0) : -Number(entry.amount || 0));
+    }, 0);
+    return roundMoney(Math.max(0, balance));
+  }
+
+  function setRecordedDebtSavingsDeposit(actionKey, monthKey, amount, enabled) {
+    normalizeAppMeta();
+    const key = String(actionKey || '');
+    state.appMeta.debtSavingsLedger = state.appMeta.debtSavingsLedger.filter((entry) => !(entry.type === 'deposit' && entry.actionKey === key));
+    if (!enabled) return;
+    const safeAmount = roundMoney(Math.max(0, Number(amount || 0)));
+    if (!(safeAmount > 0) || !isMonthKey(monthKey)) return;
+    state.appMeta.debtSavingsLedger.push({
+      id: generateId(),
+      month: monthKey,
+      type: 'deposit',
+      amount: safeAmount,
+      actionKey: key,
+      debtId: '',
+      debtName: 'Schulden-Rücklage Tagesgeld',
+      note: 'Nicht einsetzbarer Teil des festen Schulden-Pools',
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  function recordDebtSavingsWithdrawal(actionKey, monthKey, amount, debt) {
+    normalizeAppMeta();
+    const key = String(actionKey || '');
+    if (key && state.appMeta.debtSavingsLedger.some((entry) => entry.type === 'withdrawal' && entry.actionKey === key)) return;
+    const available = getRecordedDebtSavingsReserveBeforeMonth(monthKey);
+    const safeAmount = roundMoney(Math.min(available, Math.max(0, Number(amount || 0))));
+    if (!(safeAmount > 0) || !isMonthKey(monthKey)) return;
+    state.appMeta.debtSavingsLedger.push({
+      id: generateId(),
+      month: monthKey,
+      type: 'withdrawal',
+      amount: safeAmount,
+      actionKey: key,
+      debtId: debt && debt.id || '',
+      debtName: debt && debt.name || 'Schuld',
+      note: 'Schulden-Rücklage für eine Tilgung eingesetzt',
+      createdAt: new Date().toISOString()
+    });
+  }
+
   function getDebtPlanRowForMonth(plan, monthKey) {
     return ((plan && plan.rows) || []).find((entry) => entry.month === monthKey) || null;
   }
@@ -15161,11 +15373,13 @@ function showPersonalEditor(personId, editPost) {
     const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
     head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Hier siehst du die konkreten Zahlungen für den gewählten Monat. „Bezahlt eintragen“ dokumentiert nur deine bereits ausgeführte Zahlung und löst keine Überweisung aus; danach wird der restliche 800-€-Plan sofort neu verteilt.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Hier siehst du die konkreten Zahlungen für den gewählten Monat. Der volle 800-€-Schulden-Pool wird im verfügbaren Betrag berücksichtigt. Was noch nicht sinnvoll gezahlt werden kann, bleibt als gebundene Schulden-Rücklage auf dem Tagesgeld.'));
+    const debtSavingsDeposit = roundMoney(Number(row.debtSavingsDeposit || 0));
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatsziel', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
+      { label: 'Schulden-Pool', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
       { label: 'Normale Raten', value: euro(row.base || 0) },
       { label: 'Zusätzlich', value: euro(row.extra || 0), kind: Number(row.extra || 0) > 0 ? 'warning' : '' },
+      { label: 'Davon aufs Tagesgeld', value: euro(debtSavingsDeposit), kind: debtSavingsDeposit > 0 ? 'warning' : 'success', hint: 'Bleibt vollständig für Schulden gebunden.' },
       { label: 'Bereits bezahlt', value: euro(row.alreadyPaid || 0), kind: Number(row.alreadyPaid || 0) > 0 ? 'success' : '' }
     ]));
 
@@ -15238,7 +15452,15 @@ function showPersonalEditor(personId, editPost) {
             month: monthKey,
             amount: total,
             mode: 'extra',
-            note: 'Gesamtzahlung aus dem Schulden-Monatsassistenten'
+            note: 'Gesamtzahlung aus dem Schulden-Monatsassistenten',
+            debtReserveWithdrawalAmount: item.debt.id === row.generalDebtSavingsWithdrawalDebtId
+              ? Number(row.generalDebtSavingsWithdrawal || 0)
+              : 0,
+            debtReserveWithdrawalActionKey: `${actionKey}|reserve-withdrawal`,
+            debtReserveRemainderAmount: row.payoffReserve && row.payoffReserve.targetDebt === item.name
+              ? Number(row.payoffReserve.leftoverAfterPayoff || 0)
+              : 0,
+            debtReserveRemainderActionKey: `${actionKey}|reserve-remainder`
           });
           return;
         }
@@ -15277,8 +15499,8 @@ function showPersonalEditor(personId, editPost) {
       actionRow.className = 'debt-balance-review-row';
       const info = document.createElement('div');
       info.className = 'debt-balance-review-copy';
-      info.appendChild(createUiEl('strong', '', `${euro(reserveAmount)} für ${reserve.targetDebt} zurücklegen`));
-      info.appendChild(createUiEl('small', 'muted', `Für die spätere Gesamtzahlung · danach zurückgelegt ${euro(reserve.reserveBalance || 0)}`));
+      info.appendChild(createUiEl('strong', '', `${euro(reserveAmount)} aufs Tagesgeld · für ${reserve.targetDebt}`));
+      info.appendChild(createUiEl('small', 'muted', `${reserve.sourceDebt || 'Frei gewordene Rate'} bleibt für die spätere Gesamtzahlung gebunden · danach zurückgelegt ${euro(reserve.reserveBalance || 0)}`));
       const actions = document.createElement('div');
       actions.className = 'row';
       if (status) actions.appendChild(createUiEl('span', status === 'done' ? 'pill success' : 'pill warning', status === 'done' ? 'zurückgelegt' : 'für später markiert'));
@@ -15307,11 +15529,51 @@ function showPersonalEditor(personId, editPost) {
       list.appendChild(actionRow);
     }
 
+    if (Number(row.unallocatedBudget || 0) > 0.005) {
+      const reserveAmount = roundMoney(Number(row.unallocatedBudget || 0));
+      const actionKey = getDebtAssistantActionKey(monthKey, 'debt-day-money', 'debt_reserve', reserveAmount);
+      const status = getDebtAssistantActionStatus(actionKey);
+      const actionRow = document.createElement('div');
+      actionRow.className = 'debt-balance-review-row';
+      const info = document.createElement('div');
+      info.className = 'debt-balance-review-copy';
+      info.appendChild(createUiEl('strong', '', `${euro(reserveAmount)} als Schulden-Rücklage aufs Tagesgeld`));
+      info.appendChild(createUiEl('small', 'muted', 'Der Betrag ist nicht frei verfügbar und bleibt für eine spätere sinnvolle Schuldentilgung vorgemerkt.'));
+      const actions = document.createElement('div');
+      actions.className = 'row';
+      if (status) actions.appendChild(createUiEl('span', status === 'done' ? 'pill success' : 'pill warning', status === 'done' ? 'zurückgelegt' : 'für später markiert'));
+      const laterBtn = document.createElement('button');
+      laterBtn.type = 'button';
+      laterBtn.className = 'secondary';
+      laterBtn.textContent = status === 'later' ? 'Wieder einplanen' : 'Später';
+      laterBtn.addEventListener('click', () => {
+        const nextStatus = status === 'later' ? '' : 'later';
+        setDebtAssistantActionStatus(actionKey, nextStatus);
+        setRecordedDebtSavingsDeposit(actionKey, monthKey, reserveAmount, false);
+        saveState();
+        render();
+      });
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = status === 'done' ? 'secondary' : 'success';
+      doneBtn.textContent = status === 'done' ? 'Wieder öffnen' : 'Zurückgelegt';
+      doneBtn.addEventListener('click', () => {
+        const nextStatus = status === 'done' ? '' : 'done';
+        setDebtAssistantActionStatus(actionKey, nextStatus);
+        setRecordedDebtSavingsDeposit(actionKey, monthKey, reserveAmount, nextStatus === 'done');
+        saveState();
+        render();
+      });
+      actions.appendChild(laterBtn);
+      actions.appendChild(doneBtn);
+      actionRow.appendChild(info);
+      actionRow.appendChild(actions);
+      list.appendChild(actionRow);
+    }
+
     if (!list.children.length) list.appendChild(createUiEl('div', 'notice success', 'Für diesen Monat ist keine weitere Schuldenzahlung offen.'));
     card.appendChild(list);
-    if (Number(row.unallocatedBudget || 0) > 0.005) {
-      card.appendChild(createUiEl('div', 'notice info', `${euro(row.unallocatedBudget)} bleiben momentan unverplant, weil keine weitere geeignete Zahlung möglich ist.`));
-    }
+    if (Number(row.debtSavingsWithdrawal || 0) > 0.005) card.appendChild(createUiEl('div', 'notice success', `${euro(row.debtSavingsWithdrawal)} aus der bisherigen Schulden-Rücklage werden diesen Monat wieder für eine Schuld eingesetzt.`));
     return card;
   }
 
@@ -15434,7 +15696,7 @@ function showPersonalEditor(personId, editPost) {
     facts.className = 'debt-free-facts';
     [
       ['Offen aktuell', euro(totalOpen)],
-      ['Plan aktueller Monat', firstRow ? euro(firstRow.total || 0) : '0,00 €'],
+      ['Schulden-Pool aktueller Monat', firstRow ? euro(firstRow.pool || firstRow.total || 0) : '0,00 €'],
       ['Monatsziel ab September', firstBudgetRow ? euro(firstBudgetRow.monthlyTarget || 0) : euro(snowballConfig.monthlyTarget)],
       ['Noch geplante Standardraten', firstRow ? euro(firstRow.base || 0) : '0,00 €'],
       ['Zusatz im ersten Zielmonat', firstBudgetRow ? euro(firstBudgetRow.extra || 0) : '0,00 €'],
@@ -15485,7 +15747,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Ab September 2026 plant die App jeden Monat insgesamt 800 € für Schulden ein: zuerst alle Pflicht- und Standardraten, danach wird vor jeder Aufteilung eine mögliche Komplettablösung geprüft. Nur der verbleibende Betrag wird als Ratenerhöhung oder freiwillige Zusatztilgung vorgeschlagen. Der Vorschlag ist unabhängig vom freien Haushaltsbetrag. Schulden mit „nur Rate“ oder unbekanntem Zahlungsweg bleiben als Ziel für zusätzliche Zahlungen ausgeschlossen.';
+    note.textContent = 'Ab September 2026 bindet die App jeden Monat insgesamt 800 € für Schulden und zieht diesen Pool vollständig vom verfügbaren Betrag ab: zuerst alle Pflicht- und Standardraten, danach mögliche Komplettablösungen und Zusatztilgungen. Was wegen einer Zahlungsregel noch nicht sinnvoll eingesetzt werden kann, bleibt als Schulden-Rücklage auf dem Tagesgeld und wird in späteren Monaten wieder für Schulden berücksichtigt. Schulden mit „nur Rate“ oder unbekanntem Zahlungsweg bleiben als Ziel für zusätzliche Zahlungen ausgeschlossen.';
     card.appendChild(note);
     return card;
   }
@@ -15505,7 +15767,7 @@ function showPersonalEditor(personId, editPost) {
     const titleWrap = document.createElement('div');
     titleWrap.appendChild(createUiEl('span', 'pill success', `Start ${formatMonthLabel(snowballConfig.monthlyTargetStartMonth)}`));
     titleWrap.appendChild(createUiEl('h3', '', `Ratenvorschlag für ${formatMonthLabel(targetMonth)}`));
-    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den bestehenden Raten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Erst der verbleibende Rest bis 800 € wird auf weitere Vorschläge verteilt.'));
+    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den bestehenden Raten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Der volle Rest bis 800 € wird entweder sinnvoll verteilt oder als gebundene Schulden-Rücklage aufs Tagesgeld gelegt.'));
     const recalculationMonth = state.appMeta && state.appMeta.debtPlanLastRecalculatedMonth;
     const recalculationDebtName = state.appMeta && state.appMeta.debtPlanLastRecalculatedDebtName;
     if (isMonthKey(recalculationMonth) && recalculationDebtName) {
@@ -15517,14 +15779,15 @@ function showPersonalEditor(personId, editPost) {
     const impactText = getDebtPlanImpactText(state.appMeta && state.appMeta.debtPlanLastImpact);
     if (impactText) card.appendChild(createUiEl('div', 'notice info', impactText));
 
-    const remainingToPlan = roundMoney(Math.max(0, Number(row.monthlyTarget || 0) - Number(row.total || 0)));
+    const dayMoneyTransfer = roundMoney(Number(row.debtSavingsDeposit || 0));
+    const totalReserved = roundMoney(Math.max(Number(row.pool || 0), Number(row.total || 0)));
     card.appendChild(createSummaryMetrics([
       { label: 'Festes Monatsziel', value: euro(row.monthlyTarget), kind: 'success' },
       { label: 'Standardraten geplant', value: euro(row.base || 0) },
       { label: 'Zusätzlich vorgeschlagen', value: euro(row.extra || 0), kind: Number(row.extra || 0) > 0 ? 'warning' : '' },
       { label: targetMonth === monthKey ? 'Bereits bezahlt' : 'Start', value: targetMonth === monthKey ? euro(row.alreadyPaid || 0) : formatMonthLabel(targetMonth) },
-      { label: 'Gesamt eingeplant', value: euro(row.total || 0), kind: Number(row.total || 0) + 0.005 >= Number(row.monthlyTarget || 0) ? 'success' : 'warning' },
-      { label: 'Noch nicht verteilbar', value: euro(remainingToPlan), kind: remainingToPlan > 0 ? 'warning' : 'success' }
+      { label: 'Gesamt gebunden', value: euro(totalReserved), kind: totalReserved + 0.005 >= Number(row.monthlyTarget || 0) ? 'success' : 'warning' },
+      { label: 'Davon aufs Tagesgeld', value: euro(dayMoneyTransfer), kind: dayMoneyTransfer > 0 ? 'warning' : 'success', hint: 'Bleibt für Schulden reserviert.' }
     ]));
 
     const grouped = new Map();
@@ -15555,12 +15818,24 @@ function showPersonalEditor(personId, editPost) {
         notes: ['für die spätere Gesamtforderung zurücklegen']
       });
     }
+    if (Number(row.unallocatedBudget || 0) > 0.005) {
+      suggestions.push({
+        name: 'Schulden-Rücklage Tagesgeld',
+        rate: 0,
+        extra: Number(row.unallocatedBudget || 0),
+        fullPayoff: 0,
+        completed: false,
+        reserveOnly: true,
+        generalDebtReserve: true,
+        notes: ['bleibt für spätere Schuldentilgung gebunden']
+      });
+    }
 
     if (suggestions.length) {
       const list = document.createElement('div');
       list.className = 'debt-rollover-list';
       suggestions.forEach((item) => {
-        const debt = (state.debts || []).find((entry) => entry && entry.name === item.name) || null;
+        const debt = item.generalDebtReserve ? null : ((state.debts || []).find((entry) => entry && entry.name === item.name) || null);
         const currentRate = debt ? Number(getDebtRateForMonth(debt, targetMonth) || 0) : Number(item.rate || 0);
         const canRaiseRate = !!(debt
           && debt.paymentType === 'installment'
@@ -15571,6 +15846,8 @@ function showPersonalEditor(personId, editPost) {
         let recommendation = '';
         if (item.fullPayoff > 0) {
           recommendation = `Gesamtforderung von voraussichtlich ${euro(item.fullPayoff)} vollständig bezahlen.`;
+        } else if (item.generalDebtReserve) {
+          recommendation = `${euro(item.extra)} aufs Tagesgeld legen und ausschließlich für spätere Schuldenzahlungen gebunden lassen.`;
         } else if (item.reserveOnly) {
           recommendation = `${euro(item.extra)} für die spätere Gesamtzahlung zurücklegen; keine unzulässige Teilzahlung senden.`;
         } else if (item.completed) {
@@ -15603,9 +15880,7 @@ function showPersonalEditor(personId, editPost) {
         : 'Aktuell kann keine zusätzliche Rate vorgeschlagen werden. Zahlungsregeln und Restschulden werden weiterhin beachtet.'));
     }
 
-    if (remainingToPlan > 0.005) {
-      card.appendChild(createUiEl('p', 'small warning-text', `${euro(remainingToPlan)} lassen sich derzeit nicht sinnvoll verteilen, ohne eine Zahlungsregel zu verletzen oder eine Schuld zu überzahlen.`));
-    }
+    if (dayMoneyTransfer > 0.005) card.appendChild(createUiEl('p', 'small warning-text', `${euro(dayMoneyTransfer)} werden nicht frei: Sie gehören weiter zum Schulden-Pool und werden bei der nächsten sinnvollen Gesamtablösung erneut berücksichtigt.`));
     return card;
   }
 
@@ -15625,7 +15900,7 @@ function showPersonalEditor(personId, editPost) {
     const futurePayoff = (plan.rows || []).find((entry) => entry.payoffReserve && entry.payoffReserve.canPayoff);
     const text = reserve.canPayoff
       ? 'Die Rücklage aus dem Vormonat und der aktuelle Schulden-Pool reichen jetzt. Beim Anbieter bitte die vollständige Gesamtforderung wählen und den dort aktuell angezeigten Betrag prüfen.'
-      : `${euro(reserve.reserveAdded)} werden in ${formatMonthLabel(monthKey)} nicht als Teilzahlung an ${reserve.targetDebt} geschickt, sondern innerhalb des Schuldenbudgets für die spätere Gesamtablösung vorgemerkt.${futurePayoff ? ` Voraussichtlich reicht es in ${formatMonthLabel(futurePayoff.month)}.` : ''}`;
+      : `${euro(reserve.reserveAdded)} aus der frei gewordenen Rate von ${reserve.sourceDebt} werden in ${formatMonthLabel(monthKey)} nicht als Teilzahlung an ${reserve.targetDebt} geschickt, sondern als gebundene Schulden-Rücklage aufs Tagesgeld gelegt.${futurePayoff ? ` Voraussichtlich reicht es in ${formatMonthLabel(futurePayoff.month)}.` : ''}`;
     card.appendChild(createUiEl('p', 'small muted', text));
 
     card.appendChild(createSummaryMetrics(reserve.canPayoff
@@ -15636,7 +15911,7 @@ function showPersonalEditor(personId, editPost) {
           { label: 'Rest im Schulden-Pool danach', value: euro(reserve.leftoverAfterPayoff || 0) }
         ]
       : [
-          { label: 'Diesen Monat zurücklegen', value: euro(reserve.reserveAdded), kind: 'warning' },
+          { label: 'Diesen Monat aufs Tagesgeld', value: euro(reserve.reserveAdded), kind: 'warning' },
           { label: 'Danach angespart', value: euro(reserve.reserveBalance), kind: reserve.reserveBalance > 0 ? 'success' : '' },
           { label: 'Rest nach normaler Rate', value: euro(reserve.currentOpenAfterRate) },
           { label: 'Voraussichtliche Gesamtablösung', value: futurePayoff ? formatMonthLabel(futurePayoff.month) : 'noch offen' }
@@ -15655,7 +15930,11 @@ function showPersonalEditor(personId, editPost) {
           month: monthKey,
           amount: reserve.portalPayoffAmount,
           mode: 'extra',
-          note: `Gesamtablösung mit zurückgelegter Rate aus ${reserve.sourceDebt}`
+          note: `Gesamtablösung mit zurückgelegter Rate aus ${reserve.sourceDebt}`,
+          debtReserveWithdrawalAmount: Number(row.generalDebtSavingsWithdrawal || 0),
+          debtReserveWithdrawalActionKey: `${monthKey}|${target.id}|full-payoff|reserve-withdrawal`,
+          debtReserveRemainderAmount: Number(reserve.leftoverAfterPayoff || 0),
+          debtReserveRemainderActionKey: `${monthKey}|${target.id}|full-payoff|reserve-remainder`
         });
       });
       actionRow.appendChild(button);
@@ -16565,6 +16844,22 @@ function showPersonalEditor(personId, editPost) {
             markAsMonthly,
             bookAccountTransaction: ACCOUNTS_ENABLED && refs.bookAccountCheck.checked
           })) {
+            if (Number(defaults.debtReserveWithdrawalAmount || 0) > 0) {
+              recordDebtSavingsWithdrawal(
+                defaults.debtReserveWithdrawalActionKey || `${month}|${debt.id}|reserve-withdrawal`,
+                month,
+                Number(defaults.debtReserveWithdrawalAmount || 0),
+                debt
+              );
+            }
+            if (Number(defaults.debtReserveRemainderAmount || 0) > 0) {
+              setRecordedDebtSavingsDeposit(
+                defaults.debtReserveRemainderActionKey || `${month}|${debt.id}|reserve-remainder`,
+                month,
+                Number(defaults.debtReserveRemainderAmount || 0),
+                true
+              );
+            }
             saveState();
             render();
             close();
