@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.69
+ * Haushaltsplaner Version 2.70
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.69';
+  const APP_VERSION = '2.70';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -239,18 +239,21 @@
     const stored = debt.creditorRule && typeof debt.creditorRule === 'object' ? debt.creditorRule : null;
     const isMkk = nameKey === 'mkk' || nameKey.includes('mkk') || nameKey.includes('meine krankenkasse');
     const isKreiskasse = nameKey.includes('kreiskasse') || nameKey.includes('opr');
-    const isRivertyAz1 = nameKey.includes('riverty') && nameKey.includes('az1');
-    if (stored && stored.type) return stored;
-    if (isRivertyAz1) {
+    const compactNameKey = nameKey.replace(/[^a-z0-9]/g, '');
+    const isRivertyAz1 = nameKey.includes('riverty') && compactNameKey.includes('az1');
+    const isRivertyS19 = nameKey.includes('riverty') && compactNameKey.includes('s19');
+    if (isRivertyAz1 || isRivertyS19) {
+      const planName = isRivertyS19 ? 'Riverty S.19' : 'Riverty AZ1';
       return {
         type: 'regular_or_full_payoff',
-        label: 'Riverty AZ1: Im Portal sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Frei gewordene Raten werden deshalb bis zur Gesamtablösung zurückgelegt.',
+        label: `${planName}: Im Portal sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden nicht vorgeschlagen.`,
         allowExtraPayments: true,
         allowSnowballTarget: true,
         allowDynamicExtra: false,
         extraPaymentMode: 'full_payoff_only'
       };
     }
+    if (stored && stored.type) return stored;
     if (isMkk) {
       return {
         type: 'mkk_annual_review',
@@ -1071,7 +1074,11 @@
         lastAutomaticBrowserBackupAt: '',
         externalBackupFolderName: '',
         lastExternalBackupAt: '',
-        lastBatchPayment: null
+        lastBatchPayment: null,
+        debtPlanLastRecalculatedAt: '',
+        debtPlanLastRecalculatedMonth: '',
+        debtPlanLastRecalculatedDebtId: '',
+        debtPlanLastRecalculatedDebtName: ''
       };
     }
     if (!isMonthKey(state.appMeta.selectedMonth)) state.appMeta.selectedMonth = '';
@@ -1080,6 +1087,10 @@
     if (typeof state.appMeta.lastAutomaticBrowserBackupAt !== 'string') state.appMeta.lastAutomaticBrowserBackupAt = '';
     if (typeof state.appMeta.externalBackupFolderName !== 'string') state.appMeta.externalBackupFolderName = '';
     if (typeof state.appMeta.lastExternalBackupAt !== 'string') state.appMeta.lastExternalBackupAt = '';
+    if (typeof state.appMeta.debtPlanLastRecalculatedAt !== 'string') state.appMeta.debtPlanLastRecalculatedAt = '';
+    if (!isMonthKey(state.appMeta.debtPlanLastRecalculatedMonth)) state.appMeta.debtPlanLastRecalculatedMonth = '';
+    if (typeof state.appMeta.debtPlanLastRecalculatedDebtId !== 'string') state.appMeta.debtPlanLastRecalculatedDebtId = '';
+    if (typeof state.appMeta.debtPlanLastRecalculatedDebtName !== 'string') state.appMeta.debtPlanLastRecalculatedDebtName = '';
     if (!state.appMeta.lastBatchPayment || typeof state.appMeta.lastBatchPayment !== 'object') {
       state.appMeta.lastBatchPayment = null;
     } else {
@@ -3440,6 +3451,18 @@
       month = nextMonth(month);
     }
     return { rows, events, noRate, scheduledOneTime, debtFreeMonth, rolloverStart, automaticPayoffPlan };
+  }
+
+  function recalculateDebtPlanningAfterBalanceChange(debt, monthKey = currentMonth) {
+    if (!debt) return null;
+    normalizeAppMeta();
+    (state.debts || []).forEach(ensureDebtConfig);
+    const plan = buildSnowballPlan(currentMonth, 120);
+    state.appMeta.debtPlanLastRecalculatedAt = new Date().toISOString();
+    state.appMeta.debtPlanLastRecalculatedMonth = isMonthKey(monthKey) ? monthKey : currentMonth;
+    state.appMeta.debtPlanLastRecalculatedDebtId = typeof debt.id === 'string' ? debt.id : '';
+    state.appMeta.debtPlanLastRecalculatedDebtName = String(debt.name || 'Schuld');
+    return plan;
   }
 
   function getDebtRolloverSuggestionsForMonth(monthKey, plan = null) {
@@ -15112,6 +15135,11 @@ function showPersonalEditor(personId, editPost) {
     titleWrap.appendChild(createUiEl('span', 'pill success', `Start ${formatMonthLabel(snowballConfig.monthlyTargetStartMonth)}`));
     titleWrap.appendChild(createUiEl('h3', '', `Ratenvorschlag für ${formatMonthLabel(targetMonth)}`));
     titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den bestehenden Raten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Erst der verbleibende Rest bis 800 € wird auf weitere Vorschläge verteilt.'));
+    const recalculationMonth = state.appMeta && state.appMeta.debtPlanLastRecalculatedMonth;
+    const recalculationDebtName = state.appMeta && state.appMeta.debtPlanLastRecalculatedDebtName;
+    if (isMonthKey(recalculationMonth) && recalculationDebtName) {
+      titleWrap.appendChild(createUiEl('p', 'small success-text', `Neu berechnet nach dem aktualisierten Schuldenstand von ${recalculationDebtName} (${formatMonthLabel(recalculationMonth)}).`));
+    }
     head.appendChild(titleWrap);
     head.appendChild(createUiEl('strong', 'dynamic-debt-extra-amount', euro(row.monthlyTarget)));
     card.appendChild(head);
@@ -15326,9 +15354,10 @@ function showPersonalEditor(personId, editPost) {
             ? 'ohne Abweichung'
             : `${difference > 0 ? '+' : ''}${euro(difference)} Abweichung`;
           addChangeLog('Schulden', `${debt.name || 'Schuld'}: Stand für ${formatMonthLabel(targetMonth)} auf ${euro(amount)} bestätigt (${differenceText})`, targetMonth);
+          recalculateDebtPlanningAfterBalanceChange(debt, targetMonth);
           saveState();
-          render();
           close();
+          render();
         }
       }
     ]);
@@ -16059,7 +16088,7 @@ function showPersonalEditor(personId, editPost) {
     if (fullPayoffOnly) {
       const creditorInfo = document.createElement('div');
       creditorInfo.className = 'notice info';
-      creditorInfo.textContent = 'Riverty akzeptiert hier nur die vereinbarte Rate oder die vollständige Gesamtforderung. Teil-Sonderzahlungen werden deshalb nicht angeboten.';
+      creditorInfo.textContent = 'Bei diesem Riverty-Plan sind nur die vereinbarte Rate oder die vollständige Gesamtforderung möglich. Einzelne Sonderzahlungen werden deshalb nicht angeboten.';
       content.appendChild(creditorInfo);
       const syncFullPayoffAmount = () => {
         const total = Math.max(0, Number(debt.amountOpen || 0));
@@ -16232,14 +16261,18 @@ function showPersonalEditor(personId, editPost) {
             editDebt.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             if (open <= 0 && wasOpen) editDebt.completedMonth = currentMonth;
             if (open > 0) delete editDebt.completedMonth;
+            ensureDebtConfig(editDebt);
+            recalculateDebtPlanningAfterBalanceChange(editDebt, currentMonth);
           } else {
             const newDebt = { id: generateId(), name, amountOpen: open, monthlyRate: rate, paymentType, balanceCheckMode, balanceChecks: [], nextDueMonth: due, paidMonths: [], rateTimeline: [], accountId: ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '' };
             if (open <= 0) newDebt.completedMonth = currentMonth;
             state.debts.push(newDebt);
+            ensureDebtConfig(newDebt);
+            recalculateDebtPlanningAfterBalanceChange(newDebt, currentMonth);
           }
           saveState();
-          render();
           close();
+          render();
         }
       }
     ]);
