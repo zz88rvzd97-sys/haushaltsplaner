@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.68
+ * Haushaltsplaner Version 2.69
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.68';
+  const APP_VERSION = '2.69';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3000,6 +3000,17 @@
       .sort((a, b) => Number(a.open || 0) - Number(b.open || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de'));
   }
 
+  function findFullPayoffCandidateBeforeSplit(debts, availableBudget, options = {}) {
+    const budget = roundMoney(Math.max(0, Number(availableBudget || 0)));
+    if (!(budget > 0)) return null;
+    const reserveDebtId = options.reserveDebtId || '';
+    const reserveAmount = roundMoney(Math.max(0, Number(options.reserveAmount || 0)));
+    return getFixedDebtBudgetCandidates(debts).find((debt) => {
+      const usableReserve = debt.id === reserveDebtId ? reserveAmount : 0;
+      return Number(debt.open || 0) <= budget + usableReserve + 0.005;
+    }) || null;
+  }
+
   function chooseSnowballTarget(active, month, extraBudget = 0, options = {}) {
     const allowFullPayoff = options.allowFullPayoff === true;
     const candidates = active
@@ -3143,7 +3154,7 @@
       const dueDebts = active
         .filter((debt) => debt.open > 0 && monthDiff(debt.nextDueMonth, month) >= 0)
         .sort((a, b) => a.open - b.open || a.name.localeCompare(b.name));
-      const dedicatedContribution = automaticPayoffPlan
+      let dedicatedContribution = automaticPayoffPlan
         && !dedicatedFinished
         && monthDiff(automaticPayoffPlan.firstReserveMonth, month) >= 0
         && active.some((debt) => debt.id === automaticPayoffPlan.targetDebtId && debt.open > 0)
@@ -3173,6 +3184,28 @@
           newlyFreed += debt.rate;
         }
       });
+
+      // Vor jeder Aufteilung des Zusatzbudgets wird zuerst geprüft, ob der
+      // gesamte noch verfügbare Betrag eine geeignete Schuld komplett schließen
+      // kann. In diesem Fall hat die Komplettablösung Vorrang vor einer neuen
+      // Rücklage oder einer nur teilweisen Ratenerhöhung.
+      const fullPayoffBudgetBeforeSplit = monthlyTarget > 0
+        ? roundMoney(Math.max(0, monthlyTarget - alreadyPaid - base))
+        : 0;
+      const fullPayoffCandidateBeforeSplit = monthlyTarget > 0
+        ? findFullPayoffCandidateBeforeSplit(planDebts, fullPayoffBudgetBeforeSplit, {
+          reserveDebtId: automaticPayoffPlan ? automaticPayoffPlan.targetDebtId : '',
+          reserveAmount: dedicatedReserve
+        })
+        : null;
+      let priorityFullPayoffDebtId = fullPayoffCandidateBeforeSplit
+        ? fullPayoffCandidateBeforeSplit.id
+        : '';
+      if (fullPayoffCandidateBeforeSplit
+        && automaticPayoffPlan
+        && fullPayoffCandidateBeforeSplit.id !== automaticPayoffPlan.targetDebtId) {
+        dedicatedContribution = 0;
+      }
 
       if (dedicatedContribution > 0 && automaticPayoffPlan) {
         const target = active.find((debt) => debt.id === automaticPayoffPlan.targetDebtId);
@@ -3251,16 +3284,18 @@
       }
 
       // Ab September 2026 ist das Monatsziel fest. Bereits gezahlte Beträge und
-      // Pflicht-/Normalraten zählen zuerst. Nur die noch fehlende Summe wird als
-      // freiwillige Zusatztilgung auf die kleinste geeignete Schuld verteilt.
-      // Die Höhe hängt ausdrücklich nicht vom freien Haushaltsbetrag ab.
+      // Pflicht-/Normalraten zählen zuerst. Mit der noch fehlenden Summe wird
+      // zuerst eine mögliche Komplettablösung gesucht; nur der danach übrige
+      // Betrag wird als freiwillige Zusatztilgung verteilt. Die Höhe hängt
+      // ausdrücklich nicht vom freien Haushaltsbetrag ab.
       let unallocatedBudget = 0;
       if (monthlyTarget > 0) {
         let availableBudget = roundMoney(Math.max(0, monthlyTarget - alreadyPaid - base - extra));
         while (availableBudget > 0.005) {
           const candidates = getFixedDebtBudgetCandidates(planDebts);
           if (!candidates.length) break;
-          let target = candidates[0];
+          let target = candidates.find((candidate) => candidate.id === priorityFullPayoffDebtId) || candidates[0];
+          priorityFullPayoffDebtId = '';
 
           if (isDebtFullPayoffOnly(target)) {
             const reserveForTarget = payoffReserve && payoffReserve.targetDebt === target.name
@@ -15056,7 +15091,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Ab September 2026 plant die App jeden Monat insgesamt 800 € für Schulden ein: zuerst alle Pflicht- und Standardraten, danach eine sinnvolle Erhöhung oder freiwillige Zusatztilgung bei der kleinsten geeigneten Schuld. Der Vorschlag ist unabhängig vom freien Haushaltsbetrag. Kreiskasse bleibt als Ziel für zusätzliche Zahlungen ausgeschlossen.';
+    note.textContent = 'Ab September 2026 plant die App jeden Monat insgesamt 800 € für Schulden ein: zuerst alle Pflicht- und Standardraten, danach wird vor jeder Aufteilung eine mögliche Komplettablösung geprüft. Nur der verbleibende Betrag wird als Ratenerhöhung oder freiwillige Zusatztilgung vorgeschlagen. Der Vorschlag ist unabhängig vom freien Haushaltsbetrag. Kreiskasse bleibt als Ziel für zusätzliche Zahlungen ausgeschlossen.';
     card.appendChild(note);
     return card;
   }
@@ -15076,7 +15111,7 @@ function showPersonalEditor(personId, editPost) {
     const titleWrap = document.createElement('div');
     titleWrap.appendChild(createUiEl('span', 'pill success', `Start ${formatMonthLabel(snowballConfig.monthlyTargetStartMonth)}`));
     titleWrap.appendChild(createUiEl('h3', '', `Ratenvorschlag für ${formatMonthLabel(targetMonth)}`));
-    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Bestehende Raten werden zuerst berücksichtigt; der Rest bis 800 € wird unabhängig vom freien Haushaltsbetrag sinnvoll vorgeschlagen.'));
+    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den bestehenden Raten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Erst der verbleibende Rest bis 800 € wird auf weitere Vorschläge verteilt.'));
     head.appendChild(titleWrap);
     head.appendChild(createUiEl('strong', 'dynamic-debt-extra-amount', euro(row.monthlyTarget)));
     card.appendChild(head);
