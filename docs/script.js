@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.74
+ * Haushaltsplaner Version 2.75
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.74';
+  const APP_VERSION = '2.75';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -823,7 +823,7 @@
     },
     budgetTopUps: {
       fuel: { name: 'Tankgeld', startMonth: '2026-07', balances: {}, notes: {} },
-      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06' }
+      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06', targetOverrides: {} }
     },
     appMeta: {
       selectedMonth: '',
@@ -1168,6 +1168,12 @@
       if (key === 'groceries') {
         entry.targetAmount = Number.isFinite(Number(entry.targetAmount)) && Number(entry.targetAmount) > 0 ? Number(entry.targetAmount) : Number(cfg.targetAmount || 550);
         entry.targetStartMonth = isMonthKey(entry.targetStartMonth) ? entry.targetStartMonth : (cfg.targetStartMonth || '2026-06');
+        if (!entry.targetOverrides || typeof entry.targetOverrides !== 'object' || Array.isArray(entry.targetOverrides)) entry.targetOverrides = {};
+        Object.keys(entry.targetOverrides).forEach((month) => {
+          const amount = Number(entry.targetOverrides[month]);
+          if (!isMonthKey(month) || !Number.isFinite(amount) || amount < 0) delete entry.targetOverrides[month];
+          else entry.targetOverrides[month] = roundMoney(amount);
+        });
       }
       if (!entry.balances || typeof entry.balances !== 'object' || Array.isArray(entry.balances)) entry.balances = {};
       if (!entry.notes || typeof entry.notes !== 'object' || Array.isArray(entry.notes)) entry.notes = {};
@@ -1198,6 +1204,27 @@
     if (!isMonthKey(monthKey)) return;
     cfg.balances[monthKey] = Math.max(0, Number(amount || 0));
     cfg.notes[monthKey] = String(note || '');
+  }
+
+  function getGroceryTargetOverride(monthKey) {
+    const cfg = getBudgetTopUpConfig('groceries');
+    if (!isMonthKey(monthKey) || !cfg || !cfg.targetOverrides) return null;
+    if (!Object.prototype.hasOwnProperty.call(cfg.targetOverrides, monthKey)) return null;
+    const amount = Number(cfg.targetOverrides[monthKey]);
+    return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : null;
+  }
+
+  function setGroceryTargetOverride(monthKey, amount) {
+    const cfg = getBudgetTopUpConfig('groceries');
+    if (!isMonthKey(monthKey)) return false;
+    if (amount == null) {
+      delete cfg.targetOverrides[monthKey];
+      return true;
+    }
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount < 0) return false;
+    cfg.targetOverrides[monthKey] = roundMoney(numericAmount);
+    return true;
   }
 
   function isBudgetTopUpActive(type, monthKey) {
@@ -7500,6 +7527,8 @@
 
   function getFoodMoneyPlannedTarget(monthKey = currentMonth) {
     const cfg = getBudgetTopUpConfig('groceries');
+    const manualTarget = getGroceryTargetOverride(monthKey);
+    if (manualTarget != null) return manualTarget;
     if (isMonthKey(monthKey) && cfg && isMonthKey(cfg.targetStartMonth) && monthDiff(cfg.targetStartMonth, monthKey) >= 0) {
       const initialTarget = Math.max(0, Number(cfg.targetAmount || 550));
       if (monthKey === cfg.targetStartMonth) return initialTarget;
@@ -7549,6 +7578,29 @@
     return out;
   }
 
+  function splitExactAmount(total, weightedItems) {
+    const totalCents = Math.max(0, Math.round(Number(total || 0) * 100));
+    const items = (weightedItems || []).filter((item) => item && item.id && Number(item.weight || 0) > 0);
+    if (!items.length || totalCents <= 0) return {};
+    const weightTotal = items.reduce((sum, item) => sum + Number(item.weight || 0), 0);
+    const rows = items.map((item) => {
+      const rawCents = totalCents * (Number(item.weight || 0) / weightTotal);
+      const baseCents = Math.floor(rawCents);
+      return { id: item.id, baseCents, remainder: rawCents - baseCents };
+    });
+    let centsLeft = totalCents - rows.reduce((sum, row) => sum + row.baseCents, 0);
+    rows.sort((a, b) => b.remainder - a.remainder);
+    let index = 0;
+    while (centsLeft > 0 && rows.length) {
+      rows[index % rows.length].baseCents += 1;
+      centsLeft -= 1;
+      index += 1;
+    }
+    const out = {};
+    rows.forEach((row) => { out[row.id] = roundMoney(row.baseCents / 100); });
+    return out;
+  }
+
   function calculateBudgetTopUp(type, monthKey = currentMonth) {
     const active = isBudgetTopUpActive(type, monthKey);
     let target = 0;
@@ -7560,13 +7612,21 @@
     } else if (type === 'groceries') {
       target = getFoodMoneyPlannedTarget(monthKey);
       const stats = getGroceryAverageStats(monthKey, 12);
-      source = monthKey === getBudgetTopUpConfig('groceries').targetStartMonth || stats.count === 0
-        ? 'Startziel 550 €'
-        : `${stats.count} erfasste Monat(e) im Schnitt`;
+      const manualTarget = getGroceryTargetOverride(monthKey);
+      source = manualTarget != null
+        ? `Manuelle Vorgabe für ${formatMonthLabel(monthKey)}`
+        : (monthKey === getBudgetTopUpConfig('groceries').targetStartMonth || stats.count === 0
+          ? 'Startziel 550 €'
+          : `${stats.count} erfasste Monat(e) im Schnitt`);
     }
     const balance = active ? getBudgetTopUpBalance(type, monthKey) : 0;
     const missing = Math.max(0, target - balance);
-    const topUp = active ? (type === 'groceries' ? roundUpToNextFifty(missing) : roundUpToNextFive(missing)) : target;
+    const manualGroceryTarget = type === 'groceries' && getGroceryTargetOverride(monthKey) != null;
+    const topUp = active
+      ? (type === 'groceries'
+        ? (manualGroceryTarget ? roundMoney(missing) : roundUpToNextFifty(missing))
+        : roundUpToNextFive(missing))
+      : target;
     return { type, month: monthKey, active, target, balance, missing, topUp, source };
   }
 
@@ -7639,7 +7699,10 @@
   function getGroceryTopUpAllocation(monthKey = currentMonth) {
     const calc = calculateBudgetTopUp('groceries', monthKey);
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
-    const allocations = splitRoundedToFive(calc.topUp, posts.map((post) => ({ id: post.id, weight: Number(post.amount || 0) || 1 })));
+    const weightedPosts = posts.map((post) => ({ id: post.id, weight: Number(post.amount || 0) || 1 }));
+    const allocations = getGroceryTargetOverride(monthKey) != null
+      ? splitExactAmount(calc.topUp, weightedPosts)
+      : splitRoundedToFive(calc.topUp, weightedPosts);
     return { ...calc, allocations };
   }
 
@@ -13380,12 +13443,14 @@ function showPersonalEditor(personId, editPost) {
   function syncGroceryTopUpExpense(monthKey = currentMonth) {
     const allocation = getGroceryTopUpAllocation(monthKey);
     if (!allocation.active) return false;
+    const hasManualTarget = getGroceryTargetOverride(monthKey) != null;
     let changed = false;
     getFoodMoneyPosts().forEach((post) => {
       ensurePostConfig(post);
       const amount = Number(allocation.allocations && allocation.allocations[post.id] || 0);
+      if (hasManualTarget && isPostPaidForMonth(post, monthKey)) return;
       const targetMonth = isPostPaidForMonth(post, monthKey) ? nextMonth(monthKey) : monthKey;
-      setPostAmountForMonth(post, targetMonth, amount, 'future');
+      setPostAmountForMonth(post, targetMonth, amount, hasManualTarget ? 'once' : 'future');
       changed = true;
     });
     if (changed) addChangeLog('Einkaufsgeld', `Aufstockung ${formatMonthLabel(monthKey)} auf ${euro(allocation.topUp)} gesetzt.`, monthKey);
@@ -13488,25 +13553,76 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Einkaufsgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Im Juni 2026 beginnt das Einkaufsgeld mit 550 €. Ab Juli trägst du den Rest des Vormonats ein. Das Ziel wird aus bis zu 12 bereits vollständig erfassten Monaten berechnet und auf die nächsten 50 € aufgerundet. Die Überweisung markierst du beim persönlichen Posten „Einkaufsgeld“ einfach als bezahlt.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es aber bewusst überschreiben, zum Beispiel mit 500 € im September. Die Überweisung markierst du beim persönlichen Posten „Einkaufsgeld“ als bezahlt.'));
 
     const calc = getGroceryTopUpAllocation(currentMonth);
     const stats = getGroceryAverageStats(currentMonth, 12);
     const config = getBudgetTopUpConfig('groceries');
-    const basisText = stats.count
-      ? `${stats.count} Monat(e) · Ø ${euro(stats.average)}`
-      : 'Startziel 550 €';
+    const manualTarget = getGroceryTargetOverride(currentMonth);
+    const basisText = manualTarget != null
+      ? `Manuell für ${formatMonthLabel(currentMonth)}`
+      : (stats.count ? `${stats.count} Monat(e) · Ø ${euro(stats.average)}` : 'Startziel 550 €');
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
+      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : 'automatisch berechnet' },
       { label: 'Berechnungsbasis', value: basisText },
       { label: 'Rest vom Vormonat', value: calc.active ? euro(calc.balance) : 'ab Juli 2026' },
       { label: 'Aufstocken', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'ab Juli 2026'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' }
     ]));
 
+    const targetEditor = document.createElement('div');
+    targetEditor.className = 'sub-card grocery-target-editor';
+    targetEditor.appendChild(createUiEl('h4', '', `Monatsziel für ${formatMonthLabel(currentMonth)}`));
+    targetEditor.appendChild(createUiEl('p', 'small muted', 'Die Änderung gilt nur für den ausgewählten Monat. Folgemonate werden weiterhin automatisch berechnet.'));
+    const targetRow = document.createElement('div');
+    targetRow.className = 'row';
+    const targetInput = document.createElement('input');
+    targetInput.type = 'text';
+    targetInput.inputMode = 'decimal';
+    targetInput.value = formatNumberInput(calc.target);
+    targetInput.placeholder = 'z. B. 500,00';
+    targetRow.appendChild(createLabelInput('Gewünschtes Monatsziel', targetInput));
+    const targetActions = document.createElement('div');
+    targetActions.className = 'row';
+    const saveTargetBtn = document.createElement('button');
+    saveTargetBtn.type = 'button';
+    saveTargetBtn.className = 'primary';
+    saveTargetBtn.textContent = 'Für diesen Monat übernehmen';
+    saveTargetBtn.addEventListener('click', () => {
+      const amount = parseMoneyInput(targetInput.value);
+      if (!Number.isFinite(amount) || amount < 0) return alert('Bitte ein gültiges Monatsziel eingeben. Komma-Beträge sind möglich.');
+      if (!setGroceryTargetOverride(currentMonth, amount)) return alert('Das Monatsziel konnte nicht gespeichert werden.');
+      const changed = syncGroceryTopUpExpense(currentMonth);
+      addChangeLog('Einkaufsgeld', `Monatsziel ${formatMonthLabel(currentMonth)} manuell auf ${euro(amount)} gesetzt${changed ? ' und in die Planung übernommen' : ''}.`, currentMonth);
+      saveState();
+      render();
+    });
+    targetActions.appendChild(saveTargetBtn);
+    const automaticBtn = document.createElement('button');
+    automaticBtn.type = 'button';
+    automaticBtn.className = 'secondary';
+    automaticBtn.textContent = 'Wieder automatisch berechnen';
+    automaticBtn.disabled = manualTarget == null;
+    automaticBtn.addEventListener('click', () => {
+      setGroceryTargetOverride(currentMonth, null);
+      const automaticCalc = getGroceryTopUpAllocation(currentMonth);
+      getFoodMoneyPosts().forEach((post) => {
+        if (!isPostPaidForMonth(post, currentMonth)) setPostAmountForMonth(post, currentMonth, Number(automaticCalc.allocations && automaticCalc.allocations[post.id] || 0), 'once');
+      });
+      addChangeLog('Einkaufsgeld', `Monatsziel ${formatMonthLabel(currentMonth)} wieder auf automatische Berechnung gestellt.`, currentMonth);
+      saveState();
+      render();
+    });
+    targetActions.appendChild(automaticBtn);
+    targetEditor.appendChild(targetRow);
+    targetEditor.appendChild(targetActions);
+    card.appendChild(targetEditor);
+
     const info = document.createElement('div');
     info.className = 'info-box';
     if (calc.active) {
-      info.innerHTML = `<strong>Berechnung:</strong> ${euro(calc.target)} Monatsziel − ${euro(calc.balance)} Rest = ${euro(calc.missing)} Bedarf; auf die nächsten 50 € aufgerundet werden <strong>${euro(calc.topUp)}</strong> aufgefüllt.`;
+      info.innerHTML = manualTarget != null
+        ? `<strong>Manuelle Monatsvorgabe:</strong> ${euro(calc.target)} Monatsziel − ${euro(calc.balance)} Rest = <strong>${euro(calc.topUp)}</strong> exakt aufzufüllen.`
+        : `<strong>Berechnung:</strong> ${euro(calc.target)} Monatsziel − ${euro(calc.balance)} Rest = ${euro(calc.missing)} Bedarf; auf die nächsten 50 € aufgerundet werden <strong>${euro(calc.topUp)}</strong> aufgefüllt.`;
     } else if (currentMonth === config.targetStartMonth) {
       info.innerHTML = '<strong>Startmonat:</strong> Für Juni 2026 gilt das Startziel von <strong>550,00 €</strong>. Den verbleibenden Rest trägst du ab Juli ein.';
     } else if (stats.count) {
