@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.75
+ * Haushaltsplaner Version 2.76
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.75';
+  const APP_VERSION = '2.76';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -823,7 +823,8 @@
     },
     budgetTopUps: {
       fuel: { name: 'Tankgeld', startMonth: '2026-07', balances: {}, notes: {} },
-      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06', targetOverrides: {} }
+      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06', targetOverrides: {} },
+      smoking: { name: 'Rauchzeug', startMonth: '2026-06', balances: {}, notes: {}, targetOverrides: {} }
     },
     appMeta: {
       selectedMonth: '',
@@ -1159,7 +1160,8 @@
     if (!state.budgetTopUps || typeof state.budgetTopUps !== 'object') state.budgetTopUps = {};
     const defaults = {
       fuel: { name: 'Tankgeld', startMonth: '2026-07' },
-      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', targetAmount: 550, targetStartMonth: '2026-06' }
+      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', targetAmount: 550, targetStartMonth: '2026-06' },
+      smoking: { name: 'Rauchzeug', startMonth: '2026-06' }
     };
     Object.entries(defaults).forEach(([key, cfg]) => {
       const entry = state.budgetTopUps[key] && typeof state.budgetTopUps[key] === 'object' ? state.budgetTopUps[key] : {};
@@ -1168,6 +1170,8 @@
       if (key === 'groceries') {
         entry.targetAmount = Number.isFinite(Number(entry.targetAmount)) && Number(entry.targetAmount) > 0 ? Number(entry.targetAmount) : Number(cfg.targetAmount || 550);
         entry.targetStartMonth = isMonthKey(entry.targetStartMonth) ? entry.targetStartMonth : (cfg.targetStartMonth || '2026-06');
+      }
+      if (key === 'groceries' || key === 'smoking') {
         if (!entry.targetOverrides || typeof entry.targetOverrides !== 'object' || Array.isArray(entry.targetOverrides)) entry.targetOverrides = {};
         Object.keys(entry.targetOverrides).forEach((month) => {
           const amount = Number(entry.targetOverrides[month]);
@@ -1216,6 +1220,27 @@
 
   function setGroceryTargetOverride(monthKey, amount) {
     const cfg = getBudgetTopUpConfig('groceries');
+    if (!isMonthKey(monthKey)) return false;
+    if (amount == null) {
+      delete cfg.targetOverrides[monthKey];
+      return true;
+    }
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount < 0) return false;
+    cfg.targetOverrides[monthKey] = roundMoney(numericAmount);
+    return true;
+  }
+
+  function getSmokingTargetOverride(monthKey) {
+    const cfg = getBudgetTopUpConfig('smoking');
+    if (!isMonthKey(monthKey) || !cfg || !cfg.targetOverrides) return null;
+    if (!Object.prototype.hasOwnProperty.call(cfg.targetOverrides, monthKey)) return null;
+    const amount = Number(cfg.targetOverrides[monthKey]);
+    return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : null;
+  }
+
+  function setSmokingTargetOverride(monthKey, amount) {
+    const cfg = getBudgetTopUpConfig('smoking');
     if (!isMonthKey(monthKey)) return false;
     if (amount == null) {
       delete cfg.targetOverrides[monthKey];
@@ -6773,11 +6798,40 @@
     return (state.personalCosts || []).filter((post) => normalizeTextKey(post && post.name).includes('rauchzeug'));
   }
 
+  function getSmokingBudgetBaseTarget(monthKey = currentMonth) {
+    return getSmokingBudgetPosts().reduce((sum, post) => {
+      if (!isDue(post, monthKey)) return sum;
+      return sum + Number(getEffectiveBaseAmountForMonth(post, monthKey) || 0);
+    }, 0);
+  }
+
   function getSmokingBudgetTarget(monthKey = currentMonth) {
+    const manualTarget = getSmokingTargetOverride(monthKey);
+    if (manualTarget != null) return manualTarget;
     return getSmokingBudgetPosts().reduce((sum, post) => {
       if (!isDue(post, monthKey)) return sum;
       return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
     }, 0);
+  }
+
+  function syncSmokingBudgetTarget(monthKey = currentMonth) {
+    if (!isMonthKey(monthKey)) return false;
+    const posts = getSmokingBudgetPosts().filter((post) => isDue(post, monthKey));
+    if (!posts.length) return false;
+    const manualTarget = getSmokingTargetOverride(monthKey);
+    const target = manualTarget != null ? manualTarget : getSmokingBudgetBaseTarget(monthKey);
+    const allocations = splitExactAmount(target, posts.map((post) => ({
+      id: post.id,
+      weight: Number(getEffectiveBaseAmountForMonth(post, monthKey) || post.amount || 0) || 1
+    })));
+    let changed = false;
+    posts.forEach((post) => {
+      if (isPostPaidForMonth(post, monthKey)) return;
+      const amount = Number(allocations[post.id] || 0);
+      setPostAmountForMonth(post, monthKey, amount, 'once');
+      changed = true;
+    });
+    return changed;
   }
 
   function normalizeSmokingExpense(expense) {
@@ -13844,6 +13898,8 @@ function showPersonalEditor(personId, editPost) {
     const currentExpenses = expenses.filter((expense) => expense.month === currentMonth);
     const spent = currentExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     const target = getSmokingBudgetTarget(currentMonth);
+    const manualTarget = getSmokingTargetOverride(currentMonth);
+    const normalTarget = getSmokingBudgetBaseTarget(currentMonth);
     const difference = target - spent;
 
     const card = document.createElement('div');
@@ -13864,14 +13920,62 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(createUiEl(
       'p',
       'small muted',
-      'Hier trägst du ein, was du tatsächlich für Rauchzeug ausgegeben hast. Das Monatsbudget kommt automatisch aus dem persönlichen Posten „Rauchzeug“.'
+      'Hier trägst du ein, was du tatsächlich für Rauchzeug ausgegeben hast. Das Monatsbudget kommt normalerweise aus dem persönlichen Posten „Rauchzeug“, kann für den ausgewählten Monat aber manuell geändert werden.'
     ));
     card.appendChild(createSummaryMetrics([
-      { label: `Budget ${formatMonthLabel(currentMonth)}`, value: euro(target), kind: target > 0 ? 'success' : 'warning' },
+      { label: `Budget ${formatMonthLabel(currentMonth)}`, value: euro(target), kind: target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : `normal ${euro(normalTarget)}` },
       { label: 'Ausgegeben', value: euro(spent), kind: spent > target && target > 0 ? 'danger' : '' },
       { label: difference >= 0 ? 'Noch übrig' : 'Über Budget', value: euro(Math.abs(difference)), kind: difference < 0 ? 'danger' : 'success' },
       { label: 'Erfasste Ausgaben', value: String(currentExpenses.length) }
     ]));
+
+    const targetEditor = document.createElement('div');
+    targetEditor.className = 'sub-card smoking-target-editor';
+    targetEditor.appendChild(createUiEl('h4', '', `Monatsbudget für ${formatMonthLabel(currentMonth)}`));
+    targetEditor.appendChild(createUiEl('p', 'small muted', `Die Änderung gilt nur für diesen Monat. Danach gilt wieder der normale Betrag von ${euro(normalTarget)}.`));
+    const targetRow = document.createElement('div');
+    targetRow.className = 'row';
+    const targetInput = document.createElement('input');
+    targetInput.type = 'text';
+    targetInput.inputMode = 'decimal';
+    targetInput.value = formatNumberInput(target);
+    targetInput.placeholder = 'z. B. 40,00';
+    targetRow.appendChild(createLabelInput('Gewünschtes Monatsbudget', targetInput));
+    const targetActions = document.createElement('div');
+    targetActions.className = 'row';
+    const saveTargetBtn = document.createElement('button');
+    saveTargetBtn.type = 'button';
+    saveTargetBtn.className = 'primary';
+    saveTargetBtn.textContent = 'Für diesen Monat übernehmen';
+    saveTargetBtn.addEventListener('click', () => {
+      const amount = parseMoneyInput(targetInput.value);
+      if (!Number.isFinite(amount) || amount < 0) return alert('Bitte ein gültiges Monatsbudget eingeben. Komma-Beträge sind möglich.');
+      const duePosts = getSmokingBudgetPosts().filter((post) => isDue(post, currentMonth));
+      if (!duePosts.length) return alert('Für diesen Monat ist kein persönlicher Posten „Rauchzeug“ eingeplant. Bitte lege ihn zuerst unter „Persönliche Ausgaben“ an.');
+      if (duePosts.some((post) => isPostPaidForMonth(post, currentMonth))) return alert('Das Rauchzeug-Budget ist für diesen Monat bereits als bezahlt markiert. Öffne zuerst „Persönliche Ausgaben“ und entferne dort die Bezahlt-Markierung. Danach kannst du den Monatsbetrag ändern.');
+      if (!setSmokingTargetOverride(currentMonth, amount)) return alert('Das Monatsbudget konnte nicht gespeichert werden.');
+      const changed = syncSmokingBudgetTarget(currentMonth);
+      addChangeLog('Rauchzeug', `Monatsbudget ${formatMonthLabel(currentMonth)} manuell auf ${euro(amount)} gesetzt${changed ? ' und in die Planung übernommen' : ''}.`, currentMonth);
+      saveState();
+      render();
+    });
+    targetActions.appendChild(saveTargetBtn);
+    const normalBtn = document.createElement('button');
+    normalBtn.type = 'button';
+    normalBtn.className = 'secondary';
+    normalBtn.textContent = 'Wieder normalen Betrag verwenden';
+    normalBtn.disabled = manualTarget == null;
+    normalBtn.addEventListener('click', () => {
+      setSmokingTargetOverride(currentMonth, null);
+      syncSmokingBudgetTarget(currentMonth);
+      addChangeLog('Rauchzeug', `Monatsbudget ${formatMonthLabel(currentMonth)} wieder auf den normalen Betrag ${euro(normalTarget)} gestellt.`, currentMonth);
+      saveState();
+      render();
+    });
+    targetActions.appendChild(normalBtn);
+    targetEditor.appendChild(targetRow);
+    targetEditor.appendChild(targetActions);
+    card.appendChild(targetEditor);
 
     if (!(target > 0)) {
       card.appendChild(createUiEl('div', 'notice warning', 'Für diesen Monat ist kein persönlicher Posten „Rauchzeug“ eingeplant. Ausgaben kannst du trotzdem erfassen.'));
