@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.76
+ * Haushaltsplaner Version 2.77
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.76';
+  const APP_VERSION = '2.77';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -708,8 +708,99 @@
       source: `Verknüpfter Posten: ${post.name || 'Posten'}`,
       sourcePostId: post.id || '',
       markAsMonthly: true,
-      skipAccountTransaction: true
+      skipAccountTransaction: true,
+      // Der Kostenposten ist in diesem Ablauf bereits bezahlt markiert.
+      // Dadurch darf die Gegenrichtung nicht noch einmal eingreifen.
+      skipLinkedPostSync: true
     });
+  }
+
+  function syncLinkedPostsFromDebtPayment(debt, options = {}) {
+    const month = isMonthKey(options.month) ? options.month : currentMonth;
+    const paymentAmount = Math.max(0, Number(options.paymentAmount || 0));
+    const shouldCloseMonthlyPost = options.markAsMonthly === true || options.debtCompleted === true;
+    if (!debt || !isMonthKey(month) || !(paymentAmount > 0) || !shouldCloseMonthlyPost) return false;
+
+    ensureDebtConfig(debt);
+    const linkedItems = getLinkedPostsForDebt(debt)
+      .filter((item) => item && item.post && isDue(item.post, month))
+      .filter((item) => !isPostPaidForMonth(item.post, month));
+    if (!linkedItems.length) return false;
+
+    const contractualRate = Math.max(0, Number(getDebtRateForMonth(debt, month) || 0));
+    const requestedLinkedAmount = Number(options.linkedPostAmount);
+    const linkedAmount = roundMoney(Math.min(
+      paymentAmount,
+      Number.isFinite(requestedLinkedAmount) && requestedLinkedAmount > 0
+        ? requestedLinkedAmount
+        : (contractualRate > 0 ? contractualRate : paymentAmount)
+    ));
+    if (!(linkedAmount > 0)) return false;
+
+    const weightedItems = linkedItems.map((item, index) => ({
+      id: item.post.id || `linked-post-${index}`,
+      weight: Math.max(0.01, Number(getEffectiveAmountForMonth(item.post, month) || 0))
+    }));
+    const allocations = splitExactAmount(linkedAmount, weightedItems);
+    let syncedCount = 0;
+
+    linkedItems.forEach((item, index) => {
+      const post = item.post;
+      ensurePostConfig(post);
+      const allocationId = post.id || `linked-post-${index}`;
+      const amount = Number(allocations[allocationId] || 0);
+      if (!(amount > 0)) return;
+
+      const hadAmountOverride = Object.prototype.hasOwnProperty.call(post.amountOverrides, month);
+      const previousAmountOverride = hadAmountOverride ? Number(post.amountOverrides[month]) : null;
+      setPostAmountForMonth(post, month, amount, 'once');
+      setPostPaidForMonth(post, month, true);
+      post.debtPaymentSync[month] = {
+        debtId: debt.id || '',
+        historyId: options.historyId || '',
+        amount,
+        hadAmountOverride,
+        previousAmountOverride: Number.isFinite(previousAmountOverride) ? previousAmountOverride : null
+      };
+      syncedCount += 1;
+    });
+
+    if (syncedCount > 0) {
+      addChangeLog(
+        'Schulden',
+        `${debt.name || 'Schuld'}: ${syncedCount === 1 ? 'verknüpften Kostenposten' : `${syncedCount} verknüpfte Kostenposten`} mit insgesamt ${euro(linkedAmount)} als bezahlt übernommen; keine doppelte Monatsausgabe.`,
+        month
+      );
+      return true;
+    }
+    return false;
+  }
+
+  function resetLinkedPostsFromDebtPayment(debt, monthKey, removedEntries = []) {
+    if (!debt || !isMonthKey(monthKey)) return false;
+    const removedHistoryIds = new Set((removedEntries || []).map((entry) => entry && entry.id).filter(Boolean));
+    let resetCount = 0;
+    getLinkedPostsForDebt(debt).forEach(({ post }) => {
+      if (!post) return;
+      ensurePostConfig(post);
+      const syncEntry = post.debtPaymentSync[monthKey];
+      if (!syncEntry || (syncEntry.debtId && syncEntry.debtId !== debt.id)) return;
+      if (syncEntry.historyId && removedHistoryIds.size > 0 && !removedHistoryIds.has(syncEntry.historyId)) return;
+
+      setPostPaidForMonth(post, monthKey, false);
+      if (syncEntry.hadAmountOverride && Number.isFinite(Number(syncEntry.previousAmountOverride))) {
+        post.amountOverrides[monthKey] = Number(syncEntry.previousAmountOverride);
+      } else {
+        delete post.amountOverrides[monthKey];
+      }
+      delete post.debtPaymentSync[monthKey];
+      resetCount += 1;
+    });
+    if (resetCount > 0) {
+      addChangeLog('Schulden', `${debt.name || 'Schuld'}: automatisch gesetzten Bezahlt-Status bei den verknüpften Kosten zurückgesetzt.`, monthKey);
+      return true;
+    }
+    return false;
   }
   function resetDebtPaymentFromPost(post, monthKey) {
     const debt = getLinkedDebtForPost(post);
@@ -749,7 +840,8 @@
       markAsMonthly: true,
       allowExistingMonthlyStatus: true,
       reducedOpenBalance: reduceOpenBalance !== false,
-      skipAccountTransaction: true
+      skipAccountTransaction: true,
+      skipLinkedPostSync: true
     });
   }
   // ----- Datenmodell und Persistenz -----
@@ -6251,6 +6343,25 @@
     post.paidWithIncome = post.paidWithIncome === true;
     if (!Array.isArray(post.incomePaidMonths)) post.incomePaidMonths = [];
     post.incomePaidMonths = post.incomePaidMonths.filter((m, index, arr) => isMonthKey(m) && arr.indexOf(m) === index);
+    if (!post.debtPaymentSync || typeof post.debtPaymentSync !== 'object' || Array.isArray(post.debtPaymentSync)) {
+      post.debtPaymentSync = {};
+    }
+    Object.keys(post.debtPaymentSync).forEach((month) => {
+      const entry = post.debtPaymentSync[month];
+      if (!isMonthKey(month) || !entry || typeof entry !== 'object') {
+        delete post.debtPaymentSync[month];
+        return;
+      }
+      entry.debtId = typeof entry.debtId === 'string' ? entry.debtId : '';
+      entry.historyId = typeof entry.historyId === 'string' ? entry.historyId : '';
+      entry.amount = Math.max(0, Number(entry.amount || 0));
+      entry.hadAmountOverride = entry.hadAmountOverride === true;
+      entry.previousAmountOverride = entry.hadAmountOverride
+        && entry.previousAmountOverride !== null
+        && Number.isFinite(Number(entry.previousAmountOverride))
+        ? Number(entry.previousAmountOverride)
+        : null;
+    });
   }
   function isPostPaidForMonth(post, month) {
     ensurePostConfig(post);
@@ -15464,6 +15575,16 @@ function showPersonalEditor(personId, editPost) {
     if (markAsMonthly) {
       advanceDebtNextDueMonthAfterPayment(debt, month);
     }
+    if (options.skipLinkedPostSync !== true) {
+      syncLinkedPostsFromDebtPayment(debt, {
+        month,
+        paymentAmount,
+        linkedPostAmount: options.linkedPostAmount,
+        historyId,
+        markAsMonthly,
+        debtCompleted: Number(debt.amountOpen || 0) <= 0
+      });
+    }
     addChangeLog('Schulden', `${debt.name || 'Schuld'}: ${euro(paymentAmount)} bezahlt`, month);
     return true;
   }
@@ -15485,8 +15606,10 @@ function showPersonalEditor(personId, editPost) {
       });
       restoreAmount = entries.reduce((sum, entry) => sum + (entry.reducedOpenBalance === false ? 0 : Number(entry.amount || 0)), 0);
       debt.paymentHistory = debt.paymentHistory.filter((entry) => !matchesEntry(entry));
+      resetLinkedPostsFromDebtPayment(debt, monthKey, entries);
     } else if (!restrictToPost && debt.paidMonths.includes(monthKey)) {
       restoreAmount = Number(getDebtRateForMonth(debt, monthKey) || 0);
+      resetLinkedPostsFromDebtPayment(debt, monthKey);
     }
     const removesMonthlyStatus = !restrictToPost || entries.some((entry) => entry.markedAsMonthly);
     const otherMonthlyEntryRemains = debt.paymentHistory.some((entry) => entry.month === monthKey && entry.markedAsMonthly);
@@ -15693,7 +15816,8 @@ function showPersonalEditor(personId, editPost) {
           amount: total,
           source: 'Schulden-Monatsassistent',
           note: item.extra > 0 ? `Rate ${euro(item.rate)} · zusätzlich ${euro(item.extra)}` : 'Vereinbarte Monatszahlung',
-          markAsMonthly
+          markAsMonthly,
+          linkedPostAmount: item.rate > 0 ? Math.min(total, Number(item.rate)) : undefined
         })) {
           setDebtAssistantActionStatus(actionKey, 'done');
           saveState();
@@ -16827,7 +16951,8 @@ function showPersonalEditor(personId, editPost) {
       amount,
       source: sourceParts.join(' · '),
       note: 'Geplante Monatszahlung aus dem festen Schuldenbudget festgeschrieben.',
-      markAsMonthly: true
+      markAsMonthly: true,
+      linkedPostAmount: Math.min(amount, Number(breakdown.rate || minimumRate || amount))
     })) {
       saveState();
       render();
@@ -17021,7 +17146,7 @@ function showPersonalEditor(personId, editPost) {
     refs.bookAccountCheck = { checked: false };
     const hint = document.createElement('p');
     hint.className = 'small muted';
-    hint.textContent = 'Die Zahlung aktualisiert die Schuld und den Monatsstatus. Es wird keine Kontobuchung erzeugt.';
+    hint.textContent = 'Bei einer Regelrate wird der verknüpfte Kostenposten automatisch mit dem Ratenbetrag als bezahlt markiert. Sonderzahlungen bleiben ausschließlich im Schuldenplan. Die Monatsausgabe wird dadurch nicht doppelt abgezogen.';
     content.appendChild(hint);
 
     showModal('Zahlung eintragen', content, [
@@ -17062,6 +17187,9 @@ function showPersonalEditor(personId, editPost) {
             source: mode === 'regular' ? 'Regelrate' : (mode === 'partial' ? 'Teilzahlung' : (fullPayoffOnly ? 'Gesamtablösung' : 'Sonderzahlung')),
             note: refs.noteInput.value.trim(),
             markAsMonthly,
+            linkedPostAmount: markAsMonthly
+              ? Math.min(amount, Number(getDebtRateForMonth(debt, month) || defaultRate || amount))
+              : undefined,
             bookAccountTransaction: ACCOUNTS_ENABLED && refs.bookAccountCheck.checked
           })) {
             if (Number(defaults.debtReserveWithdrawalAmount || 0) > 0) {

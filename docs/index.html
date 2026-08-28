@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Version 2.76
+  Haushaltsplaner Version 2.77
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,6 +12,12 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.77: Wird eine Regelrate im Schuldenbereich als
+  bezahlt eingetragen, übernimmt die App den passenden Betrag automatisch in
+  den verknüpften gemeinsamen oder persönlichen Kostenposten. Sonderzahlungen
+  bleiben getrennt, zukünftige Raten unverändert und die Monatsausgabe wird
+  nicht doppelt abgezogen. Beim Zurücksetzen werden nur automatisch gesetzte
+  Kostenposten wieder geöffnet.
   Aktualisierung Version&nbsp;2.76: Auch das Rauchzeug-Budget kann für jeden
   ausgewählten Monat manuell festgelegt werden. Die Änderung wirkt sofort auf
   die verfügbare Summe, bleibt in Sicherungen erhalten und verändert keine
@@ -89,11 +95,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.76">
-    <link rel="manifest" href="manifest.json?v=2.76">
+    <link rel="stylesheet" href="style.css?v=2.77">
+    <link rel="manifest" href="manifest.json?v=2.77">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.76">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.76">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.77">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.77">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -169,7 +175,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.76 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.77 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -199,9 +205,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.76</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.77</footer>
       </div>
     </div>
-    <script src="script.js?v=2.76"></script>
+    <script src="script.js?v=2.77"></script>
   </body>
 </html>
