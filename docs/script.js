@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.78
+ * Haushaltsplaner Version 2.79
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.78';
+  const APP_VERSION = '2.79';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -4015,20 +4015,20 @@
       {
         title: 'Lohn prüfen',
         text: 'Einkommen eintragen oder als erhalten markieren',
-        icon: '€',
+        icon: '↑',
         tone: 'primary-action',
         onClick: () => switchSection('income')
       },
       {
         title: 'Gemeinsame Kosten',
         text: 'Fixkosten, Rücklagenposten oder Zahlung anlegen',
-        icon: '+',
+        icon: '⇄',
         onClick: () => showCommonEditor()
       },
       {
         title: 'Persönliche Ausgabe',
         text: 'Benny oder Madeleine auswählen und eintragen',
-        icon: '+',
+        icon: '♙',
         onClick: () => showPersonalQuickAddModal()
       },
       {
@@ -4058,7 +4058,7 @@
       {
         title: 'Vertrag erfassen',
         text: 'Kosten, Laufzeit und Kündigungsfrist hinterlegen',
-        icon: 'V',
+        icon: '⌑',
         onClick: () => showContractEditor()
       },
       {
@@ -4077,7 +4077,7 @@
       {
         title: 'Sicherung',
         text: 'Backup erstellen oder Daten importieren',
-        icon: '↧',
+        icon: '↓',
         tone: 'soft-action',
         onClick: () => switchSection('save')
       }
@@ -10556,7 +10556,7 @@
       label: 'Diesen Monat gemeinsam einzahlen',
       value: euro(commonAccountTarget.monthlyTarget),
       hint: `Jetzt noch für offene Abbuchungen nötig: ${euro(commonAccountTarget.openTotal)}`,
-      icon: 'G',
+      icon: '⇄',
       accent: 'blue'
     }));
     kpiGrid.appendChild(createKpi({
@@ -10745,7 +10745,7 @@
       label: 'Insgesamt verfügbar',
       value: euro(details.free),
       hint: overviewFreeHints.join(' · '),
-      icon: details.free >= 0 ? '✓' : '!',
+      icon: details.free >= 0 ? '€' : '!',
       kind: details.free >= 0 ? 'mint' : 'danger'
     });
     addKpi({
@@ -10754,7 +10754,7 @@
       hint: openPayments.rows.length
         ? `Noch ${euro(openPayments.totalOpen)} zu prüfen oder zu bezahlen`
         : 'Keine offenen Zahlungen gefunden',
-      icon: 'O',
+      icon: openPayments.rows.length ? '!' : '✓',
       kind: openPayments.rows.length ? 'violet' : 'mint'
     });
     page.appendChild(kpiGrid);
