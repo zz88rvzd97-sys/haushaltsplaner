@@ -6204,18 +6204,27 @@ footer {
   }
 }
 
-/* Version 2.79 – sichtbares App-Logo und einheitliche Navigationssymbole */
+/* Version 2.80 – randlos zugeschnittenes App-Logo und Navigationssymbole */
 .brand-logo {
   width: 44px !important;
   height: 44px !important;
   flex: 0 0 44px !important;
   display: block !important;
+  overflow: hidden !important;
   padding: 0 !important;
-  border: 1px solid rgba(255, 255, 255, .28) !important;
-  border-radius: 12px !important;
-  background: #f5f2e9 !important;
-  object-fit: cover !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+  background: #157437 !important;
   box-shadow: 0 6px 16px rgba(8, 25, 16, .2) !important;
+}
+
+.brand-logo-image {
+  width: 112% !important;
+  max-width: none !important;
+  height: 112% !important;
+  display: block !important;
+  object-fit: cover !important;
+  transform: translate(-5.35%, -5.35%);
 }
 
 .side-nav-link .nav-icon,
@@ -6263,6 +6272,6 @@ footer {
     width: 40px !important;
     height: 40px !important;
     flex-basis: 40px !important;
-    border-radius: 10px !important;
+    border-radius: 9px !important;
   }
 }
