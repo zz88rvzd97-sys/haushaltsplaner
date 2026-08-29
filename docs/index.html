@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Version 2.77
+  Haushaltsplaner Version 2.78
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,6 +12,11 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.78: Die Bedienung ist weiter vereinfacht. Es gibt
+  nur noch eine Monatsauswahl, der Monatsstart ist vollständig in der Übersicht
+  enthalten, Rücklagen und Töpfe stehen gemeinsam in einem Bereich und die
+  persönlichen Monatszahlen sind kompakter. Aufgaben ohne echten Betrag werden
+  ausgeblendet; der Sicherungsbereich zeigt zuerst nur die wichtigsten Aktionen.
   Aktualisierung Version&nbsp;2.77: Wird eine Regelrate im Schuldenbereich als
   bezahlt eingetragen, übernimmt die App den passenden Betrag automatisch in
   den verknüpften gemeinsamen oder persönlichen Kostenposten. Sonderzahlungen
@@ -95,11 +100,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.77">
-    <link rel="manifest" href="manifest.json?v=2.77">
+    <link rel="stylesheet" href="style.css?v=2.78">
+    <link rel="manifest" href="manifest.json?v=2.78">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.77">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.77">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.78">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.78">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -120,7 +125,6 @@
         <div class="nav-bar mobile-nav">
           <select id="sectionSelect" aria-label="Bereich auswählen">
             <option value="overview" selected>Übersicht</option>
-            <option value="monthstart">Monatsstart</option>
             <option value="openpayments">Offene Zahlungen</option>
             <option value="income">Einkommen</option>
             <option value="common">Gemeinsame Kosten</option>
@@ -132,8 +136,7 @@
             <option value="contracts">Verträge</option>
             <option value="debts">Schulden</option>
             <option value="settings">Regeln&nbsp;&amp;&nbsp;Personen</option>
-            <option value="savings">Rücklagen&nbsp;&amp;&nbsp;Sparen</option>
-            <option value="pots">Töpfe</option>
+            <option value="savings">Rücklagen&nbsp;&amp;&nbsp;Töpfe</option>
             <option value="monthclose">Monatsabschluss</option>
             <option value="datacheck">Datencheck</option>
             <option value="forecast">Vorschau &amp; Simulation</option>
@@ -155,15 +158,13 @@
             <label for="sideMoreSelect">Weitere Bereiche</label>
             <select id="sideMoreSelect" aria-label="Weiteren Bereich auswählen">
               <option value="">Auswählen …</option>
-              <option value="monthstart">Monatsstart</option>
               <option value="income">Einkommen</option>
               <option value="tankcalc">Tankgeld</option>
               <option value="groceries">Einkaufsgeld</option>
               <option value="smoking">Rauchzeug</option>
               <option value="selfemployment">Selbständigkeit &amp; EÜR</option>
               <option value="contracts">Verträge</option>
-              <option value="savings">Rücklagen &amp; Sparen</option>
-              <option value="pots">Töpfe</option>
+              <option value="savings">Rücklagen &amp; Töpfe</option>
               <option value="buffer">Sonstige Ausgaben</option>
               <option value="monthclose">Monatsabschluss</option>
               <option value="datacheck">Datencheck</option>
@@ -175,7 +176,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.77 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.78 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -205,9 +206,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.77</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.78</footer>
       </div>
     </div>
-    <script src="script.js?v=2.77"></script>
+    <script src="script.js?v=2.78"></script>
   </body>
 </html>

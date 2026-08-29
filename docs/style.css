@@ -2863,6 +2863,14 @@ html, body {
 .compact-details > .card,
 .compact-details > table,
 .compact-details > .list-table { margin: 0; border-radius: 0; box-shadow: none; }
+.backup-advanced-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 14px 14px;
+}
+.backup-advanced-body > * { margin: 0; }
+.backup-restore-card { margin-top: 16px; }
+.personal-common-share-summary { margin: 10px 0 14px; }
 .compact-table th,
 .compact-table td { padding: 8px 9px; }
 .dashboard-page .card.compact-card { padding: 14px; }

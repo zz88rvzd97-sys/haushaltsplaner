@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.77
+ * Haushaltsplaner Version 2.78
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.77';
+  const APP_VERSION = '2.78';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -5118,7 +5118,12 @@
   }
   // Navigation: Bereiche wechseln
   function switchSection(section) {
-    currentSection = section || 'overview';
+    // Monatsstart ist vollständig in der Übersicht enthalten; Töpfe sind mit
+    // den Rücklagen zusammengeführt. Alte interne Links bleiben dadurch gültig.
+    const targetSection = section === 'monthstart'
+      ? 'overview'
+      : (section === 'pots' ? 'savings' : section);
+    currentSection = targetSection || 'overview';
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
     });
@@ -8672,6 +8677,8 @@
     try { renderGlobalMonthBar(); } catch (error) { recordRuntimeIssue('System', 'Monatsleiste fehlgeschlagen', error); }
     if (!ACCOUNTS_ENABLED && currentSection === 'sharedaccount') currentSection = 'common';
     if (currentSection === 'taxrefund') currentSection = 'overview';
+    if (currentSection === 'monthstart') currentSection = 'overview';
+    if (currentSection === 'pots') currentSection = 'savings';
 
     if (sectionSelect && sectionSelect.value !== currentSection) {
       sectionSelect.value = currentSection;
@@ -8690,7 +8697,6 @@
 
     const renderMap = {
       overview: ['Übersicht', overviewSection, renderOverview],
-      monthstart: ['Monatsstart', monthStartSection, renderMonthStart],
       openpayments: ['Offene Zahlungen', openPaymentsSection, renderOpenPayments],
       income: ['Einkommen', incomeSection, renderIncome],
       common: ['Gemeinsame Kosten', commonSection, renderCommon],
@@ -8704,8 +8710,7 @@
       contracts: ['Verträge', contractsSection, renderContracts],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
-      savings: ['Rücklagen & Sparen', savingsSection, renderSavings],
-      pots: ['Töpfe', potsSection, renderPots],
+      savings: ['Rücklagen & Töpfe', savingsSection, renderSavings],
       monthclose: ['Monatsabschluss', monthCloseSection, renderMonthClose],
       datacheck: ['Datencheck', dataCheckSection, renderDataCheck],
       forecast: ['Vorschau & Simulation', forecastSection, renderForecast],
@@ -8981,7 +8986,7 @@
   function normalizeDataCheckAreaName(area) {
     const raw = String(area || 'System').trim();
     if (raw === 'Kraftstoffkonto') return 'Tankgeld';
-    if (raw === 'Rücklagen') return 'Rücklagen & Sparen';
+    if (raw === 'Rücklagen' || raw === 'Rücklagen & Sparen') return 'Rücklagen & Töpfe';
     if (raw === 'Monat') return 'Monatsauswahl';
     if (raw.startsWith('Persönlich')) return 'Persönliche Ausgaben';
     return raw || 'System';
@@ -8997,7 +9002,7 @@
       { key: 'Schulden', label: 'Schulden', section: 'debts' },
       { key: 'Tankgeld', label: 'Tankgeld', section: 'tankcalc' },
       { key: 'Einkaufsgeld', label: 'Einkaufsgeld', section: 'groceries' },
-      { key: 'Rücklagen & Sparen', label: 'Rücklagen & Sparen', section: 'savings' },
+      { key: 'Rücklagen & Töpfe', label: 'Rücklagen & Töpfe', section: 'savings' },
       { key: 'Töpfe', label: 'Töpfe', section: 'pots' },
       { key: 'Monatsabschluss', label: 'Monatsabschluss', section: 'monthclose' },
       { key: 'Offene Zahlungen', label: 'Offene Zahlungen', section: 'openpayments' },
@@ -9144,7 +9149,7 @@
       if (post.linkedSavingsGoalId && !getLinkedSavingsGoal(post)) {
         items.push({
           kind: 'warning',
-          area: 'Rücklagen & Sparen',
+          area: 'Rücklagen & Töpfe',
           title: `Rücklage fehlt: ${post.name || 'Kostenposten'}`,
           detail: 'Dieser Kostenposten verweist auf eine nicht mehr vorhandene Rücklage. Bitte neu verknüpfen oder die Verbindung entfernen.'
         });
@@ -9154,7 +9159,7 @@
       if (Number(goal.balance || 0) > 0.005 && !goal.accountId) {
         items.push({
           kind: 'warning',
-          area: 'Rücklagen & Sparen',
+          area: 'Rücklagen & Töpfe',
           title: `Zielkonto fehlt: ${goal.name}`,
           detail: `Es sind ${euro(Number(goal.balance || 0))} angespart, aber keinem Konto zugeordnet. Wähle ein Zielkonto, damit dieser Betrag dort als gebunden angezeigt wird.`
         });
@@ -9798,12 +9803,18 @@
     const fuel = calculateBudgetTopUp('fuel', monthKey);
     const fuelCfg = getBudgetTopUpConfig('fuel');
     const fuelRestEntered = !fuel.active || Object.prototype.hasOwnProperty.call(fuelCfg.balances || {}, monthKey);
-    add('Tankgeld', 'Rest Tankgeld eintragen', fuelRestEntered, fuel.active ? `Rest ${euro(fuel.balance)} · Aufstockung ${euro(fuel.topUp)}.` : 'Aufstockung startet erst ab Juli 2026.', 'tankcalc');
+    const fuelNeedsAttention = fuel.active && (Number(fuel.target || 0) > 0.005 || Number(fuel.topUp || 0) > 0.005 || Number(fuel.balance || 0) > 0.005);
+    if (fuelNeedsAttention) {
+      add('Tankgeld', 'Rest Tankgeld eintragen', fuelRestEntered, `Rest ${euro(fuel.balance)} · Aufstockung ${euro(fuel.topUp)}.`, 'tankcalc');
+    }
 
     const groceries = calculateBudgetTopUp('groceries', monthKey);
     const groceriesCfg = getBudgetTopUpConfig('groceries');
     const groceriesRestEntered = !groceries.active || Object.prototype.hasOwnProperty.call(groceriesCfg.balances || {}, monthKey);
-    add('Einkaufsgeld', 'Rest Einkaufsgeld eintragen', groceriesRestEntered, groceries.active ? `Rest ${euro(groceries.balance)} · Aufstockung ${euro(groceries.topUp)}.` : 'Startziel ab Juni 2026; Rest-Aufstockung ab Juli 2026.', 'groceries');
+    const groceriesNeedAttention = groceries.active && (Number(groceries.target || 0) > 0.005 || Number(groceries.topUp || 0) > 0.005 || Number(groceries.balance || 0) > 0.005);
+    if (groceriesNeedAttention) {
+      add('Einkaufsgeld', 'Rest Einkaufsgeld eintragen', groceriesRestEntered, `Rest ${euro(groceries.balance)} · Aufstockung ${euro(groceries.topUp)}.`, 'groceries');
+    }
 
     const activeDebtsForBalanceCheck = (state.debts || []).filter((debt) => Number(debt && debt.amountOpen || 0) > 0);
     if (activeDebtsForBalanceCheck.length) {
@@ -9947,7 +9958,7 @@
     if (area === 'Gemeinsame Kosten') return 'common';
     if (area === 'Persönliche Ausgaben') return 'personal';
     if (area === 'Sonstige Ausgaben') return 'buffer';
-    if (area === 'Rücklagen' || area === 'Rücklagen & Sparen') return 'savings';
+    if (area === 'Rücklagen' || area === 'Rücklagen & Sparen' || area === 'Rücklagen & Töpfe') return 'savings';
     if (area === 'Kraftstoffkonto' || area === 'Tankgeld') return 'tankcalc';
     if (area === 'Monat') return 'overview';
     return 'datacheck';
@@ -10803,7 +10814,7 @@
       focusCard.appendChild(createUiEl('div', 'empty-state success', 'Für diesen Monat ist nichts Weiteres offen.'));
     } else {
       const taskList = createUiEl('div', 'todo-list overview-focus-list');
-      tasks.slice(0, 5).forEach((item) => {
+      tasks.forEach((item) => {
         const row = document.createElement('button');
         row.type = 'button';
         row.className = `todo-row ${item.kind || ''}`.trim();
@@ -10816,23 +10827,14 @@
         taskList.appendChild(row);
       });
       focusCard.appendChild(taskList);
-      if (tasks.length > 5) {
-        focusCard.appendChild(createUiEl('p', 'small muted', `+ ${tasks.length - 5} weitere Aufgabe(n) im Monatsstart`));
-      }
     }
 
     const focusActions = createUiEl('div', 'row overview-focus-actions');
-    const monthStartButton = document.createElement('button');
-    monthStartButton.type = 'button';
-    monthStartButton.className = 'secondary compact';
-    monthStartButton.textContent = 'Monatsstart öffnen';
-    monthStartButton.addEventListener('click', () => switchSection('monthstart'));
     const quickButton = document.createElement('button');
     quickButton.type = 'button';
     quickButton.className = 'primary compact';
     quickButton.textContent = 'Schnell erfassen';
     quickButton.addEventListener('click', showQuickCaptureModal);
-    focusActions.appendChild(monthStartButton);
     focusActions.appendChild(quickButton);
     focusCard.appendChild(focusActions);
     page.appendChild(focusCard);
@@ -11435,7 +11437,7 @@
     if (!state.monthlyClosings || typeof state.monthlyClosings !== 'object') state.monthlyClosings = {};
     state.monthlyClosings[monthKey] = details;
     // Neue Rücklagenlogik ab 1.83: Der Monatsabschluss speichert nur den Beleg.
-    // Rücklagen-Posten werden gezielt im Bereich „Rücklagen & Sparen“ eingezahlt.
+    // Rücklagen-Posten werden gezielt im Bereich „Rücklagen & Töpfe“ eingezahlt.
     const transferText = monthKey >= CARRYOVER_START_MONTH
       ? ` · ${euro(details.carryoverOut)} automatisch nach ${formatMonthLabel(details.carryoverToMonth)} übernommen`
       : '';
@@ -11463,13 +11465,11 @@
     card.className = 'card';
     const header = document.createElement('div');
     header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => { setCurrentMonth(e.target.value); render(); });
     const title = document.createElement('h2');
     title.textContent = 'Monatsabschluss';
     title.style.flex = '1 1 auto';
     header.appendChild(title);
-    header.appendChild(monthSelect);
+    header.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     card.appendChild(header);
 
     const liveDetails = getMonthCloseActualDetails(currentMonth);
@@ -11647,7 +11647,7 @@
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen und übernimmt den bestätigten Rest automatisch in den Folgemonat. Einzahlungen in Töpfe erfolgen weiterhin bewusst im Bereich „Rücklagen & Sparen“. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
+    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen und übernimmt den bestätigten Rest automatisch in den Folgemonat. Einzahlungen verwaltest du bewusst im gemeinsamen Bereich „Rücklagen & Töpfe“. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
     card.appendChild(note);
     monthCloseSection.appendChild(card);
   }
@@ -11663,14 +11663,12 @@
     const title = document.createElement('h2');
     title.textContent = 'Sonstige Ausgaben';
     title.style.flex = '1 1 auto';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => setCurrentMonth(e.target.value));
     const addBtn = document.createElement('button');
     addBtn.textContent = '+ Ausgabe';
     addBtn.className = 'primary';
     addBtn.addEventListener('click', () => showBufferExpenseEditor());
     header.appendChild(title);
-    header.appendChild(monthSelect);
+    header.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     header.appendChild(addBtn);
     card.appendChild(header);
 
@@ -12193,17 +12191,16 @@ function renderCommon() {
     card.className = 'card';
     const header = document.createElement('div');
     header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
+    const sectionTitle = document.createElement('h2');
+    sectionTitle.textContent = 'Gemeinsame Kosten';
+    sectionTitle.style.flex = '1 1 auto';
     const addBtn = document.createElement('button');
     addBtn.textContent = '+ Neuer Posten';
     addBtn.className = 'primary';
     addBtn.style.flex = '0 0 auto';
     addBtn.addEventListener('click', () => showCommonEditor());
-    header.appendChild(monthSelect);
+    header.appendChild(sectionTitle);
+    header.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     header.appendChild(addBtn);
     card.appendChild(header);
 
@@ -12697,17 +12694,7 @@ function showCommonEditor(editCost) {
   
 function renderPersonal() {
     personalSection.innerHTML = '';
-    const header = document.createElement('div');
-    header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
-    header.appendChild(monthSelect);
-    personalSection.appendChild(header);
 
-    let overallMonthly = 0;
     let overallDue = 0;
     let overallPaid = 0;
     let overallCommonShare = 0;
@@ -12719,7 +12706,6 @@ function renderPersonal() {
       if (isCommonSharePaidForMonth(person.id, currentMonth)) overallCommonSharePaid += personPaidCommonShare || personCommonShare;
       const posts = state.personalCosts.filter((pc) => pc.personId === person.id);
       posts.forEach((pc) => {
-        if (isPostActiveInMonth(pc, currentMonth)) overallMonthly += getEffectiveAmountForMonth(pc, currentMonth) / Number(pc.interval || 1);
         if (isDue(pc, currentMonth)) {
           overallDue += getEffectiveAmountForMonth(pc, currentMonth);
           if (pc.paidMonths && pc.paidMonths.includes(currentMonth)) overallPaid += getEffectiveAmountForMonth(pc, currentMonth);
@@ -12732,15 +12718,14 @@ function renderPersonal() {
 
     const summaryCard = document.createElement('div');
     summaryCard.className = 'card';
-    const summaryTitle = document.createElement('h2');
-    summaryTitle.textContent = 'Persönliche Ausgaben gesamt';
-    summaryCard.appendChild(summaryTitle);
+    const summaryHead = createUiEl('div', 'compact-section-head');
+    summaryHead.appendChild(createUiEl('h2', '', 'Persönliche Ausgaben'));
+    summaryHead.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
+    summaryCard.appendChild(summaryHead);
     summaryCard.appendChild(createSummaryMetrics([
-      { label: 'Monatlich geplant', value: `${euro(overallMonthly)}` },
-      { label: 'Anteil gemeinsame Kosten', value: `${euro(overallCommonShare)}`, kind: overallCommonShare > 0 ? 'warning' : '' },
-      { label: 'Fällig inkl. Anteil', value: `${euro(overallDueWithCommon)}`, kind: overallDueWithCommon > 0 ? 'warning' : '' },
-      { label: 'Bereits markiert inkl. Anteil', value: `${euro(overallPaidWithCommon)}`, kind: overallPaidWithCommon > 0 ? 'success' : '' },
-      { label: 'Noch offen inkl. Anteil', value: `${euro(overallOpenWithCommon)}`, kind: overallOpenWithCommon > 0 ? 'danger' : 'success' }
+      { label: 'Geplant inkl. gemeinsamer Anteile', value: `${euro(overallDueWithCommon)}`, hint: `Davon ${euro(overallCommonShare)} gemeinsame Kosten.` },
+      { label: 'Bereits erledigt', value: `${euro(overallPaidWithCommon)}`, kind: overallPaidWithCommon > 0 ? 'success' : '' },
+      { label: 'Noch offen', value: `${euro(overallOpenWithCommon)}`, kind: overallOpenWithCommon > 0 ? 'warning' : 'success' }
     ]));
     personalSection.appendChild(summaryCard);
     const personalFilterCard = document.createElement('div');
@@ -12787,18 +12772,16 @@ function renderPersonal() {
       const openWithCommon = Math.max(dueWithCommon - paidWithCommon, 0);
       const commonShareDiff = roundMoney(commonShare - commonSharePaidAmount);
       card.appendChild(createSummaryMetrics([
-        { label: 'Persönlich geplant', value: `${euro(monthlySum)}` },
-        { label: 'Anteil gemeinsame Kosten', value: `${euro((commonSharePaid ? commonSharePaidAmount : commonShare))}`, kind: commonSharePaid && commonShareDiff <= 0.005 ? 'success' : (commonShare > 0 ? 'warning' : '') , hint: commonSharePaid ? (Math.abs(commonShareDiff) > 0.005 ? `Fixiert; aktueller Soll-Anteil ${euro(commonShare)}.` : 'Bereits als bezahlt fixiert.') : 'Noch als Monatsanteil offen.' },
-        { label: 'Fällig inkl. Anteil', value: `${euro(dueWithCommon)}`, kind: dueWithCommon > 0 ? 'warning' : '' },
-        { label: 'Bereits markiert inkl. Anteil', value: `${euro(paidWithCommon)}`, kind: paidWithCommon > 0 ? 'success' : '' },
-        { label: 'Noch offen inkl. Anteil', value: `${euro(openWithCommon)}`, kind: openWithCommon > 0 ? 'danger' : 'success' }
+        { label: 'Geplant inkl. gemeinsamem Anteil', value: `${euro(dueWithCommon)}`, hint: `${euro(monthlySum)} persönlich · ${euro(commonSharePaid ? commonSharePaidAmount : commonShare)} gemeinsam.` },
+        { label: 'Bereits erledigt', value: `${euro(paidWithCommon)}`, kind: paidWithCommon > 0 ? 'success' : '' },
+        { label: 'Noch offen', value: `${euro(openWithCommon)}`, kind: openWithCommon > 0 ? 'warning' : 'success' }
       ]));
 
       const commonShareInfo = document.createElement('div');
-      commonShareInfo.className = commonSharePaid && commonShareDiff <= 0.005 ? 'notice success personal-common-share' : 'notice warning personal-common-share';
-      commonShareInfo.innerHTML = commonSharePaid
-        ? `<strong>Anteil gemeinsame Kosten:</strong> ${euro(commonSharePaidAmount)} ist als bezahlt fixiert.${Math.abs(commonShareDiff) > 0.005 ? ` Aktueller Soll-Anteil: ${euro(commonShare)}.` : ''}`
-        : `<strong>Anteil gemeinsame Kosten:</strong> ${euro(commonShare)} ist noch nicht als bezahlt markiert.`;
+      commonShareInfo.className = 'small muted personal-common-share-summary';
+      commonShareInfo.textContent = commonSharePaid
+        ? `Gemeinsamer Anteil: ${euro(commonSharePaidAmount)} erledigt.${Math.abs(commonShareDiff) > 0.005 ? ` Aktueller Soll-Anteil: ${euro(commonShare)}.` : ''}`
+        : `Gemeinsamer Anteil: ${euro(commonShare)} noch offen.`;
       card.appendChild(commonShareInfo);
 
       if (posts.length === 0) {
@@ -16457,11 +16440,6 @@ function showPersonalEditor(personId, editPost) {
     card.className = 'card';
     const header = document.createElement('div');
     header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
     const filterSelect = document.createElement('select');
     [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']].forEach(([value,label]) => { const opt = document.createElement('option'); opt.value = value; opt.textContent = label; if (debtFilter === value) opt.selected = true; filterSelect.appendChild(opt); });
     filterSelect.addEventListener('change', (e) => { debtFilter = e.target.value; render(); });
@@ -16471,7 +16449,8 @@ function showPersonalEditor(personId, editPost) {
     addBtn.addEventListener('click', () => {
       showDebtEditor();
     });
-    header.appendChild(monthSelect);
+    header.appendChild(createUiEl('h2', '', 'Schulden'));
+    header.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     header.appendChild(addBtn);
     card.appendChild(header);
 
@@ -18076,16 +18055,9 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     const monthRow = document.createElement('div');
-    monthRow.className = 'row';
-    const monthLabel = document.createElement('label');
-    monthLabel.textContent = 'Monat:';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
-    monthRow.appendChild(monthLabel);
-    monthRow.appendChild(monthSelect);
+    monthRow.className = 'compact-section-head';
+    monthRow.appendChild(createUiEl('h2', '', 'Regeln & Personen'));
+    monthRow.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     card.appendChild(monthRow);
 
     const hint = document.createElement('p');
@@ -18373,7 +18345,7 @@ function showPersonalEditor(personId, editPost) {
     ]);
   }
 
-  // Rendert den Bereich „Rücklagen & Sparen“ – nur Verteilung und Transaktionen
+  // Rendert Rücklagenplanung und Töpfe gemeinsam in einem Bereich.
   
 function renderSavings() {
     normalizeSavingsGoalsConfig();
@@ -18383,26 +18355,25 @@ function renderSavings() {
 
     const header = document.createElement('div');
     header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
+    const pageTitle = document.createElement('h2');
+    pageTitle.textContent = 'Rücklagen & Töpfe';
+    pageTitle.style.flex = '1 1 auto';
     const addBtn = document.createElement('button');
     addBtn.className = 'primary';
     addBtn.textContent = '+ Rücklagen-Posten';
     addBtn.addEventListener('click', () => showSavingsGoalEditor());
-    header.appendChild(monthSelect);
+    header.appendChild(pageTitle);
+    header.appendChild(createUiEl('span', 'pill', formatMonthLabel(currentMonth)));
     header.appendChild(addBtn);
     card.appendChild(header);
 
-    const heading = document.createElement('h2');
-    heading.textContent = 'Rücklagen & Sparen';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Rücklagen planen';
     card.appendChild(heading);
 
     const intro = document.createElement('p');
     intro.className = 'small muted';
-    intro.textContent = 'Du legst einzelne Rücklagen an, z. B. Auto, Urlaub, Laptop oder Kleidung. Sie können direkt mit gemeinsamen, persönlichen oder sonstigen Kostenposten verknüpft werden; bezahlte verknüpfte Posten zahlen einmalig in die passende Rücklage ein. Nur Rücklagen-Posten im Bereich Gemeinsame Kosten zählen in den Anteil gemeinsamer Kosten. Kommt die Monatssumme aus einer Verknüpfung, lasse die feste Monatssumme leer.';
+    intro.textContent = 'Oben planst du Rücklagen wie Auto, Urlaub oder Kleidung. Darunter verwaltest du die vorhandenen Töpfe und ihre Ein- oder Auszahlungen. Verknüpfte Kosten zahlen beim Bezahlt-Markieren genau einmal in die passende Rücklage ein.';
     card.appendChild(intro);
 
     const activeGoals = getSavingsGoalsActive(currentMonth);
@@ -18426,6 +18397,7 @@ function renderSavings() {
       empty.innerHTML = '<strong>Noch keine Rücklagen-Posten.</strong><br>Lege z. B. „Auto“, „Urlaub“, „MacBook“ oder „Kleidung“ an und hinterlege bei Bedarf eine feste Monatssumme.';
       card.appendChild(empty);
       savingsSection.appendChild(card);
+      savingsSection.appendChild(createPotsCard());
       return;
     }
 
@@ -18518,6 +18490,7 @@ function renderSavings() {
     });
     card.appendChild(grid);
     savingsSection.appendChild(card);
+    savingsSection.appendChild(createPotsCard());
   }
 
   function showPotEditor() {
@@ -18608,27 +18581,23 @@ function renderSavings() {
     ]);
   }
 
-  // Rendert den neuen Bereich „Töpfe“ mit allen Rücklagen-Töpfen und Summen
+  // Erstellt die Topf-Verwaltung. Sie wird im gemeinsamen Rücklagen-Bereich
+  // eingebettet; die alte Einzelseite bleibt nur als sichere Rückfallroute.
   
-function renderPots() {
-    potsSection.innerHTML = '';
+function createPotsCard() {
     const card = document.createElement('div');
     card.className = 'card';
 
-    const title = document.createElement('h2');
-    title.textContent = 'Töpfe';
+    const title = document.createElement('h3');
+    title.textContent = 'Töpfe verwalten';
     card.appendChild(title);
     const intro = document.createElement('p');
-    intro.textContent = 'Verwalte Rücklagen, Einzahlungen und Ausgaben. Beträge können mit Komma oder Punkt eingegeben werden.';
+    intro.className = 'small muted';
+    intro.textContent = 'Hier siehst du die vorhandenen Guthaben und buchst Einzahlungen oder Ausgaben. Beträge können mit Komma oder Punkt eingegeben werden.';
     card.appendChild(intro);
 
     const header = document.createElement('div');
     header.className = 'row';
-    const monthSelect = createMonthSelect();
-    monthSelect.addEventListener('change', (e) => {
-      setCurrentMonth(e.target.value);
-      render();
-    });
 
     const potSelect = document.createElement('select');
     potSelect.setAttribute('aria-label', 'Topf auswählen');
@@ -18655,7 +18624,6 @@ function renderPots() {
     addBtn.className = 'primary';
     addBtn.addEventListener('click', showPotEditor);
 
-    header.appendChild(monthSelect);
     header.appendChild(potSelect);
     header.appendChild(addBtn);
     card.appendChild(header);
@@ -18759,7 +18727,12 @@ function renderPots() {
       }
     }
 
-    potsSection.appendChild(card);
+    return card;
+  }
+
+  function renderPots() {
+    potsSection.innerHTML = '';
+    potsSection.appendChild(createPotsCard());
   }
   // Rendert den Sicherungsbereich
 
@@ -19602,12 +19575,20 @@ function renderPots() {
     card.className = 'card';
 
     const h2 = document.createElement('h2');
-    h2.textContent = 'Backup';
+    h2.textContent = 'Sichern & Wiederherstellen';
     card.appendChild(h2);
 
     const intro = document.createElement('p');
-    intro.textContent = 'Deine Daten werden bei jeder Änderung gespeichert. Zusätzlich legt die App einmal täglich eine unabhängige Sicherung im Browser an. Eine Sicherungsdatei für den PC kannst du jederzeit zusätzlich herunterladen.';
+    intro.textContent = 'Deine Änderungen werden automatisch in diesem Browser gespeichert. Lade regelmäßig eine Sicherungsdatei auf den PC herunter; dieselbe Datei kannst du hier später wieder einspielen.';
     card.appendChild(intro);
+
+    const advancedDetails = document.createElement('details');
+    advancedDetails.className = 'compact-details backup-advanced-details';
+    const advancedSummary = document.createElement('summary');
+    advancedSummary.textContent = 'Automatische Sicherungen und ältere Stände';
+    advancedDetails.appendChild(advancedSummary);
+    const advancedBody = createUiEl('div', 'backup-advanced-body');
+    advancedDetails.appendChild(advancedBody);
 
     const storageInfo = getBrowserStorageInfo();
     const storageNotice = document.createElement('div');
@@ -19623,7 +19604,7 @@ function renderPots() {
     const apiInfo = document.createElement('div');
     apiInfo.className = 'notice success';
     apiInfo.textContent = 'Vollständige Sicherung: Der Tank-API-Key wird in den automatischen und heruntergeladenen Sicherungen mitgesichert.';
-    card.appendChild(apiInfo);
+    advancedBody.appendChild(apiInfo);
 
     const automaticCard = createUiEl('div', 'sub-card automatic-browser-backup-card');
     const automaticHead = createUiEl('div', 'compact-section-head');
@@ -19682,7 +19663,7 @@ function renderPots() {
     automaticHistoryRow.appendChild(automaticRestoreButton);
     automaticHistory.appendChild(automaticHistoryRow);
     automaticCard.appendChild(automaticHistory);
-    card.appendChild(automaticCard);
+    advancedBody.appendChild(automaticCard);
 
     let automaticBackupRows = [];
     if (automaticSupported) {
@@ -19835,15 +19816,15 @@ function renderPots() {
         : 'Optional: zusätzlichen Sicherungsordner auf dem PC verbinden';
       externalDetails.appendChild(externalSummary);
       externalDetails.appendChild(externalCard);
-      card.appendChild(externalDetails);
+      advancedBody.appendChild(externalDetails);
     } else {
       const folderInfo = createUiEl('div', 'notice info');
       folderInfo.innerHTML = '<strong>Zusätzliche Datei auf dem PC:</strong> Die automatische Browser-Sicherung oben ist aktiv. Für eine weitere Sicherung außerhalb des Browsers kannst du unten jederzeit eine Datei herunterladen.';
-      card.appendChild(folderInfo);
+      advancedBody.appendChild(folderInfo);
     }
 
     const totalPosts = (state.commonCosts?.length || 0) + (state.personalCosts?.length || 0) + (state.bufferExpenses?.length || 0);
-    card.appendChild(createSummaryMetrics([
+    advancedBody.appendChild(createSummaryMetrics([
       { label: 'Personen', value: String(state.persons.length) },
       { label: 'Posten gesamt', value: String(totalPosts) },
       { label: 'Schulden', value: String(state.debts.length) },
@@ -19858,7 +19839,7 @@ function renderPots() {
 
     let backupDownloadInProgress = false;
     const exportBtn = document.createElement('button');
-    exportBtn.textContent = 'Sicherung als Datei herunterladen';
+    exportBtn.textContent = 'Sicherung herunterladen';
     exportBtn.className = 'primary';
     exportBtn.addEventListener('click', () => {
       if (backupDownloadInProgress) return;
@@ -19892,13 +19873,13 @@ function renderPots() {
     card.appendChild(actionRow);
 
     const restoreCard = document.createElement('div');
-    restoreCard.className = 'card';
+    restoreCard.className = 'sub-card backup-restore-card';
     const restoreTitle = document.createElement('h3');
-    restoreTitle.textContent = 'Backup wiederherstellen';
+    restoreTitle.textContent = 'Sicherung einspielen';
     restoreCard.appendChild(restoreTitle);
 
     const restoreInfo = document.createElement('p');
-    restoreInfo.textContent = 'Wähle deine JSON-Sicherung aus und starte den Import. Alte, nicht mehr benötigte Versionskopien werden automatisch aufgeräumt; dein bisheriger Stand bleibt zusätzlich als Rückfall-Sicherung erhalten.';
+    restoreInfo.textContent = 'Wähle eine zuvor heruntergeladene JSON-Sicherung aus. Dein jetziger Stand bleibt automatisch als Rückfall-Sicherung erhalten.';
     restoreCard.appendChild(restoreInfo);
 
     const fileRow = document.createElement('div');
@@ -19950,7 +19931,7 @@ function renderPots() {
     }
 
     const importBtn = document.createElement('button');
-    importBtn.textContent = 'Backup jetzt importieren';
+    importBtn.textContent = 'Sicherung einspielen';
     importBtn.className = 'primary';
     importBtn.disabled = true;
     restoreCard.appendChild(importBtn);
@@ -19986,7 +19967,7 @@ function renderPots() {
           : '';
         const resetImportButton = () => {
           importBtn.disabled = false;
-          importBtn.textContent = 'Backup jetzt importieren';
+          importBtn.textContent = 'Sicherung einspielen';
         };
         try {
           const rawText = String(ev.target && ev.target.result ? ev.target.result : '').replace(/^\uFEFF/, '').trim();
@@ -20134,12 +20115,13 @@ function renderPots() {
       reader.onerror = () => {
         setInlineStatus('Die Datei konnte nicht gelesen werden.', 'error');
         importBtn.disabled = false;
-        importBtn.textContent = 'Backup jetzt importieren';
+        importBtn.textContent = 'Sicherung einspielen';
       };
       reader.readAsText(selectedFile);
     });
 
     card.appendChild(restoreCard);
+    card.appendChild(advancedDetails);
     saveSection.appendChild(card);
   }
 
