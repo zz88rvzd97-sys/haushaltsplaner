@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.80
+ * Haushaltsplaner Version 2.81
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.80';
+  const APP_VERSION = '2.81';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3320,6 +3320,23 @@
     };
   }
 
+  function getConfirmedDedicatedDebtReserveBeforeMonth(plan, monthKey) {
+    if (!plan || !isMonthKey(plan.firstReserveMonth) || !isMonthKey(monthKey)) return 0;
+    const firstMonth = plan.firstReserveMonth < snowballConfig.monthlyTargetStartMonth
+      ? snowballConfig.monthlyTargetStartMonth
+      : plan.firstReserveMonth;
+    let month = firstMonth;
+    let confirmed = 0;
+    for (let index = 0; index < 120 && month < monthKey; index += 1) {
+      const actionKey = getDebtAssistantActionKey(month, plan.targetDebtId, 'reserve', plan.monthlyAmount);
+      if (getDebtAssistantActionStatus(actionKey) === 'done') {
+        confirmed += Number(plan.monthlyAmount || 0);
+      }
+      month = nextMonth(month);
+    }
+    return roundMoney(Math.max(0, confirmed));
+  }
+
   function getHistoricalDebtRollover(startMonth) {
     if (!isMonthKey(startMonth)) return 0;
     return roundMoney((state.debts || []).reduce((sum, debt) => {
@@ -3374,10 +3391,12 @@
     const payoffPlanActiveAtStart = automaticPayoffPlan
       && monthDiff(automaticPayoffPlan.firstReserveMonth, startMonth) >= 0;
     const dedicatedMonthlyAtStart = payoffPlanActiveAtStart ? Number(automaticPayoffPlan.monthlyAmount || 0) : 0;
-    const elapsedReserveMonths = payoffPlanActiveAtStart
-      ? Math.max(0, monthDiff(automaticPayoffPlan.firstReserveMonth, startMonth))
+    // Frühere Planmonate werden nicht mehr automatisch als wirklich angespart
+    // behandelt. Ab dem Neustart im September zählt nur, was im jeweiligen
+    // Monatsassistenten ausdrücklich als „Zurückgelegt“ bestätigt wurde.
+    let dedicatedReserve = payoffPlanActiveAtStart
+      ? getConfirmedDedicatedDebtReserveBeforeMonth(automaticPayoffPlan, startMonth)
       : 0;
-    let dedicatedReserve = roundMoney(dedicatedMonthlyAtStart * elapsedReserveMonths);
     // Allgemeine Tagesgeld-Rücklage innerhalb des Schulden-Pools. Sie entsteht,
     // wenn ein Teil der 800 Euro wegen Zahlungsregeln noch nicht sinnvoll an
     // einen Gläubiger geschickt werden kann, und bleibt in Folgemonaten für
@@ -15632,6 +15651,9 @@ function showPersonalEditor(personId, editPost) {
     if (!isMonthKey(monthKey)) return 0;
     const balance = state.appMeta.debtSavingsLedger.reduce((sum, entry) => {
       if (!entry || !isMonthKey(entry.month) || entry.month > monthKey) return sum;
+      // Der feste Schuldenplan startet im September 2026 neu. Nur tatsächlich
+      // bestätigte Rücklagen ab diesem Monat gehören zu seinem Startbestand.
+      if (entry.month < snowballConfig.monthlyTargetStartMonth) return sum;
       // Einzahlungen des laufenden Planmonats entstehen erst aus dessen Rest.
       // Bereits dokumentierte Entnahmen müssen dagegen sofort berücksichtigt
       // werden, damit dieselbe Rücklage nicht ein zweites Mal vorgeschlagen wird.
@@ -15700,6 +15722,9 @@ function showPersonalEditor(personId, editPost) {
     head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
     card.appendChild(head);
     card.appendChild(createUiEl('p', 'small muted', 'Hier siehst du die konkreten Zahlungen für den gewählten Monat. Der volle 800-€-Schulden-Pool wird im verfügbaren Betrag berücksichtigt. Was noch nicht sinnvoll gezahlt werden kann, bleibt als gebundene Schulden-Rücklage auf dem Tagesgeld.'));
+    if (monthKey === snowballConfig.monthlyTargetStartMonth) {
+      card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus August werden nicht übernommen. Ab September zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
+    }
     const debtSavingsDeposit = roundMoney(Number(row.debtSavingsDeposit || 0));
     card.appendChild(createSummaryMetrics([
       { label: 'Schulden-Pool', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
