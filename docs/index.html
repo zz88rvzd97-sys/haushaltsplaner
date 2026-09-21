@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Version 2.81
+  Haushaltsplaner Version 2.82
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,6 +12,10 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.82: Der feste Schuldenplan startet im Oktober
+  2026. September bleibt unverändert erhalten. Geplante, aber nicht wirklich
+  zurückgelegte Beträge aus September werden nicht als Oktober-Guthaben gewertet.
+  Erst ab Oktober zählt die Bestätigung „Zurückgelegt“.
   Aktualisierung Version&nbsp;2.81: Der feste Schuldenplan startet im September
   2026 ohne nur geplante Rücklagen aus August. Ab September zählt ein Betrag
   erst dann als angespart, wenn er im Monatsassistenten ausdrücklich als
@@ -110,11 +114,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.81">
-    <link rel="manifest" href="manifest.json?v=2.81">
+    <link rel="stylesheet" href="style.css?v=2.82">
+    <link rel="manifest" href="manifest.json?v=2.82">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.81">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.81">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.82">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.82">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -124,7 +128,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.81" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.82" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -186,7 +190,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.81 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.82 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -216,9 +220,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.81</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.82</footer>
       </div>
     </div>
-    <script src="script.js?v=2.81"></script>
+    <script src="script.js?v=2.82"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.81
+ * Haushaltsplaner Version 2.82
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.81';
+  const APP_VERSION = '2.82';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -962,7 +962,7 @@
   const snowballConfig = {
     shortTermSkipMonths: 6,
     monthlyTarget: 800,
-    monthlyTargetStartMonth: '2026-09'
+    monthlyTargetStartMonth: '2026-10'
   };
 
   function sanitizeStateTextValues(value, seen = new WeakSet()) {
@@ -3561,7 +3561,7 @@
         }
       }
 
-      // Ab September 2026 ist das Monatsziel fest. Bereits gezahlte Beträge und
+      // Ab Oktober 2026 ist das Monatsziel fest. Bereits gezahlte Beträge und
       // Pflicht-/Normalraten zählen zuerst. Mit der noch fehlenden Summe wird
       // zuerst eine mögliche Komplettablösung gesucht; nur der danach übrige
       // Betrag wird als freiwillige Zusatztilgung verteilt. Die Höhe hängt
@@ -11324,7 +11324,7 @@
     const projectionMap = buildDebtForecastProjection(currentMonth, forecastHorizon, { monthDetailsFn: hasScenario ? computeMonthDetailsWithScenario : computeMonthDetails });
     const debtInfo = document.createElement('div');
     debtInfo.className = 'notice success';
-    debtInfo.textContent = 'Ab September 2026 zieht die Vorschau jeden Monat den vollständigen 800-€-Schulden-Pool vom verfügbaren Betrag ab. Standardraten zählen hinein; vorerst nicht sinnvoll einsetzbare Beträge gehen als gebundene Schulden-Rücklage aufs Tagesgeld.';
+    debtInfo.textContent = 'Ab Oktober 2026 zieht die Vorschau jeden Monat den vollständigen 800-€-Schulden-Pool vom verfügbaren Betrag ab. Standardraten zählen hinein; vorerst nicht sinnvoll einsetzbare Beträge gehen als gebundene Schulden-Rücklage aufs Tagesgeld.';
     card.appendChild(debtInfo);
     card.appendChild(renderForecastTimelineCard(months, hasScenario, projectionMap));
 
@@ -15651,7 +15651,7 @@ function showPersonalEditor(personId, editPost) {
     if (!isMonthKey(monthKey)) return 0;
     const balance = state.appMeta.debtSavingsLedger.reduce((sum, entry) => {
       if (!entry || !isMonthKey(entry.month) || entry.month > monthKey) return sum;
-      // Der feste Schuldenplan startet im September 2026 neu. Nur tatsächlich
+      // Der feste Schuldenplan startet im Oktober 2026 neu. Nur tatsächlich
       // bestätigte Rücklagen ab diesem Monat gehören zu seinem Startbestand.
       if (entry.month < snowballConfig.monthlyTargetStartMonth) return sum;
       // Einzahlungen des laufenden Planmonats entstehen erst aus dessen Rest.
@@ -15723,7 +15723,7 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(head);
     card.appendChild(createUiEl('p', 'small muted', 'Hier siehst du die konkreten Zahlungen für den gewählten Monat. Der volle 800-€-Schulden-Pool wird im verfügbaren Betrag berücksichtigt. Was noch nicht sinnvoll gezahlt werden kann, bleibt als gebundene Schulden-Rücklage auf dem Tagesgeld.'));
     if (monthKey === snowballConfig.monthlyTargetStartMonth) {
-      card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus August werden nicht übernommen. Ab September zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
+      card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus September werden nicht übernommen. Ab Oktober zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
     }
     const debtSavingsDeposit = roundMoney(Number(row.debtSavingsDeposit || 0));
     card.appendChild(createSummaryMetrics([
@@ -16049,7 +16049,7 @@ function showPersonalEditor(personId, editPost) {
     [
       ['Offen aktuell', euro(totalOpen)],
       ['Schulden-Pool aktueller Monat', firstRow ? euro(firstRow.pool || firstRow.total || 0) : '0,00 €'],
-      ['Monatsziel ab September', firstBudgetRow ? euro(firstBudgetRow.monthlyTarget || 0) : euro(snowballConfig.monthlyTarget)],
+      ['Monatsziel ab Oktober', firstBudgetRow ? euro(firstBudgetRow.monthlyTarget || 0) : euro(snowballConfig.monthlyTarget)],
       ['Noch geplante Standardraten', firstRow ? euro(firstRow.base || 0) : '0,00 €'],
       ['Zusatz im ersten Zielmonat', firstBudgetRow ? euro(firstBudgetRow.extra || 0) : '0,00 €'],
       ['Neuberechnung', 'jeden Monat automatisch']
@@ -16099,7 +16099,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Ab September 2026 bindet die App jeden Monat insgesamt 800 € für Schulden und zieht diesen Pool vollständig vom verfügbaren Betrag ab: zuerst alle Pflicht- und Standardraten, danach mögliche Komplettablösungen und Zusatztilgungen. Was wegen einer Zahlungsregel noch nicht sinnvoll eingesetzt werden kann, bleibt als Schulden-Rücklage auf dem Tagesgeld und wird in späteren Monaten wieder für Schulden berücksichtigt. Schulden mit „nur Rate“ oder unbekanntem Zahlungsweg bleiben als Ziel für zusätzliche Zahlungen ausgeschlossen.';
+    note.textContent = 'Ab Oktober 2026 bindet die App jeden Monat insgesamt 800 € für Schulden und zieht diesen Pool vollständig vom verfügbaren Betrag ab: zuerst alle Pflicht- und Standardraten, danach mögliche Komplettablösungen und Zusatztilgungen. Was wegen einer Zahlungsregel noch nicht sinnvoll eingesetzt werden kann, bleibt als Schulden-Rücklage auf dem Tagesgeld und wird in späteren Monaten wieder für Schulden berücksichtigt. Schulden mit „nur Rate“ oder unbekanntem Zahlungsweg bleiben als Ziel für zusätzliche Zahlungen ausgeschlossen.';
     card.appendChild(note);
     return card;
   }
@@ -16567,7 +16567,7 @@ function showPersonalEditor(personId, editPost) {
     if (snowball.rows.length > 0) {
       card.appendChild(createSummaryMetrics([
         { label: currentMonth >= snowballConfig.monthlyTargetStartMonth ? 'Festes Monatsziel' : 'Bisheriger Schulden-Pool', value: `${euro(currentSnowballRow && (currentSnowballRow.pool || currentSnowballRow.total) || currentPlannedDebtTotal)}` },
-        { label: 'Neue Regel ab September', value: 'insgesamt 800 € pro Monat' },
+        { label: 'Neue Regel ab Oktober', value: 'insgesamt 800 € pro Monat' },
         { label: 'Plan aktueller Monat', value: `${euro(currentPlannedDebtTotal)}` },
         { label: 'davon zusätzlich vorgeschlagen', value: `${euro(currentSnowballTotal)}` },
         { label: 'Verteilung', value: 'kleinste geeignete offene Schuld zuerst' },
@@ -17289,7 +17289,7 @@ function showPersonalEditor(personId, editPost) {
 
     const hint = document.createElement('p');
     hint.className = 'small muted';
-    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Ab September 2026 werden insgesamt 800 € monatlich eingeplant; die gewählte Zahlungsmöglichkeit entscheidet automatisch, welche Schuld zusätzliche Beträge erhalten darf.';
+    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Ab Oktober 2026 werden insgesamt 800 € monatlich eingeplant; die gewählte Zahlungsmöglichkeit entscheidet automatisch, welche Schuld zusätzliche Beträge erhalten darf.';
     content.appendChild(hint);
 
     showModal(editDebt ? 'Schuld bearbeiten' : 'Neue Schuld anlegen', content, [
