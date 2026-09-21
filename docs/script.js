@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.82
+ * Haushaltsplaner Version 2.83
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,8 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const APP_VERSION = '2.82';
+  const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
+  const APP_VERSION = '2.83';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -1132,6 +1133,7 @@
     syncAllReserveSelectionsToPots();
     normalizeAllPersonConfigs();
     normalizeAllPostConfigs();
+    ensureBennyHuk24AdditionalPensionFromOctober2026();
     ensureGroceryMoneyFromJune2026();
     normalizeAllDebtConfigs();
     normalizeContracts();
@@ -1325,7 +1327,7 @@
 
   function getSmokingTargetOverride(monthKey) {
     const cfg = getBudgetTopUpConfig('smoking');
-    if (!isMonthKey(monthKey) || !cfg || !cfg.targetOverrides) return null;
+    if (!isMonthKey(monthKey) || monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH || !cfg || !cfg.targetOverrides) return null;
     if (!Object.prototype.hasOwnProperty.call(cfg.targetOverrides, monthKey)) return null;
     const amount = Number(cfg.targetOverrides[monthKey]);
     return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : null;
@@ -1333,7 +1335,7 @@
 
   function setSmokingTargetOverride(monthKey, amount) {
     const cfg = getBudgetTopUpConfig('smoking');
-    if (!isMonthKey(monthKey)) return false;
+    if (!isMonthKey(monthKey) || monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return false;
     if (amount == null) {
       delete cfg.targetOverrides[monthKey];
       return true;
@@ -2771,6 +2773,54 @@
     if (Array.isArray(state.debts)) state.debts.forEach(ensureDebtConfig);
   }
 
+  function ensureBennyHuk24AdditionalPensionFromOctober2026() {
+    if (!state || !state.appMeta || !Array.isArray(state.persons) || !Array.isArray(state.personalCosts)) return false;
+    if (state.appMeta.bennyHuk24AdditionalPensionV283Done === true) return false;
+
+    const benny = state.persons.find((person) => {
+      const idKey = normalizeTextKey(person && person.id).replace(/[^a-z0-9]/g, '');
+      const nameKey = normalizeTextKey(person && person.name).replace(/[^a-z0-9]/g, '');
+      return idKey === 'benny' || nameKey === 'benny';
+    });
+    if (!benny) return false;
+
+    const existing = state.personalCosts.find((post) => {
+      if (!post || post.personId !== benny.id) return false;
+      const nameKey = normalizeTextKey(post.name).replace(/[^a-z0-9]/g, '');
+      return nameKey.includes('zusatzrente') && nameKey.includes('huk24');
+    });
+
+    let created = false;
+    if (!existing) {
+      const post = {
+        id: 'benny_huk24_zusatzrente_2026_10',
+        personId: benny.id,
+        name: 'Zusatzrente HUK24',
+        amount: 25,
+        interval: 1,
+        startMonth: '2026-10',
+        endMonth: '',
+        oneTime: false,
+        paidMonths: [],
+        accountBalanceDebits: {},
+        amountTimeline: [],
+        amountOverrides: {},
+        linkedDebtId: '',
+        linkedSavingsGoalId: '',
+        accountId: '',
+        paidWithIncome: false,
+        incomePaidMonths: []
+      };
+      ensurePostConfig(post);
+      state.personalCosts.push(post);
+      addChangeLog('Persönliche Ausgaben', 'Benny: Zusatzrente HUK24 mit 25,00 € monatlich ab Oktober 2026 angelegt.', '2026-10');
+      created = true;
+    }
+
+    state.appMeta.bennyHuk24AdditionalPensionV283Done = true;
+    return created;
+  }
+
   function ensureLinkedDebtField(post) {
     if (!post || typeof post !== 'object') return;
     if (typeof post.linkedDebtId !== 'string') post.linkedDebtId = '';
@@ -4062,18 +4112,12 @@
         icon: '▤',
         onClick: () => showGroceryExpenseEditor()
       },
-      {
+      currentMonth < PRIVATE_HOUSEHOLD_ONLY_START_MONTH ? {
         title: 'Rauchzeug eintragen',
         text: 'Ausgabe vom Rauchzeug-Budget erfassen',
         icon: '−',
         onClick: () => showSmokingExpenseEditor()
-      },
-      {
-        title: 'Selbständigkeit',
-        text: 'Betriebseinnahme oder Betriebsausgabe erfassen',
-        icon: '§',
-        onClick: () => showSelfEmploymentEntryEditor()
-      },
+      } : null,
       {
         title: 'Vertrag erfassen',
         text: 'Kosten, Laufzeit und Kündigungsfrist hinterlegen',
@@ -4100,7 +4144,7 @@
         tone: 'soft-action',
         onClick: () => switchSection('save')
       }
-    ];
+    ].filter(Boolean);
   }
 
   function showQuickCaptureModal() {
@@ -4329,7 +4373,7 @@
       adjustment: 0,
       hasActivity: false
     };
-    if (!isMonthKey(monthKey)) return empty;
+    if (!isMonthKey(monthKey) || monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return empty;
     const cfg = normalizeSelfEmployment();
     const monthEntries = cfg.entries.filter((entry) => String(entry.date || '').startsWith(`${monthKey}-`));
     let income = 0;
@@ -4921,9 +4965,11 @@
     const unpaidCommon = state.commonCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidPersonal = state.personalCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidDebts = state.debts.filter((d) => isDebtOpenForMonth(d, monthKey)).length;
-    const openRecurringBusiness = getSelfEmploymentRecurringExpenses()
-      .filter((template) => isSelfEmploymentRecurringDue(template, monthKey) && !getSelfEmploymentRecurringBooking(template.id, monthKey))
-      .length;
+    const openRecurringBusiness = monthKey < PRIVATE_HOUSEHOLD_ONLY_START_MONTH
+      ? getSelfEmploymentRecurringExpenses()
+        .filter((template) => isSelfEmploymentRecurringDue(template, monthKey) && !getSelfEmploymentRecurringBooking(template.id, monthKey))
+        .length
+      : 0;
     const miscOpen = getBufferExpenseOpenSumForMonth(monthKey);
     const free = computeFreeSumForMonth(monthKey);
     if (unpaidCommon > 0) warnings.push({ kind: 'warning', text: `${unpaidCommon} gemeinsame Zahlung(en) noch offen` });
@@ -5139,7 +5185,9 @@
   function switchSection(section) {
     // Monatsstart ist vollständig in der Übersicht enthalten; Töpfe sind mit
     // den Rücklagen zusammengeführt. Alte interne Links bleiben dadurch gültig.
-    const targetSection = section === 'monthstart'
+    const targetSection = section === 'selfemployment'
+      ? 'overview'
+      : section === 'monthstart'
       ? 'overview'
       : (section === 'pots' ? 'savings' : section);
     currentSection = targetSection || 'overview';
@@ -6794,13 +6842,27 @@
   function isMonthKey(value) {
     return /^\d{4}-\d{2}$/.test(String(value || ''));
   }
+  function isPostRemovedFromPrivateHousehold(post, month) {
+    if (!post || !isMonthKey(month) || month < PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return false;
+    const nameKey = normalizeTextKey(post.name);
+    const businessPost = !!(post.selfEmploymentRecurringTemplateId
+      || post.selfEmploymentEntryId
+      || nameKey.startsWith('betrieblich:'));
+    if (businessPost) return true;
+    if (!nameKey.includes('rauchzeug')) return false;
+    const owner = (state.persons || []).find((person) => person && person.id === post.personId);
+    return normalizeTextKey(owner && owner.name) === 'benny'
+      || String(post.personId || '').toLowerCase() === 'benny';
+  }
   function isPostActiveInMonth(post, month) {
     if (!post || !isMonthKey(post.startMonth) || !isMonthKey(month)) return false;
+    if (isPostRemovedFromPrivateHousehold(post, month)) return false;
     if (monthDiff(post.startMonth, month) < 0) return false;
     if (post.endMonth && isMonthKey(post.endMonth) && monthDiff(month, post.endMonth) < 0) return false;
     return true;
   }
   function isPostVisibleInMonth(post, month) {
+    if (isPostRemovedFromPrivateHousehold(post, month)) return false;
     return isPostActiveInMonth(post, month)
       || isPostPaidForMonth(post, month)
       || isPostBookedForMonth(post, month);
@@ -6934,6 +6996,7 @@
   }
 
   function getSmokingBudgetBaseTarget(monthKey = currentMonth) {
+    if (monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return 0;
     return getSmokingBudgetPosts().reduce((sum, post) => {
       if (!isDue(post, monthKey)) return sum;
       return sum + Number(getEffectiveBaseAmountForMonth(post, monthKey) || 0);
@@ -6941,6 +7004,7 @@
   }
 
   function getSmokingBudgetTarget(monthKey = currentMonth) {
+    if (monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return 0;
     const manualTarget = getSmokingTargetOverride(monthKey);
     if (manualTarget != null) return manualTarget;
     return getSmokingBudgetPosts().reduce((sum, post) => {
@@ -6950,7 +7014,7 @@
   }
 
   function syncSmokingBudgetTarget(monthKey = currentMonth) {
-    if (!isMonthKey(monthKey)) return false;
+    if (!isMonthKey(monthKey) || monthKey >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) return false;
     const posts = getSmokingBudgetPosts().filter((post) => isDue(post, monthKey));
     if (!posts.length) return false;
     const manualTarget = getSmokingTargetOverride(monthKey);
@@ -8696,6 +8760,7 @@
     try { renderGlobalMonthBar(); } catch (error) { recordRuntimeIssue('System', 'Monatsleiste fehlgeschlagen', error); }
     if (!ACCOUNTS_ENABLED && currentSection === 'sharedaccount') currentSection = 'common';
     if (currentSection === 'taxrefund') currentSection = 'overview';
+    if (currentSection === 'selfemployment') currentSection = 'overview';
     if (currentSection === 'monthstart') currentSection = 'overview';
     if (currentSection === 'pots') currentSection = 'savings';
 
@@ -8725,7 +8790,6 @@
       tankcalc: ['Tankgeld', tankCalcSection, renderTankCalc],
       groceries: ['Einkaufsgeld', grocerySection, renderGroceries],
       smoking: ['Rauchzeug', smokingSection, renderSmokingExpenses],
-      selfemployment: ['Selbständigkeit & EÜR', selfEmploymentSection, renderSelfEmployment],
       contracts: ['Verträge', contractsSection, renderContracts],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
@@ -10567,7 +10631,9 @@
     kpiGrid.appendChild(createKpi({
       label: 'Privates Netto',
       value: euro(totalIncome),
-      hint: 'Gehälter und private Einkommen; Selbstständigkeit ist im Gesamtbetrag enthalten',
+      hint: details.businessBudgetHasActivity
+        ? 'Gehälter und private Einkommen; frühere Selbstständigkeit ist im Gesamtbetrag enthalten'
+        : 'Gehälter und private Einkommen',
       icon: '€',
       accent: 'mint'
     }));
@@ -11438,7 +11504,6 @@
     const checks = [
       ['Privates Netto', liveDetails.totalIncome, closedSnapshot.totalIncome],
       ['Übertrag aus Vormonat', liveDetails.carryoverIn || 0, closedSnapshot.carryoverIn || 0],
-      ['Selbstständigkeit im Gesamtbetrag', liveDetails.businessBudgetAdjustment || 0, closedSnapshot.businessBudgetAdjustment || 0],
       ['Gemeinsame Kosten', liveDetails.totalCommonRounded, closedSnapshot.totalCommonRounded],
       ['Persönliche Ausgaben', liveDetails.totalPersonal, closedSnapshot.totalPersonal],
       ['Schulden geplant', liveDetails.debtPlanned || 0, closedSnapshot.debtPlanned || 0],
@@ -11446,6 +11511,10 @@
       ['Sonstige offen geplant', liveDetails.miscOpen || 0, closedSnapshot.miscOpen || 0],
       ['Insgesamt verfügbar', liveDetails.free, closedSnapshot.free]
     ];
+    if (Math.abs(Number(liveDetails.businessBudgetAdjustment || 0)) > 0.009
+      || Math.abs(Number(closedSnapshot.businessBudgetAdjustment || 0)) > 0.009) {
+      checks.splice(2, 0, ['Selbstständigkeit im Gesamtbetrag', liveDetails.businessBudgetAdjustment || 0, closedSnapshot.businessBudgetAdjustment || 0]);
+    }
     return checks
       .map(([label, live, saved]) => ({ label, live: Number(live || 0), saved: Number(saved || 0), diff: Number(live || 0) - Number(saved || 0) }))
       .filter((row) => Math.abs(row.diff) > 0.009);
@@ -11502,7 +11571,7 @@
       ? roundMoney(Math.max(0, Number(closedSnapshot.carryoverOut || 0)))
       : automaticCarryoverOut;
     card.appendChild(createSummaryMetrics([
-      { label: 'Insgesamt verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : 'Private und betriebliche Zahlungen zusammen.' },
+      { label: 'Insgesamt verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : (details.businessBudgetHasActivity ? 'Private und frühere betriebliche Zahlungen zusammen.' : 'Alle privaten Zahlungen zusammen.') },
       { label: 'Übertrag aus Vormonat', value: `${euro(details.carryoverIn || 0)}`, kind: Number(details.carryoverIn || 0) > 0 ? 'success' : '', hint: currentMonth === CARRYOVER_START_MONTH ? 'Neustart ab August ohne alten Übertrag.' : 'Bereits im sicheren freien Betrag enthalten.' },
       { label: `Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, value: `${euro(displayedCarryoverOut)}`, kind: displayedCarryoverOut > 0 ? 'success' : '', hint: carryoverActive ? 'Wird beim Abschluss automatisch gespeichert.' : 'Automatischer Übertrag startet ab August 2026.' },
       { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
@@ -11523,7 +11592,9 @@
     receipt.appendChild(createReceiptRow('Privates Netto', euro(details.totalIncome)));
     receipt.appendChild(createReceiptRow('Übertrag aus Vormonat', `+ ${euro(details.carryoverIn || 0)}`));
     const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
-    receipt.appendChild(createReceiptRow('Selbstständigkeit im Gesamtbetrag', `${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''} ${euro(Math.abs(businessAdjustment))}`, businessAdjustment >= 0 ? 'success' : 'warning'));
+    if (details.businessBudgetHasActivity || Math.abs(businessAdjustment) > 0.005) {
+      receipt.appendChild(createReceiptRow('Selbstständigkeit im Gesamtbetrag', `${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''} ${euro(Math.abs(businessAdjustment))}`, businessAdjustment >= 0 ? 'success' : 'warning'));
+    }
     receipt.appendChild(createReceiptRow('Gemeinsame Kosten', `− ${euro(details.totalCommonRounded)}`));
     receipt.appendChild(createReceiptRow('Persönliche Ausgaben', `− ${euro(details.totalPersonal)}`));
     receipt.appendChild(createReceiptRow('Schulden-Pool insgesamt', euro(details.debtPlanned || 0)));
@@ -14008,6 +14079,39 @@ function showPersonalEditor(personId, editPost) {
     if (!smokingSection) return;
     smokingSection.innerHTML = '';
     const expenses = getSmokingExpenses();
+    if (currentMonth >= PRIVATE_HOUSEHOLD_ONLY_START_MONTH) {
+      const retiredCard = document.createElement('div');
+      retiredCard.className = 'card';
+      retiredCard.appendChild(createUiEl('h2', '', 'Rauchzeug beendet'));
+      retiredCard.appendChild(createUiEl('div', 'notice success', 'Ab Oktober 2026 ist bei Benny kein Rauchzeug-Budget mehr eingeplant. Frühere Einträge bleiben in der Historie erhalten.'));
+      smokingSection.appendChild(retiredCard);
+
+      const totals = getSmokingMonthlyTotals()
+        .filter((row) => row.month < PRIVATE_HOUSEHOLD_ONLY_START_MONTH)
+        .slice(0, 12);
+      const history = document.createElement('div');
+      history.className = 'card';
+      history.appendChild(createUiEl('h3', '', 'Bisheriger Monatsverlauf'));
+      if (!totals.length) {
+        history.appendChild(createUiEl('p', 'small muted', 'Keine früheren Rauchzeug-Ausgaben vorhanden.'));
+      } else {
+        const table = document.createElement('table');
+        table.className = 'list-table';
+        table.innerHTML = '<thead><tr><th>Monat</th><th>Ausgaben</th><th>Ausgegeben</th><th>Budget</th><th>Abweichung</th></tr></thead>';
+        const tbody = document.createElement('tbody');
+        totals.forEach((row) => {
+          const budget = getSmokingBudgetTarget(row.month);
+          const delta = budget - row.amount;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${formatMonthLabel(row.month)}</td><td>${row.count}</td><td>${euro(row.amount)}</td><td>${euro(budget)}</td><td>${delta >= 0 ? euro(delta) + ' übrig' : euro(Math.abs(delta)) + ' darüber'}</td>`;
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        history.appendChild(table);
+      }
+      smokingSection.appendChild(history);
+      return;
+    }
     const currentExpenses = expenses.filter((expense) => expense.month === currentMonth);
     const spent = currentExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     const target = getSmokingBudgetTarget(currentMonth);
@@ -20072,6 +20176,7 @@ function createPotsCard() {
           runImportStep('Rücklagen-Sync', () => syncAllReserveSelectionsToPots());
           runImportStep('Personen', () => normalizeAllPersonConfigs());
           runImportStep('Posten', () => normalizeAllPostConfigs());
+          runImportStep('Zusatzrente HUK24', () => ensureBennyHuk24AdditionalPensionFromOctober2026());
           runImportStep('Einkaufsgeld-Ziel', () => ensureGroceryMoneyFromJune2026());
           runImportStep('Schulden', () => normalizeAllDebtConfigs());
           runImportStep('Verträge', () => normalizeContracts());
