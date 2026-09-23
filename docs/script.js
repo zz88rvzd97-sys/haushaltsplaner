@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.84
+ * Haushaltsplaner Version 2.85
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.84';
+  const APP_VERSION = '2.85';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -13352,7 +13352,10 @@ function showPersonalEditor(personId, editPost) {
     const monthlyRecord = getTankMonthlyRecord(personKey, currentMonth);
     const householdRecord = getTankHouseholdMonthlyRecord(currentMonth);
     const currentKmShare = householdRecord.km > 0 ? monthlyRecord.km / householdRecord.km : 0;
-    const plannedKmShare = getTankForecastShare(personKey, currentMonth);
+    const personIncome = getIncomeWeightForPerson(personKey, currentMonth);
+    const householdIncome = ['benny', 'madeleine']
+      .reduce((sum, key) => sum + getIncomeWeightForPerson(key, currentMonth), 0);
+    const plannedIncomeShare = householdIncome > 0 ? personIncome / householdIncome : 0.5;
 
     const tracking = document.createElement('div');
     tracking.className = 'sub-card tank-monthly-tracking';
@@ -13362,7 +13365,7 @@ function showPersonalEditor(personId, editPost) {
     tracking.appendChild(createSummaryMetrics([
       { label: 'Gefahren im Monat', value: monthlyRecord.km ? `${monthlyRecord.km.toFixed(0)} km` : '—', kind: monthlyRecord.km ? 'success' : 'warning' },
       { label: 'Anteil dieser Monats-km', value: householdRecord.km > 0 ? `${(currentKmShare * 100).toFixed(1)} %` : '—' },
-      { label: 'Anteil der Planung', value: `${(plannedKmShare * 100).toFixed(1)} %`, kind: plannedKmShare > 0 ? 'success' : 'warning' }
+      { label: 'Einkommensanteil', value: `${(plannedIncomeShare * 100).toFixed(1)} %`, kind: plannedIncomeShare > 0 ? 'success' : 'warning' }
     ]));
 
     const form = document.createElement('div');
@@ -15267,7 +15270,7 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(title);
 
     const note = document.createElement('p');
-    note.textContent = 'Das Tankgeld ist automatisch mit den persönlichen Ausgaben verknüpft. Änderungen aktualisieren den Tankgeld-Posten direkt. Ist der aktuelle Monat bereits bezahlt, bleibt dieser Betrag fest und die Änderung gilt erst ab dem Folgemonat.';
+    note.textContent = 'Der gemeinsame Tanktopf ist mit euren Einzahlungsposten unter „Persönliche Ausgaben“ verknüpft. Die Höhe wird automatisch nach Einkommen verteilt. Ist der aktuelle Monat bereits bezahlt, bleibt dieser Betrag fest und die Änderung gilt erst ab dem Folgemonat.';
     card.appendChild(note);
 
     const settingsRow = document.createElement('div');
