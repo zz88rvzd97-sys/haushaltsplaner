@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.86
+ * Haushaltsplaner Version 2.87
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.86';
+  const APP_VERSION = '2.87';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -3525,9 +3525,10 @@
           reserveAmount: dedicatedReserve
         })
         : null;
-      let priorityFullPayoffDebtId = fullPayoffCandidateBeforeSplit
-        ? fullPayoffCandidateBeforeSplit.id
-        : '';
+      // Das gesamte Zusatzbudget bleibt zusammen, wenn damit bereits eine Schuld
+      // vollständig erledigt werden kann. Erst wenn das nicht möglich ist, wird
+      // der feste 46-Euro-Anteil für Riverty AZ1 zurückgelegt.
+      if (fullPayoffCandidateBeforeSplit) dedicatedContribution = 0;
       if (dedicatedContribution > 0 && automaticPayoffPlan) {
         const target = active.find((debt) => debt.id === automaticPayoffPlan.targetDebtId);
         if (target && target.open > 0) {
@@ -3622,8 +3623,18 @@
         while (availableBudget > 0.005) {
           const candidates = getFixedDebtBudgetCandidates(planDebts);
           if (!candidates.length) break;
-          let target = candidates.find((candidate) => candidate.id === priorityFullPayoffDebtId) || candidates[0];
-          priorityFullPayoffDebtId = '';
+          // Nach jeder vollständigen Ablösung erneut prüfen. So können auch
+          // mehrere kleine Restschulden im selben Monat nacheinander erledigt
+          // werden, bevor eine Rücklage oder Teil-Sonderzahlung entsteht.
+          const fullPayoffCandidate = findFullPayoffCandidateBeforeSplit(
+            planDebts,
+            availableBudget + debtSavingsReserve,
+            {
+              reserveDebtId: automaticPayoffPlan ? automaticPayoffPlan.targetDebtId : '',
+              reserveAmount: dedicatedReserve
+            }
+          );
+          let target = fullPayoffCandidate || candidates[0];
 
           const isAutomaticReserveTarget = !!(automaticPayoffPlan && target.id === automaticPayoffPlan.targetDebtId);
           const targetDedicatedReserve = isAutomaticReserveTarget
