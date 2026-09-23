@@ -1,5 +1,5 @@
 <!--
-  Haushaltsplaner Version 2.83
+  Haushaltsplaner Version 2.84
   Diese Version korrigiert die Datenmigration aus älteren Versionen:
   die Beta 0.33 speicherte übernommene Daten versehentlich unter
   einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
@@ -12,6 +12,12 @@
   Exportieren“ ist wieder vollständig nutzbar.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.84: Gemeinsame Tank- und Einkaufsgeld-Töpfe werden
+  jetzt wie die übrigen Gemeinschaftskosten nach dem Einkommen des jeweiligen
+  Monats verteilt. Gehaltsänderungen aktualisieren die offenen Einzahlungen für
+  den aktuellen Monat und die folgende Jahresplanung automatisch; persönliche
+  Ausgaben bleiben unverändert. Die Aufteilung der Gemeinschaftskosten wird
+  weiterhin auf 5-Euro-Schritte gerundet.
   Aktualisierung Version&nbsp;2.83: Die Selbständigkeitsverwaltung ist aus dem
   Haushaltsplaner entfernt. Alte Betriebsdaten bleiben in Sicherungen erhalten,
   beeinflussen den privaten Haushalt ab Oktober 2026 aber nicht mehr. Bennys
@@ -119,11 +125,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.83">
-    <link rel="manifest" href="manifest.json?v=2.83">
+    <link rel="stylesheet" href="style.css?v=2.84">
+    <link rel="manifest" href="manifest.json?v=2.84">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.83">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.83">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.84">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.84">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -133,7 +139,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.83" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.84" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -193,7 +199,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.83 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.84 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -222,9 +228,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.83</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.84</footer>
       </div>
     </div>
-    <script src="script.js?v=2.83"></script>
+    <script src="script.js?v=2.84"></script>
   </body>
 </html>

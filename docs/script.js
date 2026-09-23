@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.83
+ * Haushaltsplaner Version 2.84
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.83';
+  const APP_VERSION = '2.84';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -7854,6 +7854,23 @@
     return out;
   }
 
+  function getIncomeWeightForPerson(personIdOrName, monthKey = currentMonth) {
+    const sought = String(personIdOrName || '').toLowerCase();
+    const soughtTankKey = sought.includes('madeleine') ? 'madeleine' : (sought.includes('benny') ? 'benny' : '');
+    const person = (state.persons || []).find((entry) => {
+      const id = String(entry && entry.id || '').toLowerCase();
+      const name = String(entry && entry.name || '').toLowerCase();
+      return id === sought || name === sought || (soughtTankKey && getTankCalcPersonKey(name) === soughtTankKey);
+    });
+    return person ? Math.max(0, Number(getPersonNet(person, monthKey) || 0)) : 0;
+  }
+
+  function ensurePositiveAllocationWeights(items) {
+    const rows = (items || []).map((item) => ({ ...item, weight: Math.max(0, Number(item.weight || 0)) }));
+    if (rows.some((item) => item.weight > 0)) return rows;
+    return rows.map((item) => ({ ...item, weight: 1 }));
+  }
+
   function calculateBudgetTopUp(type, monthKey = currentMonth) {
     const active = isBudgetTopUpActive(type, monthKey);
     let target = 0;
@@ -7885,12 +7902,10 @@
 
   function getFuelTopUpAllocation(monthKey = currentMonth) {
     const calc = calculateBudgetTopUp('fuel', monthKey);
-    const shareBenny = getTankForecastShare('benny', monthKey);
-    const shareMadeleine = 1 - shareBenny;
-    const allocations = splitRoundedToFive(calc.topUp, [
-      { id: 'benny', weight: shareBenny },
-      { id: 'madeleine', weight: shareMadeleine }
-    ]);
+    const allocations = splitRoundedToFive(calc.topUp, ensurePositiveAllocationWeights([
+      { id: 'benny', weight: getIncomeWeightForPerson('benny', monthKey) },
+      { id: 'madeleine', weight: getIncomeWeightForPerson('madeleine', monthKey) }
+    ]));
     return { ...calc, allocations };
   }
 
@@ -7952,10 +7967,11 @@
   function getGroceryTopUpAllocation(monthKey = currentMonth) {
     const calc = calculateBudgetTopUp('groceries', monthKey);
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
-    const weightedPosts = posts.map((post) => ({ id: post.id, weight: Number(post.amount || 0) || 1 }));
-    const allocations = getGroceryTargetOverride(monthKey) != null
-      ? splitExactAmount(calc.topUp, weightedPosts)
-      : splitRoundedToFive(calc.topUp, weightedPosts);
+    const weightedPosts = ensurePositiveAllocationWeights(posts.map((post) => ({
+      id: post.id,
+      weight: getIncomeWeightForPerson(post.personId, monthKey)
+    })));
+    const allocations = splitRoundedToFive(calc.topUp, weightedPosts);
     return { ...calc, allocations };
   }
 
@@ -11202,6 +11218,7 @@
         }
 
         syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
         saveState();
         render();
       });
@@ -11215,6 +11232,7 @@
         delete person.netOverrides[currentMonth];
         addChangeLog('Einkommen', `${person.name}: Ist-Auszahlung für ${currentLabel} gelöscht; Planwert wird wieder verwendet.`);
         syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
         saveState();
         render();
       });
@@ -11230,6 +11248,7 @@
         setPersonNetForMonth(person, currentMonth, standardValue, 'future');
         addChangeLog('Einkommen', `${person.name}: Grundlohn / Planwert ab ${currentLabel} auf ${euro(standardValue)} gesetzt.`);
         syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
         saveState();
         render();
       });
@@ -13497,7 +13516,7 @@ function showPersonalEditor(personId, editPost) {
     const box = document.createElement('div');
     box.className = 'card';
     box.appendChild(createUiEl('h3', '', 'Tankbons und Kanister ab Juni erfassen'));
-    box.appendChild(createUiEl('p', 'small muted', 'Trage jeden Kauf mit Litern und Betrag ein. Er zählt als tatsächliche Ausgabe des gemeinsamen Kraftstoffvorrats, auch wenn der Sprit erst später aus einem Kanister genutzt wird. Smart und Seat werden nicht über den Bon, sondern über ihre gefahrenen Kilometer aufgeteilt.'));
+    box.appendChild(createUiEl('p', 'small muted', 'Trage jeden Kauf mit Litern und Betrag ein. Er zählt als tatsächliche Ausgabe des gemeinsamen Kraftstoffvorrats, auch wenn der Sprit erst später aus einem Kanister genutzt wird. Die Höhe des Topfs folgt den echten Käufen und der Verbrauchsprognose; eure Einzahlungen werden automatisch nach Einkommen verteilt.'));
 
     const form = document.createElement('div');
     form.className = 'row tank-receipt-form';
@@ -13628,7 +13647,7 @@ function showPersonalEditor(personId, editPost) {
     const smartShare = total.km > 0 ? (smart.km / total.km) * 100 : 0;
     const seatShare = total.km > 0 ? (seat.km / total.km) * 100 : 0;
 
-    box.appendChild(createUiEl('p', 'small muted', 'Wenn Kilometerstände und Tankbons für den Monat vollständig sind, bestätigst du den Monat hier. Danach fließen die tatsächlichen Kosten des Kraftstoffvorrats in die nächsten 12 Monate ein; Smart und Seat werden anhand ihrer gefahrenen Kilometer aufgeteilt.'));
+    box.appendChild(createUiEl('p', 'small muted', 'Wenn Kilometerstände und Tankbons für den Monat vollständig sind, bestätigst du den Monat hier. Danach fließen die tatsächlichen Kosten des Kraftstoffvorrats in die nächsten 12 Monate ein; eure Einzahlungen werden weiterhin nach dem Einkommen des jeweiligen Monats verteilt.'));
     box.appendChild(createSummaryMetrics([
       { label: 'Smart gefahren', value: `${smart.km.toFixed(0)} km`, hint: total.km > 0 ? `${smartShare.toFixed(1)} % der Kilometer` : 'noch keine Kilometer' },
       { label: 'Seat gefahren', value: `${seat.km.toFixed(0)} km`, hint: total.km > 0 ? `${seatShare.toFixed(1)} % der Kilometer` : 'noch keine Kilometer' },
@@ -13678,7 +13697,7 @@ function showPersonalEditor(personId, editPost) {
   }
 
 
-  function syncGroceryTopUpExpense(monthKey = currentMonth) {
+  function syncGroceryTopUpExpense(monthKey = currentMonth, options = {}) {
     const allocation = getGroceryTopUpAllocation(monthKey);
     if (!allocation.active) return false;
     const hasManualTarget = getGroceryTargetOverride(monthKey) != null;
@@ -13691,11 +13710,11 @@ function showPersonalEditor(personId, editPost) {
       setPostAmountForMonth(post, targetMonth, amount, hasManualTarget ? 'once' : 'future');
       changed = true;
     });
-    if (changed) addChangeLog('Einkaufsgeld', `Aufstockung ${formatMonthLabel(monthKey)} auf ${euro(allocation.topUp)} gesetzt.`, monthKey);
+    if (changed && !options.silent) addChangeLog('Einkaufsgeld', `Aufstockung ${formatMonthLabel(monthKey)} nach Einkommen auf ${euro(allocation.topUp)} verteilt.`, monthKey);
     return changed;
   }
 
-  function syncFuelTopUpExpenses(monthKey = currentMonth) {
+  function syncFuelTopUpExpenses(monthKey = currentMonth, options = {}) {
     const allocation = getFuelTopUpAllocation(monthKey);
     if (!allocation.active) return false;
     let changed = false;
@@ -13712,7 +13731,18 @@ function showPersonalEditor(personId, editPost) {
         changed = true;
       }
     });
-    if (changed) addChangeLog('Tankgeld', `Aufstockung ${formatMonthLabel(monthKey)} auf ${euro(allocation.topUp)} gesetzt.`, monthKey);
+    if (changed && !options.silent) addChangeLog('Tankgeld', `Aufstockung ${formatMonthLabel(monthKey)} nach Einkommen auf ${euro(allocation.topUp)} verteilt.`, monthKey);
+    return changed;
+  }
+
+  function syncIncomeBasedSharedTopUps(startMonth = currentMonth, monthCount = 12) {
+    if (!isMonthKey(startMonth)) return false;
+    let changed = false;
+    for (let index = 0; index < Math.max(1, Number(monthCount || 12)); index += 1) {
+      const monthKey = addMonths(startMonth, index);
+      changed = syncFuelTopUpExpenses(monthKey, { silent: true }) || changed;
+      changed = syncGroceryTopUpExpense(monthKey, { silent: true }) || changed;
+    }
     return changed;
   }
 
@@ -13791,7 +13821,7 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Einkaufsgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es aber bewusst überschreiben, zum Beispiel mit 500 € im September. Die Überweisung markierst du beim persönlichen Posten „Einkaufsgeld“ als bezahlt.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es aber bewusst überschreiben. Die Einzahlungen werden jeden Monat nach eurem Einkommen verteilt und bei den verknüpften Posten als bezahlt markiert.'));
 
     const calc = getGroceryTopUpAllocation(currentMonth);
     const stats = getGroceryAverageStats(currentMonth, 12);
@@ -13806,6 +13836,15 @@ function showPersonalEditor(personId, editPost) {
       { label: 'Rest vom Vormonat', value: calc.active ? euro(calc.balance) : 'ab Juli 2026' },
       { label: 'Aufstocken', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'ab Juli 2026'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' }
     ]));
+    const groceryAllocationLabels = getFoodMoneyPosts()
+      .filter((post) => isPostActiveInMonth(post, currentMonth))
+      .map((post) => {
+        const person = (state.persons || []).find((entry) => entry.id === post.personId);
+        return `${person ? person.name : 'Unbekannt'} ${euro(Number(calc.allocations && calc.allocations[post.id] || 0))}`;
+      });
+    if (groceryAllocationLabels.length) {
+      card.appendChild(createUiEl('p', 'small muted', `Aufteilung nach Einkommen: ${groceryAllocationLabels.join(' · ')}`));
+    }
 
     const targetEditor = document.createElement('div');
     targetEditor.className = 'sub-card grocery-target-editor';
@@ -15381,19 +15420,23 @@ function showPersonalEditor(personId, editPost) {
 
     const householdTankInfo = document.createElement('div');
     householdTankInfo.className = 'info-box';
-    householdTankInfo.innerHTML = '<strong>Planung ab Juni 2026:</strong> Bestätigte Tankbons und Kanisterkäufe bestimmen nach und nach die echte Höhe des gemeinsamen Kraftstofftopfs. Weil Vorratskanister keinem Auto eindeutig gehören, werden Smart und Seat anhand der gefahrenen Kilometer aufgeteilt. Bis 12 echte Monate vorliegen, ergänzt die bisherige Prognose die fehlenden Monate.';
+    householdTankInfo.innerHTML = '<strong>Planung ab Juni 2026:</strong> Bestätigte Tankbons und Kanisterkäufe bestimmen nach und nach die echte Höhe des gemeinsamen Kraftstofftopfs. Kilometer, Verbrauch und Preis bestimmen die Prognose; auf euch verteilt wird der Topf automatisch nach dem Einkommen des ausgewählten Monats. Bis 12 echte Monate vorliegen, ergänzt die bisherige Prognose die fehlenden Monate.';
     card.appendChild(householdTankInfo);
 
     const householdTankStats = getTankHouseholdAverageStats(currentMonth, 12);
-    const bennyBudget = calculateTankBudget(getTankCalcData('benny'), 'benny').rounded;
-    const madeleineBudget = calculateTankBudget(getTankCalcData('madeleine'), 'madeleine').rounded;
-    const bennyShare = getTankForecastShare('benny', currentMonth);
-    const madeleineShare = getTankForecastShare('madeleine', currentMonth);
+    const fuelAllocation = getFuelTopUpAllocation(currentMonth);
+    const bennyBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.benny || 0);
+    const madeleineBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.madeleine || 0);
+    const bennyIncome = getIncomeWeightForPerson('benny', currentMonth);
+    const madeleineIncome = getIncomeWeightForPerson('madeleine', currentMonth);
+    const combinedIncome = bennyIncome + madeleineIncome;
+    const bennyShare = combinedIncome > 0 ? bennyIncome / combinedIncome : 0.5;
+    const madeleineShare = combinedIncome > 0 ? madeleineIncome / combinedIncome : 0.5;
     card.appendChild(createSummaryMetrics([
       { label: 'Monatsbudget gesamt', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
       { label: 'Basis', value: householdTankStats.projectedCount > 0 ? `${householdTankStats.realCount} echt + ${householdTankStats.projectedCount} Prognose` : '12 echte Monate' },
-      { label: 'Smart-Anteil', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % der Kilometerbasis` },
-      { label: 'Seat-Anteil', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % der Kilometerbasis` },
+      { label: 'Bennys Einzahlung', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % Einkommensanteil` },
+      { label: 'Madeleines Einzahlung', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % Einkommensanteil` },
       { label: 'API-Key', value: state.tankCalc.apiKey ? 'Gespeichert' : 'Fehlt', kind: state.tankCalc.apiKey ? 'success' : 'warning' }
     ]));
 
@@ -15401,7 +15444,7 @@ function showPersonalEditor(personId, editPost) {
 
     const tankSyncInfo = document.createElement('div');
     tankSyncInfo.className = 'info-box';
-    tankSyncInfo.innerHTML = '<strong>Automatische Verknüpfung:</strong> Tankgeld wird mit den persönlichen Ausgaben synchronisiert. Bezahlte Monatsbeträge bleiben fest; Änderungen laufen dann ab dem Folgemonat.';
+    tankSyncInfo.innerHTML = '<strong>Automatische Verknüpfung:</strong> Der gemeinsame Tanktopf wird nach eurem Einkommen verteilt und mit den jeweiligen Einzahlungen synchronisiert. Bezahlte Monatsbeträge bleiben fest; Änderungen laufen dann ab dem Folgemonat.';
     const syncAllBtn = document.createElement('button');
     syncAllBtn.type = 'button';
     syncAllBtn.className = 'success';
@@ -15533,11 +15576,12 @@ function showPersonalEditor(personId, editPost) {
       sub.appendChild(row2);
 
       const tankBudget = calculateTankBudget(cfg, personKey);
+      const allocatedTankBudget = Number(getFuelTopUpAllocation(currentMonth).allocations?.[personKey] || 0);
       sub.appendChild(createSummaryMetrics([
         { label: 'Kilometer / Monat', value: `${Number(cfg.kmPerMonth || 0).toFixed(0)} km` },
-        { label: 'Berechnungsbasis', value: tankBudget.source || '—', kind: tankBudget.rounded > 0 ? 'success' : 'warning' },
-        { label: 'Preis genutzt', value: tankBudget.priceUsed ? `${tankBudget.priceUsed.toFixed(3)} €/l` : (tankBudget.avgStats && tankBudget.avgStats.count ? 'echter Schnitt' : '—'), kind: tankBudget.rounded > 0 ? 'success' : 'warning' },
-        { label: 'Prognose', value: `${euro(tankBudget.rounded)}`, kind: tankBudget.rounded > 0 ? 'success' : 'warning' }
+        { label: 'Berechnungsbasis', value: 'Gemeinsamer Tanktopf · nach Einkommen verteilt', kind: allocatedTankBudget > 0 ? 'success' : 'warning' },
+        { label: 'Preis genutzt', value: tankBudget.priceUsed ? `${tankBudget.priceUsed.toFixed(3)} €/l` : (tankBudget.avgStats && tankBudget.avgStats.count ? 'echter Schnitt' : '—'), kind: allocatedTankBudget > 0 ? 'success' : 'warning' },
+        { label: 'Deine Einzahlung', value: `${euro(allocatedTankBudget)}`, kind: allocatedTankBudget > 0 ? 'success' : 'warning' }
       ]));
 
       renderTankMonthlyTracking(sub, personKey, labelText);
@@ -20673,6 +20717,7 @@ function createPotsCard() {
         onClick: (close) => {
           clearPersonNetForMonth(person, currentMonth, 'once');
           syncPersonIncomeReceivedAmount(person, currentMonth);
+          syncIncomeBasedSharedTopUps(currentMonth);
           saveState();
           close();
           render();
@@ -20684,6 +20729,7 @@ function createPotsCard() {
         onClick: (close) => {
           clearPersonNetForMonth(person, currentMonth, 'future');
           syncPersonIncomeReceivedAmount(person, currentMonth);
+          syncIncomeBasedSharedTopUps(currentMonth);
           saveState();
           close();
           render();
@@ -20722,6 +20768,7 @@ function createPotsCard() {
 
           addChangeLog('Einkommen', `${person.name}: ${mode === 'once' ? 'tatsächliche Auszahlung für ' + formatMonthLabel(currentMonth) : 'Grundlohn / Planwert ab ' + formatMonthLabel(currentMonth)} auf ${euro(newNet)} gesetzt.`);
           syncPersonIncomeReceivedAmount(person, currentMonth);
+          syncIncomeBasedSharedTopUps(currentMonth);
           saveState();
           close();
           render();
