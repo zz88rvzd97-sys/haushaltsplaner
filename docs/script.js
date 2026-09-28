@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.88
+ * Haushaltsplaner Version 2.89
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.88';
+  const APP_VERSION = '2.89';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -5044,8 +5044,6 @@
   const saveSection = document.getElementById('save');
   const taxRefundSection = document.getElementById('taxrefund');
   const globalMonthBar = document.getElementById('globalMonthBar');
-  const sectionSelect = document.getElementById('sectionSelect');
-  const sideMoreSelect = document.getElementById('sideMoreSelect');
   const quickCaptureButton = document.getElementById('quickCaptureButton');
   const reloadButton = document.getElementById('reloadButton');
   const sectionButtons = Array.from(document.querySelectorAll('[data-section]'));
@@ -5196,6 +5194,15 @@
     } catch (error) {}
   }
   // Navigation: Bereiche wechseln
+  function syncSectionNavigation() {
+    sectionButtons.forEach((btn) => {
+      const active = btn.dataset.section === currentSection;
+      btn.classList.toggle('active', active);
+      if (active) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
+    });
+  }
+
   function switchSection(section) {
     // Monatsstart ist vollständig in der Übersicht enthalten; Töpfe sind mit
     // den Rücklagen zusammengeführt. Alte interne Links bleiben dadurch gültig.
@@ -5208,25 +5215,11 @@
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
     });
-    if (sectionSelect && sectionSelect.value !== currentSection) sectionSelect.value = currentSection;
-    sectionButtons.forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.section === currentSection);
-    });
-    if (sideMoreSelect && Array.from(sideMoreSelect.options).some((option) => option.value === currentSection)) {
-      sideMoreSelect.value = currentSection;
-    } else if (sideMoreSelect) sideMoreSelect.value = '';
+    syncSectionNavigation();
     render();
     requestAnimationFrame(() => {
       const main = document.querySelector('.app-content main');
       if (main) main.scrollIntoView({ block: 'start', behavior: 'auto' });
-    });
-  }
-  if (sectionSelect) {
-    sectionSelect.addEventListener('change', (e) => switchSection(e.target.value));
-  }
-  if (sideMoreSelect) {
-    sideMoreSelect.addEventListener('change', (e) => {
-      if (e.target.value) switchSection(e.target.value);
     });
   }
   sectionButtons.forEach((btn) => {
@@ -8811,15 +8804,7 @@
     if (currentSection === 'monthstart') currentSection = 'overview';
     if (currentSection === 'pots') currentSection = 'savings';
 
-    if (sectionSelect && sectionSelect.value !== currentSection) {
-      sectionSelect.value = currentSection;
-    }
-    sectionButtons.forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.section === currentSection);
-    });
-    if (sideMoreSelect && Array.from(sideMoreSelect.options).some((option) => option.value === currentSection)) {
-      sideMoreSelect.value = currentSection;
-    } else if (sideMoreSelect) sideMoreSelect.value = '';
+    syncSectionNavigation();
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
       if (sec.id !== currentSection) sec.setAttribute('aria-hidden', 'true');

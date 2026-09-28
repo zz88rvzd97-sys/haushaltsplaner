@@ -1646,7 +1646,6 @@ header::after {
   .brand-logo { width: 38px; height: 38px; }
   .brand-copy h1 { font-size: 1.1rem; }
   .mobile-nav { display: flex; margin: 0.75rem 0 0; }
-  .mobile-nav select { width: 100%; }
   .side-nav { display: none; }
   .sidebar-bottom { margin-top: 0.85rem; grid-template-columns: 1fr; }
   .side-status-card { display: none; }
@@ -3246,13 +3245,6 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .app-sidebar > .side-nav,
   .side-status-card,
   .side-action { display: none !important; }
-  .mobile-nav select,
-  #sectionSelect {
-    color: #fff !important;
-    background: rgba(255,255,255,0.10) !important;
-    border-color: rgba(255,255,255,0.14) !important;
-    box-shadow: none !important;
-  }
   main { padding: 0.9rem !important; }
   .dashboard-header { display: grid !important; gap: 0.75rem !important; }
   .dashboard-tools { justify-content: stretch !important; }
@@ -3749,10 +3741,6 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
 
 @media (max-width: 720px) {
   .app-sidebar .global-month-bar.sidebar-month-widget { margin-top: .55rem !important; }
-  .mobile-nav select {
-    border-radius: 14px !important;
-    min-height: 42px !important;
-  }
 }
 
 
@@ -5186,35 +5174,6 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   font-weight: 900;
 }
 
-.side-nav-more-select-wrap {
-  border: 1px solid rgba(255, 255, 255, .11);
-  border-radius: 15px;
-  background: rgba(255, 255, 255, .045);
-  display: grid;
-  gap: .35rem;
-  padding: .68rem .72rem .72rem;
-}
-
-.side-nav-more-select-wrap label {
-  margin: 0;
-  color: rgba(255, 255, 255, .72);
-  font-size: .78rem;
-  font-weight: 850;
-}
-
-.side-nav-more-select-wrap select {
-  width: 100%;
-  min-height: 40px;
-  color: #fff !important;
-  border: 1px solid rgba(255, 255, 255, .14) !important;
-  border-radius: 11px !important;
-  background: rgba(255, 255, 255, .09) !important;
-  box-shadow: none !important;
-}
-
-.side-nav-more-select-wrap option {
-  color: #101828;
-}
 
 .batch-payment-card {
   margin: 1rem 0;
@@ -5649,12 +5608,165 @@ header::after,
   box-shadow: none !important;
 }
 
-.side-nav-more-select-wrap,
-.side-nav-more-select-wrap select,
 .side-action,
 .side-status-card {
   border-radius: 5px !important;
   box-shadow: none !important;
+}
+
+/* Version 2.89 – direkte, gruppierte Bereichsnavigation */
+.simplified-side-nav {
+  gap: .8rem !important;
+}
+
+.side-nav-more-group {
+  padding-top: .72rem;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+}
+
+.simplified-side-nav .side-nav-heading {
+  color: rgba(255, 255, 255, .58) !important;
+  margin-bottom: .2rem !important;
+  padding: .1rem .72rem .24rem !important;
+  font-size: .68rem !important;
+  letter-spacing: .09em !important;
+}
+
+.simplified-side-nav .side-nav-link,
+.mobile-nav-link {
+  min-height: 40px !important;
+  padding: .55rem .68rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 11px !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, .84) !important;
+  box-shadow: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: .62rem !important;
+  text-align: left !important;
+  font-weight: 700 !important;
+  transition: background-color .14s ease, border-color .14s ease, color .14s ease !important;
+}
+
+.simplified-side-nav .side-nav-link:hover,
+.mobile-nav-link:hover {
+  background: rgba(255, 255, 255, .08) !important;
+  color: #fff !important;
+}
+
+.simplified-side-nav .side-nav-link.active,
+.mobile-nav-link.active {
+  position: relative !important;
+  border-color: rgba(255, 255, 255, .12) !important;
+  background: rgba(255, 255, 255, .12) !important;
+  color: #fff !important;
+}
+
+.simplified-side-nav .side-nav-link.active::before,
+.mobile-nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 8px 8px 0;
+  background: #b9d7c3;
+}
+
+.simplified-side-nav .side-nav-link .nav-icon,
+.mobile-nav-link .nav-icon {
+  width: 25px !important;
+  min-width: 25px !important;
+  height: 25px !important;
+  border-radius: 8px;
+  display: inline-grid !important;
+  place-items: center;
+  background: rgba(255, 255, 255, .08);
+  color: rgba(255, 255, 255, .82) !important;
+  font-size: .95rem !important;
+  font-weight: 800 !important;
+}
+
+.simplified-side-nav .side-nav-link b,
+.mobile-nav-link b {
+  font-size: .86rem !important;
+  line-height: 1.2 !important;
+  font-weight: 700 !important;
+}
+
+.mobile-nav {
+  display: none !important;
+}
+
+.mobile-nav-grid {
+  display: grid;
+  gap: .7rem;
+}
+
+.mobile-nav-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .35rem;
+}
+
+.mobile-nav-heading {
+  grid-column: 1 / -1;
+  padding: .1rem .15rem .15rem;
+  color: rgba(255, 255, 255, .58);
+  font-size: .67rem;
+  font-weight: 850;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.mobile-nav-link {
+  width: 100% !important;
+  min-width: 0;
+  min-height: 40px !important;
+  padding: .48rem .5rem !important;
+  gap: .42rem !important;
+}
+
+.mobile-nav-link .nav-icon {
+  width: 21px !important;
+  min-width: 21px !important;
+  height: 21px !important;
+  border-radius: 6px;
+  font-size: .8rem !important;
+}
+
+.mobile-nav-link b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .76rem !important;
+}
+
+@media (max-width: 850px) {
+  .app-sidebar > .mobile-nav {
+    display: block !important;
+    margin: .75rem 0 .25rem !important;
+    padding: .65rem !important;
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .045);
+  }
+
+  .app-sidebar > .side-nav {
+    display: none !important;
+  }
+}
+
+@media (min-width: 851px) {
+  .app-sidebar > .mobile-nav {
+    display: none !important;
+  }
+
+  .app-sidebar > .side-nav {
+    display: flex !important;
+  }
 }
 
 .dashboard-page,
@@ -5788,8 +5900,6 @@ header::after,
     box-shadow: none !important;
   }
 
-  .mobile-nav select,
-  #sectionSelect,
   .app-sidebar .global-month-bar.sidebar-month-widget {
     border-radius: 6px !important;
     box-shadow: none !important;

@@ -1,10 +1,12 @@
 <!--
-  Haushaltsplaner Version 2.88
-  Monatsbeiträge und offene Abbuchungen werden getrennt erklärt.
-  Quartals- und Jahreskosten bekommen eine kompakte Planübersicht.
-  Tankgeld und Einkaufsgeld weisen die persönlichen Lohnkonten aus.
+  Haushaltsplaner Version 2.89
+  Alle Bereiche sind über klar gruppierte Direktlinks erreichbar.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.89: Die Bereichsnavigation zeigt alle Ziele als
+  direkte, gruppierte Schaltflächen statt als native Auswahllisten.
+  Auf Desktop und Mobilgeräten sind die Bereiche schnell erkennbar und direkt
+  anwählbar.
   Aktualisierung Version&nbsp;2.88: Monatsbeiträge sind klar von den im Monat
   offenen Abbuchungen getrennt; Rücklagenzuordnungen zählen nicht als Abbuchung.
   Die Übersicht zeigt nicht monatliche Kosten kompakt mit Monatsanteil und
@@ -136,11 +138,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.88">
-    <link rel="manifest" href="manifest.json?v=2.88">
+    <link rel="stylesheet" href="style.css?v=2.89">
+    <link rel="manifest" href="manifest.json?v=2.89">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.88">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.88">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.89">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.89">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -150,7 +152,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.88" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.89" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -158,26 +160,32 @@
         </div>
         <div id="globalMonthBar" class="global-month-bar sidebar-month-widget" role="group" aria-label="Monatsauswahl"></div>
         <button id="quickCaptureButton" class="quick-capture-action" type="button"><span aria-hidden="true">＋</span> Schnell erfassen</button>
-        <div class="nav-bar mobile-nav">
-          <select id="sectionSelect" aria-label="Bereich auswählen">
-            <option value="overview" selected>⌂ Übersicht</option>
-            <option value="openpayments">✓ Offene Zahlungen</option>
-            <option value="income">↑ Einkommen</option>
-            <option value="common">⇄ Gemeinsame Kosten</option>
-            <option value="personal">♙ Persönliche Ausgaben</option>
-            <option value="tankcalc">⌁ Tankgeld</option>
-            <option value="groceries">▤ Einkaufsgeld</option>
-            <option value="contracts">⌑ Verträge</option>
-            <option value="debts">€ Schulden</option>
-            <option value="settings">⚙ Regeln&nbsp;&amp;&nbsp;Personen</option>
-            <option value="savings">◈ Rücklagen&nbsp;&amp;&nbsp;Töpfe</option>
-            <option value="monthclose">✓ Monatsabschluss</option>
-            <option value="datacheck">! Datencheck</option>
-            <option value="forecast">↗ Vorschau &amp; Simulation</option>
-            <option value="save">↓ Sichern</option>
-            <option value="buffer">＋ Sonstige Ausgaben</option>
-          </select>
-        </div>
+        <nav class="mobile-nav" aria-label="Bereiche">
+          <div class="mobile-nav-grid">
+            <div class="mobile-nav-group">
+              <div class="mobile-nav-heading">Täglich</div>
+              <button type="button" class="mobile-nav-link active" data-section="overview"><span class="nav-icon" aria-hidden="true">⌂</span><b>Übersicht</b></button>
+              <button type="button" class="mobile-nav-link" data-section="openpayments"><span class="nav-icon" aria-hidden="true">✓</span><b>Offene Zahlungen</b></button>
+              <button type="button" class="mobile-nav-link" data-section="common"><span class="nav-icon" aria-hidden="true">⇄</span><b>Gemeinsame Kosten</b></button>
+              <button type="button" class="mobile-nav-link" data-section="personal"><span class="nav-icon" aria-hidden="true">♙</span><b>Persönliche Ausgaben</b></button>
+              <button type="button" class="mobile-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true">€</span><b>Schulden</b></button>
+              <button type="button" class="mobile-nav-link" data-section="save"><span class="nav-icon" aria-hidden="true">↓</span><b>Sichern</b></button>
+            </div>
+            <div class="mobile-nav-group">
+              <div class="mobile-nav-heading">Weitere Bereiche</div>
+              <button type="button" class="mobile-nav-link" data-section="income"><span class="nav-icon" aria-hidden="true">↑</span><b>Einkommen</b></button>
+              <button type="button" class="mobile-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
+              <button type="button" class="mobile-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true">▤</span><b>Einkaufsgeld</b></button>
+              <button type="button" class="mobile-nav-link" data-section="contracts"><span class="nav-icon" aria-hidden="true">⌑</span><b>Verträge</b></button>
+              <button type="button" class="mobile-nav-link" data-section="savings"><span class="nav-icon" aria-hidden="true">◈</span><b>Rücklagen &amp; Töpfe</b></button>
+              <button type="button" class="mobile-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true">＋</span><b>Sonstige Ausgaben</b></button>
+              <button type="button" class="mobile-nav-link" data-section="monthclose"><span class="nav-icon" aria-hidden="true">✓</span><b>Monatsabschluss</b></button>
+              <button type="button" class="mobile-nav-link" data-section="datacheck"><span class="nav-icon" aria-hidden="true">!</span><b>Datencheck</b></button>
+              <button type="button" class="mobile-nav-link" data-section="forecast"><span class="nav-icon" aria-hidden="true">↗</span><b>Vorschau &amp; Simulation</b></button>
+              <button type="button" class="mobile-nav-link" data-section="settings"><span class="nav-icon" aria-hidden="true">⚙</span><b>Regeln &amp; Personen</b></button>
+            </div>
+          </div>
+        </nav>
         <nav class="side-nav simplified-side-nav" aria-label="Hauptnavigation">
           <div class="side-nav-group">
             <div class="side-nav-heading">Täglich</div>
@@ -188,27 +196,24 @@
             <button type="button" class="side-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true">€</span><b>Schulden</b></button>
             <button type="button" class="side-nav-link" data-section="save"><span class="nav-icon" aria-hidden="true">↓</span><b>Sichern</b></button>
           </div>
-          <div class="side-nav-more-select-wrap">
-            <label for="sideMoreSelect">Weitere Bereiche</label>
-            <select id="sideMoreSelect" aria-label="Weiteren Bereich auswählen">
-              <option value="">Auswählen …</option>
-              <option value="income">↑ Einkommen</option>
-              <option value="tankcalc">⌁ Tankgeld</option>
-              <option value="groceries">▤ Einkaufsgeld</option>
-              <option value="contracts">⌑ Verträge</option>
-              <option value="savings">◈ Rücklagen &amp; Töpfe</option>
-              <option value="buffer">＋ Sonstige Ausgaben</option>
-              <option value="monthclose">✓ Monatsabschluss</option>
-              <option value="datacheck">! Datencheck</option>
-              <option value="forecast">↗ Vorschau &amp; Simulation</option>
-              <option value="settings">⚙ Regeln &amp; Personen</option>
-            </select>
+          <div class="side-nav-group side-nav-more-group">
+            <div class="side-nav-heading">Weitere Bereiche</div>
+            <button type="button" class="side-nav-link" data-section="income"><span class="nav-icon" aria-hidden="true">↑</span><b>Einkommen</b></button>
+            <button type="button" class="side-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
+            <button type="button" class="side-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true">▤</span><b>Einkaufsgeld</b></button>
+            <button type="button" class="side-nav-link" data-section="contracts"><span class="nav-icon" aria-hidden="true">⌑</span><b>Verträge</b></button>
+            <button type="button" class="side-nav-link" data-section="savings"><span class="nav-icon" aria-hidden="true">◈</span><b>Rücklagen &amp; Töpfe</b></button>
+            <button type="button" class="side-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true">＋</span><b>Sonstige Ausgaben</b></button>
+            <button type="button" class="side-nav-link" data-section="monthclose"><span class="nav-icon" aria-hidden="true">✓</span><b>Monatsabschluss</b></button>
+            <button type="button" class="side-nav-link" data-section="datacheck"><span class="nav-icon" aria-hidden="true">!</span><b>Datencheck</b></button>
+            <button type="button" class="side-nav-link" data-section="forecast"><span class="nav-icon" aria-hidden="true">↗</span><b>Vorschau &amp; Simulation</b></button>
+            <button type="button" class="side-nav-link" data-section="settings"><span class="nav-icon" aria-hidden="true">⚙</span><b>Regeln &amp; Personen</b></button>
           </div>
         </nav>
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.88 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.89 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -237,9 +242,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.88</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.89</footer>
       </div>
     </div>
-    <script src="script.js?v=2.88"></script>
+    <script src="script.js?v=2.89"></script>
   </body>
 </html>
