@@ -1,17 +1,16 @@
 <!--
-  Haushaltsplaner Version 2.87
-  Diese Version korrigiert die Datenmigration aus älteren Versionen:
-  die Beta 0.33 speicherte übernommene Daten versehentlich unter
-  einem falschen Schlüssel, sodass vorhandene Töpfe nicht übernommen
-  wurden. Beim erstmaligen Laden einer Beta 0.34 Installation werden
-  vorhandene Daten aus früheren States korrekt übernommen und unter
-  dem neuen Schlüssel gespeichert.
-
-  Außerdem zeigt das Menü „Töpfe“ nun auch ohne vorhandene Töpfe eine
-  sinnvolle Übersicht über den Spar‑Plan. Der Bereich „Sichern &
-  Exportieren“ ist wieder vollständig nutzbar.
+  Haushaltsplaner Version 2.88
+  Monatsbeiträge und offene Abbuchungen werden getrennt erklärt.
+  Quartals- und Jahreskosten bekommen eine kompakte Planübersicht.
+  Tankgeld und Einkaufsgeld weisen die persönlichen Lohnkonten aus.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.88: Monatsbeiträge sind klar von den im Monat
+  offenen Abbuchungen getrennt; Rücklagenzuordnungen zählen nicht als Abbuchung.
+  Die Übersicht zeigt nicht monatliche Kosten kompakt mit Monatsanteil und
+  Planzyklus. Tank- und Einkaufsgeld nennen das
+  persönliche Lohnkonto als Zahlungsquelle. Der beendete Rauchzeug-Bereich ist
+  aus der Navigation entfernt; frühere Einträge bleiben gespeichert.
   Aktualisierung Version&nbsp;2.87: Das zusätzliche Schuldenbudget wird jetzt vor
   jeder Rücklage oder Teil-Sonderzahlung vollständig darauf geprüft, ob sich
   damit eine offene Schuld komplett erledigen lässt. Nach jeder Ablösung wird
@@ -137,11 +136,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.87">
-    <link rel="manifest" href="manifest.json?v=2.87">
+    <link rel="stylesheet" href="style.css?v=2.88">
+    <link rel="manifest" href="manifest.json?v=2.88">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.87">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.87">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.88">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.88">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -151,7 +150,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.87" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.88" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -168,7 +167,6 @@
             <option value="personal">♙ Persönliche Ausgaben</option>
             <option value="tankcalc">⌁ Tankgeld</option>
             <option value="groceries">▤ Einkaufsgeld</option>
-            <option value="smoking">◌ Rauchzeug</option>
             <option value="contracts">⌑ Verträge</option>
             <option value="debts">€ Schulden</option>
             <option value="settings">⚙ Regeln&nbsp;&amp;&nbsp;Personen</option>
@@ -197,7 +195,6 @@
               <option value="income">↑ Einkommen</option>
               <option value="tankcalc">⌁ Tankgeld</option>
               <option value="groceries">▤ Einkaufsgeld</option>
-              <option value="smoking">◌ Rauchzeug</option>
               <option value="contracts">⌑ Verträge</option>
               <option value="savings">◈ Rücklagen &amp; Töpfe</option>
               <option value="buffer">＋ Sonstige Ausgaben</option>
@@ -211,7 +208,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.87 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.88 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -240,9 +237,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.87</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.88</footer>
       </div>
     </div>
-    <script src="script.js?v=2.87"></script>
+    <script src="script.js?v=2.88"></script>
   </body>
 </html>

@@ -4492,6 +4492,15 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   line-height: 1.1;
 }
 
+.common-interval-details {
+  margin: 0 0 1rem;
+}
+
+.common-interval-details .interval-plan-hint {
+  margin: 0;
+  padding: 0 14px 10px;
+}
+
 .common-contribution-status button {
   min-width: 170px;
 }
