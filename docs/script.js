@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.87
+ * Haushaltsplaner Version 2.88
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.87';
+  const APP_VERSION = '2.88';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -10687,7 +10687,7 @@
     kpiGrid.appendChild(createKpi({
       label: 'Diesen Monat gemeinsam einzahlen',
       value: euro(commonAccountTarget.monthlyTarget),
-      hint: `Jetzt noch für offene Abbuchungen nötig: ${euro(commonAccountTarget.openTotal)}`,
+      hint: `Offene Abbuchungen diesen Monat: ${euro(commonAccountTarget.openTotal)}`,
       icon: '⇄',
       accent: 'blue'
     }));
@@ -10860,9 +10860,9 @@
     };
 
     addKpi({
-      label: 'Jetzt für gemeinsame Kosten nötig',
+      label: 'Offene gemeinsame Abbuchungen',
       value: euro(commonAccountTarget.openTotal),
-      hint: `Monatsbedarf ${euro(commonAccountTarget.dueTotal)} · bereits bezahlt ${euro(commonAccountTarget.paidTotal)}`,
+      hint: `Diesen Monat fällig ${euro(commonAccountTarget.dueTotal)} · bereits bezahlt ${euro(commonAccountTarget.paidTotal)}`,
       icon: 'G',
       kind: commonAccountTarget.openTotal > 0 ? 'blue' : 'mint'
     });
@@ -12315,7 +12315,7 @@
       if (isPostActiveInMonth(cost, monthKey)) {
         monthlyRaw += Number(getCommonMonthlyShare(cost, monthKey) || 0);
       }
-      if (isDue(cost, monthKey)) {
+      if (isDue(cost, monthKey) && !getLinkedSavingsGoal(cost)) {
         const amount = Number(getEffectiveAmountForMonth(cost, monthKey) || 0);
         dueTotal += amount;
         if (isPostPaidForMonth(cost, monthKey)) paidTotal += amount;
@@ -12336,6 +12336,30 @@
       monthlyTarget,
       shareMapping
     };
+  }
+
+  function getCommonIntervalPaymentPlan(monthKey = currentMonth) {
+    return (state.commonCosts || []).reduce((rows, item) => {
+      ensurePostConfig(item);
+      const interval = Number(item.interval || 1);
+      if (interval <= 1 || item.oneTime || getLinkedSavingsGoal(item) || !isPostActiveInMonth(item, monthKey)) return rows;
+      let nextDue = getNextDueMonthForIntervalPost(item, monthKey);
+      if (!nextDue) return rows;
+      const dueNow = nextDue === monthKey;
+      const paidNow = dueNow && isPostPaidForMonth(item, monthKey);
+      if (paidNow) nextDue = addMonths(nextDue, interval);
+      if (item.endMonth && isMonthKey(item.endMonth) && monthDiff(nextDue, item.endMonth) < 0) return rows;
+      const monthsUntilDue = monthDiff(monthKey, nextDue);
+      if (monthsUntilDue < 0 || monthsUntilDue > interval) return rows;
+      rows.push({
+        item,
+        interval,
+        nextDue,
+        monthsPlanned: Math.max(0, Math.min(interval, interval - monthsUntilDue)),
+        monthlyPart: getCommonMonthlyShare(item, monthKey)
+      });
+      return rows;
+    }, []);
   }
 
   // Rendert den Bereich „Gemeinsame Kosten“
@@ -12361,6 +12385,8 @@ function renderCommon() {
 
     const target = getCommonAccountTargetSummary(currentMonth);
     const contributionDetails = computeCommonAccountDetails(currentMonth);
+    const intervalPlan = getCommonIntervalPaymentPlan(currentMonth);
+    const intervalMonthlyTotal = roundMoney(intervalPlan.reduce((sum, row) => sum + row.monthlyPart, 0));
 
     const targetCard = document.createElement('section');
     targetCard.className = 'common-account-target-card';
@@ -12370,28 +12396,55 @@ function renderCommon() {
     targetCard.appendChild(createUiEl('p', 'common-account-target-copy', 'Diesen Betrag zahlt ihr im ausgewählten Monat auf das Gemeinschaftskonto. Monatsanteile für spätere jährliche oder vierteljährliche Zahlungen sind bereits enthalten.'));
     const currentNeed = document.createElement('div');
     currentNeed.className = `common-current-need ${target.openTotal > 0 ? 'is-open' : 'is-done'}`;
-    currentNeed.appendChild(createUiEl('div', 'common-current-need-label', 'Jetzt noch auf dem Konto benötigt'));
+    currentNeed.appendChild(createUiEl('div', 'common-current-need-label', 'Offene Abbuchungen diesen Monat'));
     currentNeed.appendChild(createUiEl('strong', 'common-current-need-value', euro(target.openTotal)));
     currentNeed.appendChild(createUiEl(
       'div',
       'small muted',
       target.openTotal > 0
-        ? 'Summe der noch offenen gemeinsamen Abbuchungen. Der Wert sinkt automatisch bei „Bezahlt“.'
-        : 'Alle in diesem Monat fälligen gemeinsamen Abbuchungen sind als bezahlt markiert.'
+        ? 'Summe der fälligen gemeinsamen Kosten, die diesen Monat noch nicht als bezahlt markiert sind. Das ist kein Fehlbetrag; Monatsanteile für Quartals- und Jahreskosten stecken bereits im Beitrag oben.'
+        : (target.dueTotal > 0 ? 'Alle diesen Monat fälligen gemeinsamen Abbuchungen sind als bezahlt markiert.' : 'Diesen Monat ist keine gemeinsame Abbuchung fällig.')
     ));
     targetCard.appendChild(currentNeed);
+    if (intervalPlan.length) {
+      const intervalDetails = document.createElement('details');
+      intervalDetails.className = 'compact-details common-interval-details';
+      const intervalSummary = document.createElement('summary');
+      intervalSummary.textContent = `Nicht monatliche Kosten · ${intervalPlan.length} Posten · ${euro(intervalMonthlyTotal)} monatlich eingeplant`;
+      intervalDetails.appendChild(intervalSummary);
+      intervalDetails.appendChild(createUiEl(
+        'p',
+        'small muted interval-plan-hint',
+        'Die Monatsanteile sind im Beitrag enthalten. Der Planzyklus zeigt nur den zeitlichen Stand bis zur nächsten Fälligkeit; er bestätigt keine tatsächliche Überweisung.'
+      ));
+      const intervalTable = document.createElement('table');
+      intervalTable.className = 'list-table compact-table';
+      intervalTable.innerHTML = '<thead><tr><th>Posten</th><th>Monatsanteil</th><th>Nächste Fälligkeit</th><th>Planzyklus</th></tr></thead>';
+      const intervalBody = document.createElement('tbody');
+      intervalPlan.forEach((rowData) => {
+        const row = document.createElement('tr');
+        row.appendChild(createUiEl('td', '', rowData.item.name || 'Kostenposten'));
+        row.appendChild(createUiEl('td', '', euro(rowData.monthlyPart)));
+        row.appendChild(createUiEl('td', '', formatMonthLabel(rowData.nextDue)));
+        row.appendChild(createUiEl('td', '', `${rowData.monthsPlanned} von ${rowData.interval} Monaten`));
+        intervalBody.appendChild(row);
+      });
+      intervalTable.appendChild(intervalBody);
+      intervalDetails.appendChild(intervalTable);
+      targetCard.appendChild(intervalDetails);
+    }
     targetCard.appendChild(createSummaryMetrics([
       {
-        label: 'Bereits eingezahlt',
+        label: 'Bereits überwiesen',
         value: euro(contributionDetails.contributionsPaid),
         kind: contributionDetails.contributionsPaid > 0 ? 'success' : '',
         hint: 'Von euren Monatsanteilen'
       },
       {
-        label: 'Noch einzuzahlen',
+        label: 'Noch zu überweisen',
         value: euro(contributionDetails.contributionsOpen),
         kind: contributionDetails.contributionsOpen > 0 ? 'warning' : 'success',
-        hint: contributionDetails.contributionsOpen > 0 ? 'Noch nicht als eingezahlt markiert' : 'Alle Monatsanteile sind erledigt'
+        hint: contributionDetails.contributionsOpen > 0 ? 'Noch nicht als überwiesen markiert' : 'Alle Monatsanteile sind erledigt'
       }
     ]));
     card.appendChild(targetCard);
@@ -12408,7 +12461,7 @@ function renderCommon() {
     const distTable = document.createElement('table');
     distTable.className = 'list-table common-contribution-table';
     const distHead = document.createElement('thead');
-    distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Eingezahlt?</th></tr>';
+    distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Überwiesen?</th></tr>';
     distTable.appendChild(distHead);
     const distBody = document.createElement('tbody');
     let automaticCommonRaw = 0;
@@ -12495,7 +12548,7 @@ function renderCommon() {
         manualAmount !== null ? `Manuell · automatisch wären es ${euro(automaticAmount)}` : 'Automatisch berechnet'
       ));
       if (rowData.paid && Math.abs(Number(rowData.plannedAmount || 0) - Number(rowData.paidAmount || 0)) > 0.005) {
-        amountCell.appendChild(createUiEl('div', 'small muted', `${euro(rowData.paidAmount)} bereits eingezahlt`));
+        amountCell.appendChild(createUiEl('div', 'small muted', `${euro(rowData.paidAmount)} bereits überwiesen`));
       }
       const statusCell = document.createElement('td');
       statusCell.className = 'common-contribution-status';
@@ -12503,10 +12556,10 @@ function renderCommon() {
       const statusButton = document.createElement('button');
       statusButton.type = 'button';
       statusButton.className = complete ? 'success' : 'primary';
-      statusButton.textContent = complete ? 'Eingezahlt ✓' : (rowData.paid ? 'Rest als eingezahlt' : 'Als eingezahlt markieren');
+      statusButton.textContent = complete ? 'Überwiesen ✓' : (rowData.paid ? 'Rest als überwiesen' : 'Als überwiesen markieren');
       statusButton.title = complete
         ? 'Klicken, um die Markierung für diesen Monat zurückzusetzen.'
-        : 'Markiert den Monatsbeitrag als eingezahlt. Es wird kein Kontostand verändert.';
+        : 'Markiert euren Monatsbeitrag als überwiesen.';
       statusButton.addEventListener('click', () => {
         setCommonAccountContributionPaid(currentMonth, rowData.person.id, !complete, { amount: rowData.plannedAmount });
         saveState();
@@ -12521,10 +12574,6 @@ function renderCommon() {
     distTable.appendChild(distBody);
     distBox.appendChild(distTable);
     card.appendChild(distBox);
-    const paymentHint = document.createElement('p');
-    paymentHint.className = 'small muted';
-    paymentHint.textContent = 'Ein echter Kontostand wird nicht abgefragt. „Jetzt noch benötigt“ wird ausschließlich aus den offenen gemeinsamen Abbuchungen berechnet und passt sich bei „Bezahlt“ automatisch an.';
-    card.appendChild(paymentHint);
     card.appendChild(makeSearchFilterBar(commonSearch, commonFilter, (v) => { commonSearch = v; }, (v) => { commonFilter = v; }, [['all','Alle'],['due','Fällig'],['open','Offen'],['paid','Bezahlt'],['linked','Mit Schuld verknüpft'],['reserve','Mit Rücklage']]));
 
     if (state.commonCosts.length === 0) {
@@ -12546,7 +12595,7 @@ function renderCommon() {
         <th>Rücklage</th>
         <th>Verknüpfte Schuld</th>
         <th class="account-only">Konto</th>
-        <th>Bezahlt?</th>
+        <th>Status</th>
         <th>Aktion</th>
       </tr>`;
       table.appendChild(thead);
@@ -12584,7 +12633,7 @@ function renderCommon() {
         if (dueNow) {
           if (!paidNow) {
             const btn = document.createElement('button');
-            btn.textContent = linkedSavingsGoalName ? 'Zurücklegen' : 'Bezahlt markieren';
+            btn.textContent = linkedSavingsGoalName ? 'Zurücklegen' : 'Als bezahlt markieren';
             btn.className = 'success';
             btn.addEventListener('click', () => {
               setPostPaidForMonth(c, currentMonth, true);
@@ -12634,7 +12683,7 @@ function renderCommon() {
         });
         const bookedNow = isPostBookedForMonth(c, currentMonth);
         actionCell.appendChild(createActionMenu([
-          { label: linkedSavingsGoalName ? 'Zurücklegen' : 'Bezahlt markieren', className: 'success', disabled: !dueNow || paidNow, onClick: () => { setPostPaidForMonth(c, currentMonth, true); syncDebtPaymentFromPost(c, currentMonth); saveState(); render(); } },
+          { label: linkedSavingsGoalName ? 'Zurücklegen' : 'Als bezahlt markieren', className: 'success', disabled: !dueNow || paidNow, onClick: () => { setPostPaidForMonth(c, currentMonth, true); syncDebtPaymentFromPost(c, currentMonth); saveState(); render(); } },
           ACCOUNTS_ENABLED && !balanceDebitedNow && paidNow && deductsBalance ? { label: c.bookingType === 'transfer' ? 'Umbuchung nachholen' : 'Kontoabzug nachholen', className: 'success', onClick: () => { applyPostAccountBalanceDebit(c, currentMonth, true); saveState(); render(); } } : null,
           ACCOUNTS_ENABLED ? { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : (deductsBalance ? 'Bezahlt + Nachweis buchen' : 'Bezahlt + Umbuchung buchen'), className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(c, currentMonth); syncDebtPaymentFromPost(c, currentMonth); saveState(); render(); } } : null,
           ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(c, currentMonth); saveState(); render(); } } : null,
@@ -13870,7 +13919,7 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Einkaufsgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es aber bewusst überschreiben. Die Einzahlungen werden jeden Monat nach dem verfügbaren Einkommen nach Lohnabzug verteilt und bei den verknüpften Posten als bezahlt markiert.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es überschreiben. Die persönlichen Anteile werden nach verfügbarem Einkommen verteilt und jeweils vom eigenen Lohnkonto bezahlt.'));
 
     const calc = getGroceryTopUpAllocation(currentMonth);
     const stats = getGroceryAverageStats(currentMonth, 12);
@@ -13892,7 +13941,7 @@ function showPersonalEditor(personId, editPost) {
         return `${person ? person.name : 'Unbekannt'} ${euro(Number(calc.allocations && calc.allocations[post.id] || 0))}`;
       });
     if (groceryAllocationLabels.length) {
-      card.appendChild(createUiEl('p', 'small muted', `Aufteilung nach Lohnabzug: ${groceryAllocationLabels.join(' · ')}`));
+      card.appendChild(createUiEl('p', 'small muted', `Anteile vom jeweiligen Lohnkonto: ${groceryAllocationLabels.join(' · ')}`));
     }
 
     const targetEditor = document.createElement('div');
@@ -15249,13 +15298,13 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Tankgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Der Rest aus dem Vormonat und die bezahlten Tankgeld-Posten bilden den Kraftstofftopf. Gespeicherte Tankbons werden sofort abgezogen.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Rest aus dem Vormonat und die bezahlten Tankgeld-Posten bilden den Kraftstofftopf. Eure Anteile werden nach verfügbarem Einkommen aufgeteilt und jeweils vom eigenen Lohnkonto bezahlt. Gespeicherte Tankbons werden sofort abgezogen.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
     const live = getFuelPoolLiveStatus(currentMonth);
     card.appendChild(createSummaryMetrics([
       { label: 'Kraftstoff-Ziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
-      { label: 'Aus Gehaltskonten eingezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
+      { label: 'Vom Lohnkonto bezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
       { label: 'Tankbons im Monat', value: calc.active ? euro(live.spent) : 'ab Juli 2026' },
       { label: 'Aktuell im Tanktopf', value: calc.active ? euro(live.currentBalance) : 'ab Juli 2026', kind: live.shortage > 0 ? 'danger' : 'success' },
       { label: 'Noch einzuzahlen', value: calc.active ? euro(live.pendingTopUp) : 'ab Juli 2026', kind: live.pendingTopUp > 0 ? 'warning' : 'success' }
@@ -15316,7 +15365,7 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(title);
 
     const note = document.createElement('p');
-    note.textContent = 'Der gemeinsame Tanktopf ist mit euren Einzahlungsposten unter „Persönliche Ausgaben“ verknüpft. Die Höhe wird automatisch nach dem verfügbaren Einkommen nach Lohnabzug verteilt. Ist der aktuelle Monat bereits bezahlt, bleibt dieser Betrag fest und die Änderung gilt erst ab dem Folgemonat.';
+    note.textContent = 'Der gemeinsame Tanktopf ist mit euren persönlichen Tankgeld-Posten verknüpft. Jede Person bezahlt ihren nach dem verfügbaren Einkommen (nach direktem Lohnabzug) berechneten Anteil vom eigenen Lohnkonto. Ist der aktuelle Monat bereits bezahlt, bleibt dieser Betrag fest; Änderungen gelten ab dem Folgemonat.';
     card.appendChild(note);
 
     const settingsRow = document.createElement('div');
@@ -15484,8 +15533,8 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(createSummaryMetrics([
       { label: 'Monatsbudget gesamt', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
       { label: 'Basis', value: householdTankStats.projectedCount > 0 ? `${householdTankStats.realCount} echt + ${householdTankStats.projectedCount} Prognose` : '12 echte Monate' },
-      { label: 'Bennys Einzahlung', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % nach Lohnabzug` },
-      { label: 'Madeleines Einzahlung', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % nach Lohnabzug` },
+      { label: 'Bennys Anteil vom Lohnkonto', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % nach Lohnabzug` },
+      { label: 'Madeleines Anteil vom Lohnkonto', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % nach Lohnabzug` },
       { label: 'API-Key', value: state.tankCalc.apiKey ? 'Gespeichert' : 'Fehlt', kind: state.tankCalc.apiKey ? 'success' : 'warning' }
     ]));
 
