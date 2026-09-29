@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.89
+ * Haushaltsplaner Version 2.90
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.89';
+  const APP_VERSION = '2.90';
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -868,7 +868,6 @@
     bufferExpenses: [],
     taxRefunds: [],
     groceryExpenses: [],
-    smokingExpenses: [],
     selfEmployment: {
       businessName: '',
       taxMode: 'small_business',
@@ -892,13 +891,6 @@
     debts: [],
     contracts: [],
     contractSuggestionDismissals: [],
-    pots: [],
-    savingsGoals: [],
-    // Liste der Monate, in denen die Rücklagen/Spar‑Beträge bereits
-    // zurückgelegt wurden. Wird zum Markieren in der Tabelle
-    // „Rücklagen & Sparen“ verwendet.
-    reservesSavedMonths: [],
-    reserveItemSaved: {},
     tankCalc: {
       apiKey: '',
       radiusKm: 5,
@@ -917,7 +909,6 @@
     budgetTopUps: {
       fuel: { name: 'Tankgeld', startMonth: '2026-07', balances: {}, notes: {} },
       groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', balances: {}, notes: {}, targetAmount: 550, targetStartMonth: '2026-06', targetOverrides: {} },
-      smoking: { name: 'Rauchzeug', startMonth: '2026-06', balances: {}, notes: {}, targetOverrides: {} }
     },
     appMeta: {
       selectedMonth: '',
@@ -1086,8 +1077,7 @@
   }
   state = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(defaultState));
     sanitizeStateTextValues(state);
-    // Falls das neue Flag für Rücklagen‑Bestätigungen fehlt, initialisiere es
-    if (!state.reservesSavedMonths) state.reservesSavedMonths = [];
+    removeRetiredSavingsAndSmokingData();
     if (!state.tankCalc) {
       state.tankCalc = JSON.parse(JSON.stringify(defaultState.tankCalc));
     } else {
@@ -1111,13 +1101,11 @@
     if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
     if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
-    if (!Array.isArray(state.smokingExpenses)) state.smokingExpenses = [];
     if (!Array.isArray(state.contracts)) state.contracts = [];
     if (!Array.isArray(state.contractSuggestionDismissals)) state.contractSuggestionDismissals = [];
     normalizeSelfEmployment();
     normalizeAllTaxRefunds();
     normalizeGroceryExpenses();
-    normalizeSmokingExpenses();
     normalizeTankClosedMonths();
     normalizeBudgetTopUpsConfig();
     normalizeCommonAccountConfig();
@@ -1129,8 +1117,6 @@
     if (!state.appMeta || typeof state.appMeta !== 'object') state.appMeta = JSON.parse(JSON.stringify(defaultState.appMeta));
     migrateKreiskasseToBennyPersonal();
     migrateKreiskassePayrollPayment();
-    if (!state.reserveItemSaved) state.reserveItemSaved = {};
-    syncAllReserveSelectionsToPots();
     normalizeAllPersonConfigs();
     normalizeAllPostConfigs();
     ensureBennyHuk24AdditionalPensionFromOctober2026();
@@ -1171,6 +1157,24 @@
       alert('Die App konnte deine Daten im Browser nicht speichern. Bitte exportiere sofort ein Backup unter „Sichern“.');
       return false;
     }
+  }
+
+  function removeRetiredSavingsAndSmokingData() {
+    // User-managed savings goals and pots are retired. Debt-payoff reserve
+    // automation remains in appMeta.debtSavingsLedger and is left untouched.
+    state.pots = [];
+    state.savingsGoals = [];
+    state.reservesSavedMonths = [];
+    state.reserveItemSaved = {};
+    state.smokingExpenses = [];
+    ['commonCosts', 'personalCosts', 'bufferExpenses'].forEach((collection) => {
+      if (!Array.isArray(state[collection])) return;
+      state[collection] = state[collection].filter((post) => !normalizeTextKey(post && post.name).includes('rauchzeug'));
+      state[collection].forEach((post) => {
+        if (post && typeof post === 'object') post.linkedSavingsGoalId = '';
+      });
+    });
+    if (state.budgetTopUps && typeof state.budgetTopUps === 'object') delete state.budgetTopUps.smoking;
   }
 
   function updateSaveStatus(savedAt) {
@@ -1255,7 +1259,6 @@
     const defaults = {
       fuel: { name: 'Tankgeld', startMonth: '2026-07' },
       groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', targetAmount: 550, targetStartMonth: '2026-06' },
-      smoking: { name: 'Rauchzeug', startMonth: '2026-06' }
     };
     Object.entries(defaults).forEach(([key, cfg]) => {
       const entry = state.budgetTopUps[key] && typeof state.budgetTopUps[key] === 'object' ? state.budgetTopUps[key] : {};
@@ -1265,7 +1268,7 @@
         entry.targetAmount = Number.isFinite(Number(entry.targetAmount)) && Number(entry.targetAmount) > 0 ? Number(entry.targetAmount) : Number(cfg.targetAmount || 550);
         entry.targetStartMonth = isMonthKey(entry.targetStartMonth) ? entry.targetStartMonth : (cfg.targetStartMonth || '2026-06');
       }
-      if (key === 'groceries' || key === 'smoking') {
+      if (key === 'groceries') {
         if (!entry.targetOverrides || typeof entry.targetOverrides !== 'object' || Array.isArray(entry.targetOverrides)) entry.targetOverrides = {};
         Object.keys(entry.targetOverrides).forEach((month) => {
           const amount = Number(entry.targetOverrides[month]);
@@ -4101,7 +4104,7 @@
       },
       {
         title: 'Gemeinsame Kosten',
-        text: 'Fixkosten, Rücklagenposten oder Zahlung anlegen',
+        text: 'Fixkosten oder Zahlung anlegen',
         icon: '⇄',
         onClick: () => showCommonEditor()
       },
@@ -4123,12 +4126,6 @@
         icon: '▤',
         onClick: () => showGroceryExpenseEditor()
       },
-      currentMonth < PRIVATE_HOUSEHOLD_ONLY_START_MONTH ? {
-        title: 'Rauchzeug eintragen',
-        text: 'Ausgabe vom Rauchzeug-Budget erfassen',
-        icon: '−',
-        onClick: () => showSmokingExpenseEditor()
-      } : null,
       {
         title: 'Vertrag erfassen',
         text: 'Kosten, Laufzeit und Kündigungsfrist hinterlegen',
@@ -5031,13 +5028,10 @@
   const bufferSection = document.getElementById('buffer');
   const tankCalcSection = document.getElementById('tankcalc');
   const grocerySection = document.getElementById('groceries');
-  const smokingSection = document.getElementById('smoking');
   const selfEmploymentSection = document.getElementById('selfemployment');
   const contractsSection = document.getElementById('contracts');
   const debtsSection = document.getElementById('debts');
   const settingsSection = document.getElementById('settings');
-  const savingsSection = document.getElementById('savings');
-  const potsSection = document.getElementById('pots');
   const monthCloseSection = document.getElementById('monthclose');
   const dataCheckSection = document.getElementById('datacheck');
   const forecastSection = document.getElementById('forecast');
@@ -5210,7 +5204,7 @@
       ? 'overview'
       : section === 'monthstart'
       ? 'overview'
-      : (section === 'pots' ? 'savings' : section);
+      : (['pots', 'savings', 'smoking'].includes(section) ? 'overview' : section);
     currentSection = targetSection || 'overview';
     document.querySelectorAll('.tab-section').forEach((sec) => {
       sec.classList.toggle('active', sec.id === currentSection);
@@ -6302,15 +6296,7 @@
   }
 
   function appendSavingsGoalLinkField(content, refs, editPost) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    refs.savingsGoalSelect = createSavingsGoalSelect(editPost && editPost.linkedSavingsGoalId ? editPost.linkedSavingsGoalId : '');
-    row.appendChild(createLabelInput('Rücklage verknüpfen', refs.savingsGoalSelect));
-    content.appendChild(row);
-    const hint = document.createElement('p');
-    hint.className = 'small muted';
-    hint.textContent = 'Beim Bezahlt-Markieren wird der Betrag genau einmal in die gewählte Rücklage eingezahlt. So bleibt Rücklage getrennt von normalen Ausgaben, ohne dass ein Konto gepflegt werden muss.';
-    content.appendChild(hint);
+    refs.savingsGoalSelect = { value: '' };
   }
 
   function getSavingsGoalPostSourceId(post, monthKey) {
@@ -8802,7 +8788,7 @@
     if (currentSection === 'taxrefund') currentSection = 'overview';
     if (currentSection === 'selfemployment') currentSection = 'overview';
     if (currentSection === 'monthstart') currentSection = 'overview';
-    if (currentSection === 'pots') currentSection = 'savings';
+    if (['pots', 'savings', 'smoking'].includes(currentSection)) currentSection = 'overview';
 
     syncSectionNavigation();
     document.querySelectorAll('.tab-section').forEach((sec) => {
@@ -8821,11 +8807,9 @@
       buffer: ['Sonstige Ausgaben', bufferSection, renderBufferExpenses],
       tankcalc: ['Tankgeld', tankCalcSection, renderTankCalc],
       groceries: ['Einkaufsgeld', grocerySection, renderGroceries],
-      smoking: ['Rauchzeug', smokingSection, renderSmokingExpenses],
       contracts: ['Verträge', contractsSection, renderContracts],
       debts: ['Schulden', debtsSection, renderDebts],
       settings: ['Regeln & Personen', settingsSection, renderSettings],
-      savings: ['Rücklagen & Töpfe', savingsSection, renderSavings],
       monthclose: ['Monatsabschluss', monthCloseSection, renderMonthClose],
       datacheck: ['Datencheck', dataCheckSection, renderDataCheck],
       forecast: ['Vorschau & Simulation', forecastSection, renderForecast],
@@ -11787,7 +11771,7 @@
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen und übernimmt den bestätigten Rest automatisch in den Folgemonat. Einzahlungen verwaltest du bewusst im gemeinsamen Bereich „Rücklagen & Töpfe“. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
+    note.textContent = 'Der Monatsabschluss speichert einen Beleg mit Monatszahlen und übernimmt den bestätigten Rest automatisch in den Folgemonat. Wenn du danach alte Werte änderst, zeigt die App Abweichungen zum gespeicherten Abschluss an.';
     card.appendChild(note);
     monthCloseSection.appendChild(card);
   }
@@ -12746,7 +12730,7 @@ function showCommonEditor(editCost) {
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
 
-    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur ausfüllen, wenn der Posten zu einer Schuld oder Rücklage gehört.');
+    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur ausfüllen, wenn der Posten zu einer Schuld gehört.');
     const row4 = document.createElement('div');
     row4.className = 'row guided-row';
     refs.debtSelect = document.createElement('select');
@@ -12773,7 +12757,7 @@ function showCommonEditor(editCost) {
     hint.className = 'small muted';
     hint.textContent = editCost
       ? 'Wenn sich der Betrag ändert, kannst du oben wählen, ob er nur für diesen Monat oder dauerhaft gilt.'
-      : 'Neue Posten werden direkt mit ihren Laufzeitregeln gespeichert. Du kannst entweder eine Schuld oder eine Rücklage verknüpfen.';
+      : 'Neue Posten werden direkt mit ihren Laufzeitregeln gespeichert. Du kannst eine Schuld verknüpfen.';
     content.appendChild(hint);
 
     const syncScheduleInputs = () => togglePostEditScheduleInputs(
@@ -12803,7 +12787,6 @@ function showCommonEditor(editCost) {
           const startMonth = refs.startInput.value;
           if (!name) return alert('Name darf nicht leer sein.');
           if (!Number.isFinite(amount) || amount < 0) return alert('Bitte einen gültigen Betrag eingeben.');
-          if (refs.debtSelect.value && refs.savingsGoalSelect.value) return alert('Bitte entweder eine Schuld oder eine Rücklage verknüpfen, nicht beides.');
           const scheduleValidation = validateScheduleSettings({
             oneTime: refs.typeSelect.value === 'once',
             interval: refs.intervalInput.value,
@@ -13061,7 +13044,6 @@ function renderPersonal() {
           });
           const bookedNow = isPostBookedForMonth(pc, currentMonth);
           actionCell.appendChild(createActionMenu([
-            normalizeTextKey(pc.name).includes('rauchzeug') ? { label: 'Rauchzeug-Ausgabe erfassen', className: 'success', onClick: () => showSmokingExpenseEditor() } : null,
             ACCOUNTS_ENABLED && !balanceDebitedNow && paidNow && deductsBalance ? { label: pc.bookingType === 'transfer' ? 'Umbuchung nachholen' : 'Kontoabzug nachholen', className: 'success', onClick: () => { applyPostAccountBalanceDebit(pc, currentMonth, true); saveState(); render(); } } : null,
             ACCOUNTS_ENABLED ? { label: linkedSavingsGoalName ? 'Zurückgelegt + Nachweis buchen' : (linkedDebtName ? 'Bezahlt + Schuld + Nachweis buchen' : 'Bezahlt + buchen'), className: 'success', disabled: !dueNow || bookedNow, onClick: () => { bookPostPaymentForMonth(pc, currentMonth); syncDebtPaymentFromPost(pc, currentMonth); saveState(); render(); } } : null,
             ACCOUNTS_ENABLED ? { label: 'Buchung entfernen', className: 'secondary', disabled: !bookedNow, onClick: () => { unbookPostPaymentForMonth(pc, currentMonth); saveState(); render(); } } : null,
@@ -13133,7 +13115,7 @@ function showPersonalEditor(personId, editPost) {
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
 
-    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nutzen, wenn die Ausgabe zu einer Schuld, Rücklage oder einem Lohnabzug gehört.');
+    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nutzen, wenn die Ausgabe zu einer Schuld oder einem Lohnabzug gehört.');
     const row4 = document.createElement('div');
     row4.className = 'row guided-row';
     refs.debtSelect = document.createElement('select');
@@ -13172,7 +13154,7 @@ function showPersonalEditor(personId, editPost) {
     hint.className = 'small muted';
     hint.textContent = editPost
       ? 'Wenn sich der Betrag ändert, kannst du oben „nur dieser Monat“ oder „ab jetzt dauerhaft“ wählen.'
-      : 'Neue persönliche Posten kannst du hier kompakt anlegen. Du kannst entweder eine Schuld oder eine Rücklage verknüpfen.';
+      : 'Neue persönliche Posten kannst du hier kompakt anlegen. Du kannst eine Schuld verknüpfen.';
     content.appendChild(hint);
 
     const syncScheduleInputs = () => togglePostEditScheduleInputs(
@@ -13202,7 +13184,6 @@ function showPersonalEditor(personId, editPost) {
           const startMonth = refs.startInput.value;
           if (!name) return alert('Name darf nicht leer sein.');
           if (!Number.isFinite(amount) || amount < 0) return alert('Bitte einen gültigen Betrag eingeben.');
-          if (refs.debtSelect.value && refs.savingsGoalSelect.value) return alert('Bitte entweder eine Schuld oder eine Rücklage verknüpfen, nicht beides.');
           const scheduleValidation = validateScheduleSettings({
             oneTime: refs.typeSelect.value === 'once',
             interval: refs.intervalInput.value,
@@ -13326,7 +13307,7 @@ function showPersonalEditor(personId, editPost) {
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
 
-    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nötig, wenn diese Ausgabe eigentlich eine Rücklage ist.');
+    const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nötig, wenn diese Ausgabe zu einer Schuld gehört.');
     const row4 = document.createElement('div');
     row4.className = 'row guided-row';
     refs.accountSelect = { value: '' };
@@ -20085,7 +20066,6 @@ function createPotsCard() {
       { label: 'Posten gesamt', value: String(totalPosts) },
       { label: 'Schulden', value: String(state.debts.length) },
       { label: 'Verträge', value: String((state.contracts || []).length) },
-      { label: 'Töpfe', value: String(state.pots.length) },
       { label: 'Aktiver Monat', value: formatMonthLabel(currentMonth) },
       { label: 'Zuletzt im Browser gespeichert', value: localStorage.getItem('budgetStateLastSavedAt') ? new Date(localStorage.getItem('budgetStateLastSavedAt')).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-' }
     ]));
@@ -20287,7 +20267,6 @@ function createPotsCard() {
           });
           runImportStep('Steuererstattung', () => normalizeAllTaxRefunds());
           runImportStep('Einkaufsgeld', () => normalizeGroceryExpenses());
-          runImportStep('Rauchzeug', () => normalizeSmokingExpenses());
           runImportStep('Selbständigkeit', () => normalizeSelfEmployment());
           runImportStep('Tankdaten', () => normalizeTankClosedMonths());
           runImportStep('Aufstockungen', () => normalizeBudgetTopUpsConfig());
@@ -20296,11 +20275,11 @@ function createPotsCard() {
           runImportStep('Umbuchungen', () => normalizeAccountTransfersConfig());
           runImportStep('Umbuchungsvorlagen', () => normalizeAccountTransferTemplatesConfig());
           runImportStep('Rücklagenziele', () => normalizeSavingsGoalsConfig());
+          runImportStep('Entfernte Rücklagen und Rauchzeug', () => removeRetiredSavingsAndSmokingData());
           runImportStep('App-Meta', () => normalizeAppMeta());
           if (localAutomaticBackupAt) state.appMeta.lastAutomaticBrowserBackupAt = localAutomaticBackupAt;
           runImportStep('Kreiskasse Migration', () => migrateKreiskasseToBennyPersonal());
           runImportStep('Kreiskasse Lohnabzug', () => migrateKreiskassePayrollPayment());
-          runImportStep('Rücklagen-Sync', () => syncAllReserveSelectionsToPots());
           runImportStep('Personen', () => normalizeAllPersonConfigs());
           runImportStep('Posten', () => normalizeAllPostConfigs());
           runImportStep('Zusatzrente HUK24', () => ensureBennyHuk24AdditionalPensionFromOctober2026());
