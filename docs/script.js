@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.90
+ * Haushaltsplaner Version 2.91
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,37 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.90';
+  const APP_VERSION = '2.91';
+  const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
+    cash: 'Bar',
+    transfer: 'Überweisung',
+    direct_debit: 'Lastschrift'
+  };
+
+  function normalizeHouseholdPaymentMethod(value) {
+    return Object.prototype.hasOwnProperty.call(HOUSEHOLD_PAYMENT_METHOD_LABELS, value) ? value : '';
+  }
+
+  function getHouseholdPaymentMethodLabel(value) {
+    return HOUSEHOLD_PAYMENT_METHOD_LABELS[normalizeHouseholdPaymentMethod(value)] || 'Nicht angegeben';
+  }
+
+  function createHouseholdPaymentMethodSelect(value = '') {
+    const select = document.createElement('select');
+    select.innerHTML = '<option value="">Nicht angegeben</option><option value="cash">Bar</option><option value="transfer">Überweisung</option><option value="direct_debit">Lastschrift</option>';
+    select.value = normalizeHouseholdPaymentMethod(value);
+    return select;
+  }
+
+  function appendHouseholdPaymentMethodField(parent, refs, item, options = {}) {
+    const hasStoredMethod = item && Object.prototype.hasOwnProperty.call(item, 'paymentMethod');
+    refs.paymentMethodSelect = createHouseholdPaymentMethodSelect(
+      hasStoredMethod ? item.paymentMethod : (options.defaultValue || '')
+    );
+    parent.appendChild(createLabelInput('Zahlungsweg', refs.paymentMethodSelect));
+    return refs.paymentMethodSelect;
+  }
+
   const HOUSEHOLD_ONLY_MODE = true;
   const ACCOUNTS_ENABLED = !HOUSEHOLD_ONLY_MODE;
   const APP_VERSION_STORAGE_SUFFIX = APP_VERSION.replace(/\D/g, '');
@@ -592,6 +622,7 @@
         id: entry.id || generateId(),
         month: entry.month,
         amount: Math.max(0, Number(entry.amount || 0)),
+        paymentMethod: normalizeHouseholdPaymentMethod(entry.paymentMethod),
         source: entry.source || 'manuell',
         sourcePostId: typeof entry.sourcePostId === 'string' ? entry.sourcePostId : '',
         note: entry.note || '',
@@ -708,6 +739,7 @@
       amount: postAmount,
       source: `Verknüpfter Posten: ${post.name || 'Posten'}`,
       sourcePostId: post.id || '',
+      paymentMethod: post.paymentMethod,
       markAsMonthly: true,
       skipAccountTransaction: true,
       // Der Kostenposten ist in diesem Ablauf bereits bezahlt markiert.
@@ -835,6 +867,7 @@
       amount,
       source: sourceLabel,
       sourcePostId: post.id || '',
+      paymentMethod: post.paymentMethod,
       note: reduceOpenBalance === false
         ? 'Nachtrag: Zahlung war im gespeicherten Restschuldstand bereits berücksichtigt.'
         : 'Nachtrag aus bereits bezahltem, verknüpftem Kostenposten.',
@@ -6261,6 +6294,8 @@
     ensureLinkedSavingsGoalField(post);
     ensureAccountLinkField(post);
     ensurePostBookingConfig(post);
+    if (typeof post.paymentMethod !== 'string') post.paymentMethod = '';
+    post.paymentMethod = normalizeHouseholdPaymentMethod(post.paymentMethod);
   }
 
   function ensureLinkedSavingsGoalField(post) {
@@ -6943,7 +6978,8 @@
       date,
       name: typeof expense.name === 'string' && expense.name.trim() ? expense.name.trim() : 'Einkauf',
       amount,
-      note: typeof expense.note === 'string' ? expense.note : ''
+      note: typeof expense.note === 'string' ? expense.note : '',
+      paymentMethod: normalizeHouseholdPaymentMethod(expense.paymentMethod)
     };
   }
 
@@ -7115,11 +7151,12 @@
   }
 
   function normalizeSelfEmploymentPaymentMethod(value) {
-    return value === 'cash' ? 'cash' : 'transfer';
+    return value === 'cash' || value === 'direct_debit' ? value : 'transfer';
   }
 
   function getSelfEmploymentPaymentMethodLabel(value) {
-    return normalizeSelfEmploymentPaymentMethod(value) === 'cash' ? 'Bar' : 'Überweisung';
+    const method = normalizeSelfEmploymentPaymentMethod(value);
+    return method === 'cash' ? 'Bar' : (method === 'direct_debit' ? 'Lastschrift' : 'Überweisung');
   }
 
   function normalizeTaskrabbitBreakdown(value, fallbackAmount = 0) {
@@ -8185,6 +8222,7 @@
       cashback,
       netCost,
       isCanister: !!(receipt && receipt.isCanister),
+      paymentMethod: normalizeHouseholdPaymentMethod(receipt && receipt.paymentMethod),
       allocations: {
         benny: Math.max(0, parseMoneyInput(allocations.benny || receipt && receipt.bennyLiters || 0)),
         madeleine: Math.max(0, parseMoneyInput(allocations.madeleine || receipt && receipt.madeleineLiters || 0))
@@ -11821,7 +11859,7 @@
     } else {
       const table = document.createElement('table');
       table.className = 'list-table';
-        table.innerHTML = `<thead><tr><th>Name</th><th>Betrag</th><th>Intervall</th><th>Start</th><th>Bis</th><th>Fällig</th><th>Rücklage</th><th class="account-only">Konto</th><th>Status</th><th>Aktion</th></tr></thead>`;
+        table.innerHTML = `<thead><tr><th>Name</th><th>Betrag</th><th>Intervall</th><th>Zahlungsweg</th><th>Start</th><th>Bis</th><th>Fällig</th><th>Rücklage</th><th class="account-only">Konto</th><th>Status</th><th>Aktion</th></tr></thead>`;
       const tbody = document.createElement('tbody');
 
       let visibleCount = 0;
@@ -11847,6 +11885,7 @@
         tr.innerHTML = `<td>${post.name}</td>
           <td>${euro(amount)}</td>
           <td>${getDisplayInterval(post)}</td>
+          <td>${getHouseholdPaymentMethodLabel(post.paymentMethod)}</td>
           <td>${post.startMonth}</td>
           <td>${getDisplayEndMonth(post)}</td>
           <td>${getDueBadgeHtml(dueNow)}</td>
@@ -11857,7 +11896,7 @@
         if (linkedBusinessEntry) {
           tr.children[0].appendChild(createUiEl('div', 'small muted', `Automatisch aus EÜR · ${getSelfEmploymentPaymentMethodLabel(linkedBusinessEntry.paymentMethod)}`));
         }
-        const actionCell = tr.children[9];
+        const actionCell = tr.children[10];
 
         const paidBtn = document.createElement('button');
         paidBtn.textContent = linkedSavingsGoalName ? 'Zurücklegen' : (deductsBalance ? 'Bezahlt · Konto abziehen' : 'Bezahlt markieren');
@@ -12557,6 +12596,7 @@ function renderCommon() {
         <th>Name</th>
         <th>Betrag</th>
         <th>Intervall</th>
+        <th>Zahlungsweg</th>
         <th>Start</th>
         <th>Bis</th>
         <th>Monatsanteil</th>
@@ -12588,6 +12628,7 @@ function renderCommon() {
         tr.innerHTML = `<td>${c.name}</td>
           <td>${euro(currentAmount)}</td>
           <td>${getDisplayInterval(c)}</td>
+          <td>${getHouseholdPaymentMethodLabel(c.paymentMethod)}</td>
           <td>${c.startMonth}</td>
           <td>${getDisplayEndMonth(c)}</td>
           <td>${euro(monthlyShare)}</td>
@@ -12598,7 +12639,7 @@ function renderCommon() {
           <td></td>
           <td></td>`;
 
-        const paidCell = tr.children[10];
+        const paidCell = tr.children[11];
         if (dueNow) {
           if (!paidNow) {
             const btn = document.createElement('button');
@@ -12632,7 +12673,7 @@ function renderCommon() {
           paidCell.textContent = '-';
         }
 
-        const actionCell = tr.children[11];
+        const actionCell = tr.children[12];
         const editBtn = document.createElement('button');
         editBtn.textContent = 'Bearbeiten';
         editBtn.className = 'primary';
@@ -12729,6 +12770,10 @@ function showCommonEditor(editCost) {
     row3.appendChild(createLabelInput('Bis Monat', refs.endInput));
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
+    const paymentRow = document.createElement('div');
+    paymentRow.className = 'row guided-row';
+    appendHouseholdPaymentMethodField(paymentRow, refs, editCost, { defaultValue: 'transfer' });
+    content.appendChild(paymentRow);
 
     const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur ausfüllen, wenn der Posten zu einer Schuld gehört.');
     const row4 = document.createElement('div');
@@ -12805,6 +12850,7 @@ function showCommonEditor(editCost) {
             }
             editCost.name = name;
             editCost.startMonth = startMonth;
+            editCost.paymentMethod = normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value);
             editCost.linkedDebtId = refs.debtSelect.value || '';
             editCost.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             if (!applyTransferBookingFieldsToPost(editCost, refs)) return;
@@ -12827,6 +12873,7 @@ function showCommonEditor(editCost) {
               startMonth,
               endMonth: scheduleValidation.value.endMonth,
               oneTime: scheduleValidation.value.oneTime,
+              paymentMethod: normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value),
               paidMonths: [],
               sharedBalanceDebitedMonths: [],
               accountBalanceDebits: {},
@@ -12964,7 +13011,7 @@ function renderPersonal() {
         const table = document.createElement('table');
         table.className = 'list-table';
         const thead = document.createElement('thead');
-        thead.innerHTML = `<tr><th>Name</th><th>Betrag</th><th>Intervall</th><th>Start</th><th>Bis</th><th>Fällig</th><th>Rücklage</th><th>Verknüpfte Schuld</th><th class="account-only">Konto</th><th>Bezahlt?</th><th>Aktion</th></tr>`;
+        thead.innerHTML = `<tr><th>Name</th><th>Betrag</th><th>Intervall</th><th>Zahlungsweg</th><th>Start</th><th>Bis</th><th>Fällig</th><th>Rücklage</th><th>Verknüpfte Schuld</th><th class="account-only">Konto</th><th>Bezahlt?</th><th>Aktion</th></tr>`;
         table.appendChild(thead);
         const tbody = document.createElement('tbody');
 
@@ -12982,6 +13029,7 @@ function renderPersonal() {
           tr.innerHTML = `<td>${pc.name}${paidWithIncomeHint}</td>
             <td>${euro(currentAmount)}</td>
             <td>${getDisplayInterval(pc)}</td>
+            <td>${getHouseholdPaymentMethodLabel(pc.paymentMethod)}</td>
             <td>${pc.startMonth}</td>
             <td>${getDisplayEndMonth(pc)}</td>
             <td>${getDueBadgeHtml(dueNow)}</td>
@@ -12990,7 +13038,7 @@ function renderPersonal() {
             <td class="account-only">${getAccountName(pc.accountId)}</td>
             <td></td><td></td>`;
 
-          const paidCell = tr.children[9];
+          const paidCell = tr.children[10];
           if (dueNow) {
             if (!paidNow) {
               const btn = document.createElement('button');
@@ -13024,7 +13072,7 @@ function renderPersonal() {
             paidCell.textContent = '-';
           }
 
-          const actionCell = tr.children[10];
+          const actionCell = tr.children[11];
           const editBtn = document.createElement('button');
           editBtn.textContent = 'Bearbeiten';
           editBtn.className = 'primary';
@@ -13114,6 +13162,10 @@ function showPersonalEditor(personId, editPost) {
     row3.appendChild(createLabelInput('Bis Monat', refs.endInput));
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
+    const paymentRow = document.createElement('div');
+    paymentRow.className = 'row guided-row';
+    appendHouseholdPaymentMethodField(paymentRow, refs, editPost, { defaultValue: 'transfer' });
+    content.appendChild(paymentRow);
 
     const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nutzen, wenn die Ausgabe zu einer Schuld oder einem Lohnabzug gehört.');
     const row4 = document.createElement('div');
@@ -13202,6 +13254,7 @@ function showPersonalEditor(personId, editPost) {
             }
             editPost.name = name;
             editPost.startMonth = startMonth;
+            editPost.paymentMethod = normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value);
             editPost.linkedDebtId = refs.debtSelect.value || '';
             editPost.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             editPost.paidWithIncome = refs.paidWithIncomeCheck.checked;
@@ -13226,6 +13279,7 @@ function showPersonalEditor(personId, editPost) {
               startMonth,
               endMonth: scheduleValidation.value.endMonth,
               oneTime: scheduleValidation.value.oneTime,
+              paymentMethod: normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value),
               paidMonths: [],
               accountBalanceDebits: {},
               amountTimeline: [],
@@ -13306,6 +13360,10 @@ function showPersonalEditor(personId, editPost) {
     row3.appendChild(createLabelInput('Bis Monat', refs.endInput));
     scheduleSection.appendChild(row3);
     content.appendChild(scheduleSection);
+    const paymentRow = document.createElement('div');
+    paymentRow.className = 'row guided-row';
+    appendHouseholdPaymentMethodField(paymentRow, refs, editPost, { defaultValue: 'transfer' });
+    content.appendChild(paymentRow);
 
     const linkSection = createGuidedFormSection('3. Optional verknüpfen', 'Nur nötig, wenn diese Ausgabe zu einer Schuld gehört.');
     const row4 = document.createElement('div');
@@ -13365,6 +13423,7 @@ function showPersonalEditor(personId, editPost) {
             }
             editPost.name = name;
             editPost.startMonth = startMonth;
+            editPost.paymentMethod = normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value);
             editPost.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             if (!applyTransferBookingFieldsToPost(editPost, refs)) return;
             applyScheduleSettings(editPost, scheduleValidation.value);
@@ -13386,6 +13445,7 @@ function showPersonalEditor(personId, editPost) {
               startMonth,
               endMonth: scheduleValidation.value.endMonth,
               oneTime: scheduleValidation.value.oneTime,
+              paymentMethod: normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value),
               paidMonths: [],
               accountBalanceDebits: {},
               linkedSavingsGoalId: refs.savingsGoalSelect.value || '',
@@ -13605,6 +13665,8 @@ function showPersonalEditor(personId, editPost) {
       wrap.appendChild(input);
       form.appendChild(wrap);
     });
+    inputs.paymentMethod = createHouseholdPaymentMethodSelect('transfer');
+    form.appendChild(createLabelInput('Zahlungsweg', inputs.paymentMethod));
     const canWrap = document.createElement('label');
     canWrap.className = 'checkbox-row';
     const canInput = document.createElement('input');
@@ -13642,6 +13704,7 @@ function showPersonalEditor(personId, editPost) {
         liters,
         paid,
         cashback,
+        paymentMethod: normalizeHouseholdPaymentMethod(inputs.paymentMethod.value),
         isCanister: inputs.isCanister.checked,
         allocations: {},
         note: inputs.note.value
@@ -13661,13 +13724,13 @@ function showPersonalEditor(personId, editPost) {
       details.appendChild(summary);
       const table = document.createElement('table');
       table.className = 'list-table compact-table';
-      table.innerHTML = '<thead><tr><th>Datum</th><th>Liter</th><th>bezahlt</th><th>gespart</th><th>€/l netto</th><th>Art / Hinweis</th><th></th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>Liter</th><th>bezahlt</th><th>Zahlungsweg</th><th>gespart</th><th>€/l netto</th><th>Art / Hinweis</th><th></th></tr></thead>';
       const tbody = document.createElement('tbody');
       currentReceipts.forEach((receipt) => {
         const tr = document.createElement('tr');
         const netPerLiter = receipt.liters > 0 ? receipt.netCost / receipt.liters : 0;
         const note = `${receipt.isCanister ? 'Kanister' : 'Tankstelle'}${receipt.note ? ' · ' + escapeHtml(receipt.note) : ''}`;
-        tr.innerHTML = `<td>${receipt.date || '-'}</td><td>${receipt.liters.toFixed(2)} l</td><td>${euro(receipt.paid)}</td><td>${euro(receipt.cashback)}</td><td>${netPerLiter.toFixed(3)} €/l</td><td>${note}</td>`;
+        tr.innerHTML = `<td>${receipt.date || '-'}</td><td>${receipt.liters.toFixed(2)} l</td><td>${euro(receipt.paid)}</td><td>${getHouseholdPaymentMethodLabel(receipt.paymentMethod)}</td><td>${euro(receipt.cashback)}</td><td>${netPerLiter.toFixed(3)} €/l</td><td>${note}</td>`;
         const td = document.createElement('td');
         const del = document.createElement('button');
         del.type = 'button';
@@ -13818,7 +13881,8 @@ function showPersonalEditor(personId, editPost) {
       date: `${currentMonth}-01`,
       name: '',
       amount: 0,
-      note: ''
+      note: '',
+      paymentMethod: 'transfer'
     };
     const content = document.createElement('div');
     content.className = 'modal-form';
@@ -13840,6 +13904,8 @@ function showPersonalEditor(personId, editPost) {
     row.appendChild(createLabelInput('Datum', dateInput));
     row.appendChild(createLabelInput('Einkauf', nameInput));
     row.appendChild(createLabelInput('Betrag', amountInput));
+    const paymentMethodSelect = createHouseholdPaymentMethodSelect(item.paymentMethod || '');
+    row.appendChild(createLabelInput('Zahlungsweg', paymentMethodSelect));
     content.appendChild(row);
 
     const noteInput = document.createElement('input');
@@ -13868,7 +13934,8 @@ function showPersonalEditor(personId, editPost) {
             date: dateInput.value,
             name: nameInput.value.trim() || 'Einkauf',
             amount,
-            note: noteInput.value.trim()
+            note: noteInput.value.trim(),
+            paymentMethod: normalizeHouseholdPaymentMethod(paymentMethodSelect.value)
           });
           if (!saved) return alert('Der Einkauf konnte nicht gespeichert werden.');
           addChangeLog('Einkaufsgeld', `${isNew ? 'Einkauf erfasst' : 'Einkauf geändert'}: ${saved.name} · ${euro(saved.amount)}.`, saved.month);
@@ -14045,7 +14112,7 @@ function showPersonalEditor(personId, editPost) {
     } else {
       const table = document.createElement('table');
       table.className = 'list-table';
-      table.innerHTML = '<thead><tr><th>Datum</th><th>Einkauf</th><th>Betrag</th><th>Notiz</th><th>Aktion</th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>Einkauf</th><th>Betrag</th><th>Zahlungsweg</th><th>Notiz</th><th>Aktion</th></tr></thead>';
       const tbody = document.createElement('tbody');
       currentExpenses.forEach((expense) => {
         const tr = document.createElement('tr');
@@ -14055,6 +14122,8 @@ function showPersonalEditor(personId, editPost) {
         nameTd.textContent = expense.name;
         const amountTd = document.createElement('td');
         amountTd.textContent = euro(expense.amount);
+        const paymentTd = document.createElement('td');
+        paymentTd.textContent = getHouseholdPaymentMethodLabel(expense.paymentMethod);
         const noteTd = document.createElement('td');
         noteTd.textContent = expense.note || '-';
         const actionTd = document.createElement('td');
@@ -14072,6 +14141,7 @@ function showPersonalEditor(personId, editPost) {
         tr.appendChild(dateTd);
         tr.appendChild(nameTd);
         tr.appendChild(amountTd);
+        tr.appendChild(paymentTd);
         tr.appendChild(noteTd);
         tr.appendChild(actionTd);
         tbody.appendChild(tr);
@@ -14470,7 +14540,7 @@ function showPersonalEditor(personId, editPost) {
     const thirdRow = document.createElement('div');
     thirdRow.className = 'row';
     const paymentMethodSelect = document.createElement('select');
-    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option>';
+    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option><option value="direct_debit">Lastschrift</option>';
     paymentMethodSelect.value = normalizeSelfEmploymentPaymentMethod(item.paymentMethod);
     const documentInput = document.createElement('input');
     documentInput.type = 'text';
@@ -14717,7 +14787,7 @@ function showPersonalEditor(personId, editPost) {
     vatSelect.innerHTML = '<option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option>';
     vatSelect.value = String(Number(item.vatRate || 0));
     const paymentMethodSelect = document.createElement('select');
-    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option>';
+    paymentMethodSelect.innerHTML = '<option value="transfer">Überweisung</option><option value="cash">Bar</option><option value="direct_debit">Lastschrift</option>';
     paymentMethodSelect.value = normalizeSelfEmploymentPaymentMethod(item.paymentMethod);
     const noteInput = document.createElement('input');
     noteInput.type = 'text';
@@ -15766,6 +15836,7 @@ function showPersonalEditor(personId, editPost) {
       id: historyId,
       month,
       amount: paymentAmount,
+      paymentMethod: normalizeHouseholdPaymentMethod(options.paymentMethod),
       source: options.source || 'Manuelle Zahlung',
       sourcePostId: typeof options.sourcePostId === 'string' ? options.sourcePostId : '',
       note: options.note || '',
@@ -16023,28 +16094,25 @@ function showPersonalEditor(personId, editPost) {
             debtReserveRemainderAmount: row.payoffReserve && row.payoffReserve.targetDebt === item.name
               ? Number(row.payoffReserve.leftoverAfterPayoff || 0)
               : 0,
-            debtReserveRemainderActionKey: `${actionKey}|reserve-remainder`
+            debtReserveRemainderActionKey: `${actionKey}|reserve-remainder`,
+            paymentMethod: item.debt.paymentMethod || '',
+            afterSave: () => setDebtAssistantActionStatus(actionKey, 'done')
           });
           return;
         }
-        if (!confirm(`${item.name}: ${euro(total)} wirklich als bezahlt eintragen? Es wird keine Überweisung ausgelöst.`)) return;
         const monthlyAlreadyPaid = (item.debt.paidMonths || []).includes(monthKey)
           || (item.debt.paymentHistory || []).some((entry) => entry.month === monthKey && entry.markedAsMonthly);
         const markAsMonthly = item.rate > 0 && !monthlyAlreadyPaid;
-        if (addDebtPayment(item.debt, {
+        showDebtPaymentEditor(item.debt, {
           month: monthKey,
           amount: total,
-          source: 'Schulden-Monatsassistent',
+          mode: markAsMonthly ? 'regular' : 'extra',
           note: item.extra > 0 ? `Rate ${euro(item.rate)} · zusätzlich ${euro(item.extra)}` : 'Vereinbarte Monatszahlung',
-          markAsMonthly,
-          linkedPostAmount: item.rate > 0 ? Math.min(total, Number(item.rate)) : undefined
-        })) {
-          setDebtAssistantActionStatus(actionKey, 'done');
-          saveState();
-          render();
-        } else {
-          alert('Die Zahlung konnte nicht eingetragen werden. Prüfe bitte, ob sie für diesen Monat bereits gespeichert ist.');
-        }
+          source: 'Schulden-Monatsassistent',
+          paymentMethod: item.debt.paymentMethod || '',
+          allowUnrestrictedPayment: true,
+          afterSave: () => setDebtAssistantActionStatus(actionKey, 'done')
+        });
       });
       actions.appendChild(laterBtn);
       actions.appendChild(paidBtn);
@@ -16947,7 +17015,8 @@ function showPersonalEditor(personId, editPost) {
         const reviewRuleText = getDebtRateChangeRuleText(d);
         const creditorRuleText = getDebtCreditorRule(d)?.label || '';
         const latestBalanceCheck = getLatestDebtBalanceCheck(d, currentMonth);
-        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Zahlungsart:</span> ${typeHtml}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Ratenregel:</span> ${reviewRuleText}</div>` : ''}${creditorRuleText ? `<div><span>Zahlungsregel:</span> ${creditorRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
+        const latestPayment = (d.paymentHistory || []).slice().sort((a, b) => String(b.month || '').localeCompare(String(a.month || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Schuldart:</span> ${typeHtml}</div><div><span>Letzter Zahlungsweg:</span> ${latestPayment ? `${getHouseholdPaymentMethodLabel(latestPayment.paymentMethod)} · ${formatMonthLabel(latestPayment.month)}` : 'noch keiner erfasst'}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Ratenregel:</span> ${reviewRuleText}</div>` : ''}${creditorRuleText ? `<div><span>Zahlungsregel:</span> ${creditorRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
         actionCell.appendChild(createActionMenu([
           { label: 'Bearbeiten', className: 'primary', onClick: () => showDebtEditor(d) },
           { label: 'Rate ändern', className: 'secondary', onClick: () => showDebtRateEditor(d) },
@@ -17162,17 +17231,15 @@ function showPersonalEditor(personId, editPost) {
     const sourceParts = ['Schuldenbereich'];
     if (Number(breakdown.rate || 0) > 0) sourceParts.push(`Rate ${euro(Number(breakdown.rate || 0))}`);
     if (Number(breakdown.snowball || 0) > 0) sourceParts.push(`zusätzlicher Vorschlag ${euro(Number(breakdown.snowball || 0))}`);
-    if (addDebtPayment(debt, {
+    showDebtPaymentEditor(debt, {
       month: paidMonth,
       amount,
+      mode: 'regular',
       source: sourceParts.join(' · '),
-      note: 'Geplante Monatszahlung aus dem festen Schuldenbudget festgeschrieben.',
-      markAsMonthly: true,
-      linkedPostAmount: Math.min(amount, Number(breakdown.rate || minimumRate || amount))
-    })) {
-      saveState();
-      render();
-    }
+      note: `${sourceParts.join(' · ')} · aus dem festen Schuldenbudget`,
+      paymentMethod: debt.paymentMethod || '',
+      afterSave: () => saveState()
+    });
   }
 
   function showDebtRateEditor(debt) {
@@ -17264,7 +17331,7 @@ function showPersonalEditor(personId, editPost) {
     const refs = {};
     const paymentMode = getDebtExtraPaymentMode(debt);
     const fullPayoffOnly = paymentMode === 'full_payoff_only';
-    const regularOnly = paymentMode === 'none';
+    const regularOnly = paymentMode === 'none' && defaults.allowUnrestrictedPayment !== true;
     const content = document.createElement('div');
     content.className = 'modal-form';
 
@@ -17308,9 +17375,14 @@ function showPersonalEditor(personId, editPost) {
     refs.noteInput.type = 'text';
     refs.noteInput.placeholder = 'Notiz optional';
     refs.noteInput.value = defaults.note || '';
-    row2.appendChild(createLabelInput('Zahlungsart', refs.typeSelect));
+    row2.appendChild(createLabelInput('Schuldzahlung', refs.typeSelect));
     row2.appendChild(createLabelInput('Notiz', refs.noteInput));
     content.appendChild(row2);
+
+    const paymentRow = document.createElement('div');
+    paymentRow.className = 'row';
+    appendHouseholdPaymentMethodField(paymentRow, refs, defaults, { defaultValue: 'transfer' });
+    content.appendChild(paymentRow);
 
     if (fullPayoffOnly) {
       const creditorInfo = document.createElement('div');
@@ -17376,7 +17448,7 @@ function showPersonalEditor(personId, editPost) {
           if (!isMonthKey(month)) return alert('Bitte einen gültigen Monat wählen.');
           if (!Number.isFinite(amount) || amount <= 0) return alert('Bitte einen gültigen Betrag eingeben.');
           const mode = refs.typeSelect.value;
-          if ((mode === 'partial' || mode === 'extra') && !isDebtExtraPaymentAllowed(debt)) {
+          if ((mode === 'partial' || mode === 'extra') && !isDebtExtraPaymentAllowed(debt) && defaults.allowUnrestrictedPayment !== true) {
             return alert(`${debt.name}: Für diese Schuld sind keine freiwilligen Sonderzahlungen erlaubt.`);
           }
           if (fullPayoffOnly) {
@@ -17400,8 +17472,9 @@ function showPersonalEditor(personId, editPost) {
           if (addDebtPayment(debt, {
             month,
             amount,
-            source: mode === 'regular' ? 'Regelrate' : (mode === 'partial' ? 'Teilzahlung' : (fullPayoffOnly ? 'Gesamtablösung' : 'Sonderzahlung')),
+            source: defaults.source || (mode === 'regular' ? 'Regelrate' : (mode === 'partial' ? 'Teilzahlung' : (fullPayoffOnly ? 'Gesamtablösung' : 'Sonderzahlung'))),
             note: refs.noteInput.value.trim(),
+            paymentMethod: normalizeHouseholdPaymentMethod(refs.paymentMethodSelect.value),
             markAsMonthly,
             linkedPostAmount: markAsMonthly
               ? Math.min(amount, Number(getDebtRateForMonth(debt, month) || defaultRate || amount))
@@ -17424,6 +17497,7 @@ function showPersonalEditor(personId, editPost) {
                 true
               );
             }
+            if (typeof defaults.afterSave === 'function') defaults.afterSave();
             saveState();
             render();
             close();
@@ -19319,6 +19393,7 @@ function createPotsCard() {
         item.amount = Number.isFinite(itemAmount) && itemAmount >= 0 ? itemAmount : 0;
         if (typeof item.date !== 'string') item.date = '';
         if (typeof item.note !== 'string') item.note = '';
+        item.paymentMethod = normalizeHouseholdPaymentMethod(item.paymentMethod);
         if (typeof item.accountId !== 'string') item.accountId = '';
         if (typeof item.transactionId !== 'string') item.transactionId = '';
         return item;
@@ -19592,6 +19667,8 @@ function createPotsCard() {
     row.appendChild(createLabelInput('Gekauft / bezahlt', nameInput));
     row.appendChild(createLabelInput('Betrag', amountInput));
     row.appendChild(createLabelInput('Datum', dateInput));
+    const paymentMethodSelect = createHouseholdPaymentMethodSelect(isNew ? 'transfer' : (item.paymentMethod || ''));
+    row.appendChild(createLabelInput('Zahlungsweg', paymentMethodSelect));
     content.appendChild(row);
 
     const noteInput = document.createElement('textarea');
@@ -19614,6 +19691,7 @@ function createPotsCard() {
           item.amount = amount;
           item.date = dateInput.value || '';
           item.note = noteInput.value || '';
+          item.paymentMethod = normalizeHouseholdPaymentMethod(paymentMethodSelect.value);
           if (isNew) refund.purchases.push(item);
           normalizeAllTaxRefunds();
           addChangeLog('Steuererstattung', `${isNew ? 'Kauf eingetragen' : 'Kauf geändert'}: ${name} / ${euro(amount)} – als Verwendung dokumentiert`, currentMonth);
@@ -19753,11 +19831,11 @@ function createPotsCard() {
       }
       const table = document.createElement('table');
       table.className = 'list-table';
-      table.innerHTML = '<thead><tr><th>Datum · neueste zuerst</th><th>Gekauft / bezahlt</th><th>Betrag</th><th>Notiz</th><th>Aktion</th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Datum · neueste zuerst</th><th>Gekauft / bezahlt</th><th>Betrag</th><th>Zahlungsweg</th><th>Notiz</th><th>Aktion</th></tr></thead>';
       const tbody = document.createElement('tbody');
       if (!refund.purchases.length) {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="5" class="muted">Noch keine Käufe eingetragen.</td>';
+        tr.innerHTML = '<td colspan="6" class="muted">Noch keine Käufe eingetragen.</td>';
         tbody.appendChild(tr);
       } else {
         refund.purchases.forEach((purchase) => {
@@ -19765,6 +19843,7 @@ function createPotsCard() {
           const dateTd = document.createElement('td'); dateTd.textContent = purchase.date || '—';
           const nameTd = document.createElement('td'); nameTd.textContent = purchase.name || '—';
           const amountTd = document.createElement('td'); amountTd.textContent = euro(Number(purchase.amount || 0));
+          const paymentTd = document.createElement('td'); paymentTd.textContent = getHouseholdPaymentMethodLabel(purchase.paymentMethod);
           const noteTd = document.createElement('td'); noteTd.textContent = `${purchase.note || ''}${purchase.transactionId ? (purchase.note ? ' · ' : '') + 'Historiennachweis vorhanden' : ''}`;
           const actionTd = document.createElement('td');
           const editPurchase = document.createElement('button'); editPurchase.className = 'secondary'; editPurchase.textContent = 'Bearbeiten'; editPurchase.addEventListener('click', () => showTaxPurchaseEditor(refund, purchase));
@@ -19782,7 +19861,7 @@ function createPotsCard() {
             { label: 'Bearbeiten', className: 'secondary', onClick: () => showTaxPurchaseEditor(refund, purchase) },
             { label: 'Löschen', className: 'danger', onClick: () => { if (confirm('Kauf löschen?')) { removeTaxRefundPurchaseBooking(refund, purchase); refund.purchases = refund.purchases.filter((x) => x.id !== purchase.id); normalizeAllTaxRefunds(); addChangeLog('Steuererstattung', `Kauf gelöscht: ${purchase.name}`, currentMonth); saveState(); render(); } } }
           ]));
-          tr.appendChild(dateTd); tr.appendChild(nameTd); tr.appendChild(amountTd); tr.appendChild(noteTd); tr.appendChild(actionTd);
+          tr.appendChild(dateTd); tr.appendChild(nameTd); tr.appendChild(amountTd); tr.appendChild(paymentTd); tr.appendChild(noteTd); tr.appendChild(actionTd);
           tbody.appendChild(tr);
         });
       }
