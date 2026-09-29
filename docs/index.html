@@ -1,8 +1,13 @@
 <!--
-  Haushaltsplaner Version 2.89
-  Alle Bereiche sind über klar gruppierte Direktlinks erreichbar.
+  Haushaltsplaner Version 2.90
+  Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
 <!--
+  Aktualisierung Version&nbsp;2.90: Der Bereich „Rücklagen &amp; Töpfe“ sowie das
+  Rauchzeug-Budget wurden entfernt. Rücklagenziele und Töpfe werden aus dem
+  aktiven Plan entfernt; die Schuldenregel zum vollständigen Ablösen vor dem
+  Zurücklegen bleibt bestehen. Frühere Monatsabschlüsse und Sicherungen bleiben
+  erhalten.
   Aktualisierung Version&nbsp;2.89: Die Bereichsnavigation zeigt alle Ziele als
   direkte, gruppierte Schaltflächen statt als native Auswahllisten.
   Auf Desktop und Mobilgeräten sind die Bereiche schnell erkennbar und direkt
@@ -136,13 +141,13 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben, Rücklagen und Schulden.">
+    <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.89">
-    <link rel="manifest" href="manifest.json?v=2.89">
+    <link rel="stylesheet" href="style.css?v=2.90">
+    <link rel="manifest" href="manifest.json?v=2.90">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.89">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.89">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.90">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.90">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -152,7 +157,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.89" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.90" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -177,7 +182,6 @@
               <button type="button" class="mobile-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
               <button type="button" class="mobile-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true">▤</span><b>Einkaufsgeld</b></button>
               <button type="button" class="mobile-nav-link" data-section="contracts"><span class="nav-icon" aria-hidden="true">⌑</span><b>Verträge</b></button>
-              <button type="button" class="mobile-nav-link" data-section="savings"><span class="nav-icon" aria-hidden="true">◈</span><b>Rücklagen &amp; Töpfe</b></button>
               <button type="button" class="mobile-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true">＋</span><b>Sonstige Ausgaben</b></button>
               <button type="button" class="mobile-nav-link" data-section="monthclose"><span class="nav-icon" aria-hidden="true">✓</span><b>Monatsabschluss</b></button>
               <button type="button" class="mobile-nav-link" data-section="datacheck"><span class="nav-icon" aria-hidden="true">!</span><b>Datencheck</b></button>
@@ -202,7 +206,6 @@
             <button type="button" class="side-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
             <button type="button" class="side-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true">▤</span><b>Einkaufsgeld</b></button>
             <button type="button" class="side-nav-link" data-section="contracts"><span class="nav-icon" aria-hidden="true">⌑</span><b>Verträge</b></button>
-            <button type="button" class="side-nav-link" data-section="savings"><span class="nav-icon" aria-hidden="true">◈</span><b>Rücklagen &amp; Töpfe</b></button>
             <button type="button" class="side-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true">＋</span><b>Sonstige Ausgaben</b></button>
             <button type="button" class="side-nav-link" data-section="monthclose"><span class="nav-icon" aria-hidden="true">✓</span><b>Monatsabschluss</b></button>
             <button type="button" class="side-nav-link" data-section="datacheck"><span class="nav-icon" aria-hidden="true">!</span><b>Datencheck</b></button>
@@ -213,7 +216,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.89 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.90 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -230,21 +233,18 @@
           <section id="personal" class="tab-section"></section>
           <section id="tankcalc" class="tab-section"></section>
           <section id="groceries" class="tab-section"></section>
-          <section id="smoking" class="tab-section"></section>
           <section id="contracts" class="tab-section"></section>
           <section id="debts" class="tab-section"></section>
           <section id="settings" class="tab-section"></section>
-          <section id="savings" class="tab-section"></section>
-          <section id="pots" class="tab-section"></section>
           <section id="monthclose" class="tab-section"></section>
           <section id="datacheck" class="tab-section"></section>
           <section id="forecast" class="tab-section"></section>
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.89</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.90</footer>
       </div>
     </div>
-    <script src="script.js?v=2.89"></script>
+    <script src="script.js?v=2.90"></script>
   </body>
 </html>
