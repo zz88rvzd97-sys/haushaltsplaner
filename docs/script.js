@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.91
+ * Haushaltsplaner Version 2.92
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.91';
+  const APP_VERSION = '2.92';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -1291,14 +1291,14 @@
     if (!state.budgetTopUps || typeof state.budgetTopUps !== 'object') state.budgetTopUps = {};
     const defaults = {
       fuel: { name: 'Tankgeld', startMonth: '2026-07' },
-      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', targetAmount: 550, targetStartMonth: '2026-06' },
+      groceries: { name: 'Einkaufsgeld', startMonth: '2026-07', targetAmount: 500, targetStartMonth: '2026-06' },
     };
     Object.entries(defaults).forEach(([key, cfg]) => {
       const entry = state.budgetTopUps[key] && typeof state.budgetTopUps[key] === 'object' ? state.budgetTopUps[key] : {};
       entry.name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : cfg.name;
       entry.startMonth = isMonthKey(entry.startMonth) ? entry.startMonth : cfg.startMonth;
       if (key === 'groceries') {
-        entry.targetAmount = Number.isFinite(Number(entry.targetAmount)) && Number(entry.targetAmount) > 0 ? Number(entry.targetAmount) : Number(cfg.targetAmount || 550);
+        entry.targetAmount = Number.isFinite(Number(entry.targetAmount)) && Number(entry.targetAmount) > 0 ? Number(entry.targetAmount) : Number(cfg.targetAmount || 500);
         entry.targetStartMonth = isMonthKey(entry.targetStartMonth) ? entry.targetStartMonth : (cfg.targetStartMonth || '2026-06');
       }
       if (key === 'groceries') {
@@ -4167,7 +4167,7 @@
       },
       {
         title: 'Tankgeld',
-        text: 'Kilometerstände, Bons und Monatswerte prüfen',
+        text: 'Tankbons und Monatswerte prüfen',
         icon: '⌁',
         onClick: () => switchSection('tankcalc')
       },
@@ -7813,10 +7813,7 @@
     const manualTarget = getGroceryTargetOverride(monthKey);
     if (manualTarget != null) return manualTarget;
     if (isMonthKey(monthKey) && cfg && isMonthKey(cfg.targetStartMonth) && monthDiff(cfg.targetStartMonth, monthKey) >= 0) {
-      const initialTarget = Math.max(0, Number(cfg.targetAmount || 550));
-      if (monthKey === cfg.targetStartMonth) return initialTarget;
-      const stats = getGroceryAverageStats(monthKey, 12);
-      return stats.count > 0 ? stats.roundedAverage : initialTarget;
+      return Math.max(0, Number(cfg.targetAmount || 500));
     }
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
     return posts.reduce((sum, post) => sum + Number(post.amount || 0), 0);
@@ -7928,20 +7925,17 @@
       source = stats && stats.projectedCount > 0 ? `${stats.realCount} echt + ${stats.projectedCount} Prognose` : '12-Monats-Basis';
     } else if (type === 'groceries') {
       target = getFoodMoneyPlannedTarget(monthKey);
-      const stats = getGroceryAverageStats(monthKey, 12);
       const manualTarget = getGroceryTargetOverride(monthKey);
       source = manualTarget != null
         ? `Manuelle Vorgabe für ${formatMonthLabel(monthKey)}`
-        : (monthKey === getBudgetTopUpConfig('groceries').targetStartMonth || stats.count === 0
-          ? 'Startziel 550 €'
-          : `${stats.count} erfasste Monat(e) im Schnitt`);
+        : 'Festes Monatsziel';
     }
-    const balance = active ? getBudgetTopUpBalance(type, monthKey) : 0;
+    const balance = active && type !== 'groceries' ? getBudgetTopUpBalance(type, monthKey) : 0;
     const missing = Math.max(0, target - balance);
     const manualGroceryTarget = type === 'groceries' && getGroceryTargetOverride(monthKey) != null;
     const topUp = active
       ? (type === 'groceries'
-        ? (manualGroceryTarget ? roundMoney(missing) : roundUpToNextFifty(missing))
+        ? (manualGroceryTarget ? roundMoney(target) : roundUpToNextFifty(target))
         : roundUpToNextFive(missing))
       : target;
     return { type, month: monthKey, active, target, balance, missing, topUp, source };
@@ -9318,9 +9312,7 @@
 
     if (currentMonth >= TANK_REAL_DATA_START_MONTH) {
       const tankRecord = getTankHouseholdMonthlyRecord(currentMonth);
-      const hasTankData = !!getTankEntryForMonth('benny', currentMonth)
-        || !!getTankEntryForMonth('madeleine', currentMonth)
-        || getTankReceipts().some((receipt) => receipt.month === currentMonth);
+      const hasTankData = getTankReceipts().some((receipt) => receipt.month === currentMonth);
       if (hasTankData) {
         items.push({
           kind: isTankMonthClosed(currentMonth) ? 'success' : 'info',
@@ -9328,7 +9320,7 @@
           title: isTankMonthClosed(currentMonth) ? 'Tankmonat bestätigt' : 'Tankmonat noch nicht bestätigt',
           detail: isTankMonthClosed(currentMonth)
             ? `${formatMonthLabel(currentMonth)} ist abgeschlossen; ${euro(tankRecord.netCost)} und ${tankRecord.liters.toFixed(2)} l fließen ab dem Folgemonat in die Planung ein.`
-            : `Für ${formatMonthLabel(currentMonth)} sind Tankdaten vorhanden. Wenn alle Kilometerstände und Bons vollständig sind, bestätige den Monat im Tankgeld für die Folgeplanung.`
+            : `Für ${formatMonthLabel(currentMonth)} sind Tankdaten vorhanden. Bestätige den Monat, sobald die Tankbons vollständig sind, damit die Folgeplanung aktualisiert wird.`
         });
       }
     }
@@ -9943,14 +9935,6 @@
     const fuelNeedsAttention = fuel.active && (Number(fuel.target || 0) > 0.005 || Number(fuel.topUp || 0) > 0.005 || Number(fuel.balance || 0) > 0.005);
     if (fuelNeedsAttention) {
       add('Tankgeld', 'Rest Tankgeld eintragen', fuelRestEntered, `Rest ${euro(fuel.balance)} · Aufstockung ${euro(fuel.topUp)}.`, 'tankcalc');
-    }
-
-    const groceries = calculateBudgetTopUp('groceries', monthKey);
-    const groceriesCfg = getBudgetTopUpConfig('groceries');
-    const groceriesRestEntered = !groceries.active || Object.prototype.hasOwnProperty.call(groceriesCfg.balances || {}, monthKey);
-    const groceriesNeedAttention = groceries.active && (Number(groceries.target || 0) > 0.005 || Number(groceries.topUp || 0) > 0.005 || Number(groceries.balance || 0) > 0.005);
-    if (groceriesNeedAttention) {
-      add('Einkaufsgeld', 'Rest Einkaufsgeld eintragen', groceriesRestEntered, `Rest ${euro(groceries.balance)} · Aufstockung ${euro(groceries.topUp)}.`, 'groceries');
     }
 
     const activeDebtsForBalanceCheck = (state.debts || []).filter((debt) => Number(debt && debt.amountOpen || 0) > 0);
@@ -13465,175 +13449,6 @@ function showPersonalEditor(personId, editPost) {
   }
 
 
-  function renderTankMonthlyTracking(sub, personKey, labelText) {
-    const existing = getTankEntryForMonth(personKey, currentMonth) || {};
-    const previousEndKm = getPreviousTankEndKm(personKey, currentMonth);
-    const automaticStartKm = existing.month ? Number(existing.startKm || 0) : previousEndKm;
-    const needsManualStart = automaticStartKm === null;
-    const monthlyRecord = getTankMonthlyRecord(personKey, currentMonth);
-    const householdRecord = getTankHouseholdMonthlyRecord(currentMonth);
-    const currentKmShare = householdRecord.km > 0 ? monthlyRecord.km / householdRecord.km : 0;
-    const personIncome = getIncomeWeightForPerson(personKey, currentMonth);
-    const householdIncome = ['benny', 'madeleine']
-      .reduce((sum, key) => sum + getIncomeWeightForPerson(key, currentMonth), 0);
-    const plannedIncomeShare = householdIncome > 0 ? personIncome / householdIncome : 0.5;
-
-    const tracking = document.createElement('div');
-    tracking.className = 'sub-card tank-monthly-tracking';
-    tracking.appendChild(createUiEl('h4', '', 'Reale Kilometer'));
-    tracking.appendChild(createUiEl('p', 'small muted', 'Du trägst nur den aktuellen Kilometerstand ein. Der Endstand des Vormonats wird automatisch als Start übernommen. Nur beim allerersten Eintrag ist zusätzlich ein Startstand nötig.'));
-
-    tracking.appendChild(createSummaryMetrics([
-      { label: 'Gefahren im Monat', value: monthlyRecord.km ? `${monthlyRecord.km.toFixed(0)} km` : '—', kind: monthlyRecord.km ? 'success' : 'warning' },
-      { label: 'Anteil dieser Monats-km', value: householdRecord.km > 0 ? `${(currentKmShare * 100).toFixed(1)} %` : '—' },
-      { label: 'Anteil nach Lohnabzug', value: `${(plannedIncomeShare * 100).toFixed(1)} %`, kind: plannedIncomeShare > 0 ? 'success' : 'warning' }
-    ]));
-
-    const form = document.createElement('div');
-    form.className = 'row tank-entry-form';
-    const monthInfo = createUiEl('div', 'tank-entry-month');
-    monthInfo.appendChild(createUiEl('label', '', 'Monat'));
-    monthInfo.appendChild(createUiEl('strong', '', formatMonthLabel(currentMonth)));
-    form.appendChild(monthInfo);
-    if (!needsManualStart) {
-      const startInfo = createUiEl('div', 'tank-auto-start');
-      startInfo.appendChild(createUiEl('label', '', 'Start automatisch'));
-      startInfo.appendChild(createUiEl('strong', '', `${Number(automaticStartKm || 0).toFixed(0)} km`));
-      startInfo.appendChild(createUiEl('small', 'muted', existing.month ? 'Bereits für diesen Monat gespeichert' : 'Endstand aus dem Vormonat'));
-      form.appendChild(startInfo);
-    }
-    const fields = needsManualStart
-      ? [
-        ['startKm', 'Erster Startstand', 'number', existing.startKm || ''],
-        ['endKm', 'Aktueller Kilometerstand', 'number', existing.endKm || '']
-      ]
-      : [
-        ['endKm', 'Aktueller Kilometerstand', 'number', existing.endKm || '']
-      ];
-    const inputs = {};
-    fields.forEach(([key, label, type, value]) => {
-      const wrap = document.createElement('div');
-      const lab = document.createElement('label');
-      lab.textContent = label;
-      const input = document.createElement('input');
-      input.type = type;
-      input.step = type === 'number' ? '1' : undefined;
-      if (type === 'number') input.min = '0';
-      input.value = value;
-      inputs[key] = input;
-      wrap.appendChild(lab);
-      wrap.appendChild(input);
-      form.appendChild(wrap);
-    });
-    const noteWrap = document.createElement('div');
-    const noteLab = document.createElement('label');
-    noteLab.textContent = 'Notiz Kilometerstand';
-    const noteInput = document.createElement('input');
-    noteInput.type = 'text';
-    noteInput.placeholder = 'z. B. Monatsende abgelesen';
-    noteInput.value = existing.note || '';
-    inputs.note = noteInput;
-    noteWrap.appendChild(noteLab);
-    noteWrap.appendChild(noteInput);
-    form.appendChild(noteWrap);
-    tracking.appendChild(form);
-
-    const btnRow = document.createElement('div');
-    btnRow.className = 'row';
-    const saveBtn = document.createElement('button');
-    saveBtn.type = 'button';
-    saveBtn.className = 'success';
-    saveBtn.textContent = 'Kilometerstand speichern';
-    saveBtn.addEventListener('click', () => {
-      if (!isMonthKey(currentMonth) || currentMonth < TANK_REAL_DATA_START_MONTH) return alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
-      const startKm = needsManualStart ? parseMoneyInput(inputs.startKm.value) : Number(automaticStartKm || 0);
-      const endKm = parseMoneyInput(inputs.endKm.value);
-      if (!Number.isFinite(startKm) || !Number.isFinite(endKm) || endKm < startKm) return alert('Bitte gültige Kilometerstände eintragen. Der Endstand darf nicht kleiner als der Startstand sein.');
-      reopenTankMonthAfterEdit(currentMonth);
-      const currentRecord = getTankMonthlyRecord(personKey, currentMonth);
-      const entry = upsertTankMonthlyEntry(personKey, {
-        month: currentMonth,
-        startKm,
-        endKm,
-        liters: currentRecord.liters,
-        paid: currentRecord.paid,
-        cashback: currentRecord.cashback,
-        note: inputs.note.value
-      });
-      syncTankgeldExpense(personKey, { silent: true });
-      addChangeLog('Tankgeld', `${labelText}: Kilometerstand ${formatMonthLabel(entry.month)} gespeichert · ${entry.km.toFixed(0)} km`, entry.month);
-      saveState();
-      render();
-    });
-    btnRow.appendChild(saveBtn);
-    if (existing.month) {
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'danger';
-      delBtn.textContent = 'Kilometerstand löschen';
-      delBtn.addEventListener('click', () => {
-        if (confirm(`Kilometerstand für ${labelText} in ${formatMonthLabel(currentMonth)} löschen? Tankbons bleiben erhalten.`)) {
-          reopenTankMonthAfterEdit(currentMonth);
-          deleteTankMonthlyEntry(personKey, currentMonth);
-          syncTankgeldExpense(personKey, { silent: true });
-          saveState();
-          render();
-        }
-      });
-      btnRow.appendChild(delBtn);
-    }
-    tracking.appendChild(btnRow);
-
-    const kmSuggestion = getTankKmPlanSuggestion(personKey, currentMonth);
-    const cfg = getTankCalcData(personKey);
-    if (kmSuggestion && Math.abs(Number(cfg.kmPerMonth || 0) - kmSuggestion.km) >= 10) {
-      const suggestion = createUiEl('div', 'notice info tank-km-suggestion');
-      const copy = createUiEl('span');
-      copy.appendChild(createUiEl('strong', '', `Realistische Planung: etwa ${kmSuggestion.km.toFixed(0)} km pro Monat`));
-      copy.appendChild(createUiEl('small', 'muted', `Automatisch aus den letzten ${kmSuggestion.count} bestätigten Monaten berechnet. Deine bisherige Planung bleibt unverändert, bis du zustimmst.`));
-      const applySuggestion = document.createElement('button');
-      applySuggestion.type = 'button';
-      applySuggestion.className = 'secondary compact';
-      applySuggestion.textContent = 'Als Planung übernehmen';
-      applySuggestion.addEventListener('click', () => {
-        cfg.kmPerMonth = kmSuggestion.km;
-        syncTankgeldExpense(personKey, { silent: true });
-        addChangeLog('Tankgeld', `${labelText}: Kilometerplanung auf ${kmSuggestion.km.toFixed(0)} km angepasst.`, currentMonth);
-        saveState();
-        render();
-      });
-      suggestion.appendChild(copy);
-      suggestion.appendChild(applySuggestion);
-      tracking.appendChild(suggestion);
-    }
-
-    const combinedMonths = getTankRealMonthlyRecords(personKey, currentMonth)
-      .filter((entry) => entry.month >= TANK_REAL_DATA_START_MONTH);
-    if (combinedMonths.length) {
-      const details = document.createElement('details');
-      details.className = 'compact-details';
-      const summary = document.createElement('summary');
-      summary.textContent = `Monatsauswertung anzeigen (${combinedMonths.length})`;
-      details.appendChild(summary);
-      const table = document.createElement('table');
-      table.className = 'list-table compact-table';
-      table.innerHTML = '<thead><tr><th>Monat</th><th>Status</th><th>Gefahren</th><th>Anteil der km</th></tr></thead>';
-      const tbody = document.createElement('tbody');
-      combinedMonths.slice(0, 12).forEach((entry) => {
-        const tr = document.createElement('tr');
-        const monthTotal = getTankHouseholdMonthlyRecord(entry.month);
-        const kmShare = monthTotal.km > 0 ? (entry.km / monthTotal.km) * 100 : 0;
-        tr.innerHTML = `<td>${formatMonthLabel(entry.month)}</td><td>${isTankMonthClosed(entry.month) ? '<span class="pill success">bestätigt</span>' : '<span class="pill warning">offen</span>'}</td><td>${entry.km.toFixed(0)} km</td><td>${monthTotal.km > 0 ? `${kmShare.toFixed(1)} %` : '-'}</td>`;
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      details.appendChild(table);
-      tracking.appendChild(details);
-    }
-
-    sub.appendChild(tracking);
-  }
-
   function renderTankReceiptTracking(card) {
     const receipts = getTankReceipts();
     const currentReceipts = receipts.filter((receipt) => receipt.month === currentMonth);
@@ -13765,19 +13580,11 @@ function showPersonalEditor(personId, editPost) {
       return;
     }
 
-    const smartEntry = getTankEntryForMonth('benny', currentMonth);
-    const seatEntry = getTankEntryForMonth('madeleine', currentMonth);
-    const smart = getTankMonthlyRecord('benny', currentMonth);
-    const seat = getTankMonthlyRecord('madeleine', currentMonth);
     const total = getTankHouseholdMonthlyRecord(currentMonth);
     const closed = isTankMonthClosed(currentMonth);
-    const smartShare = total.km > 0 ? (smart.km / total.km) * 100 : 0;
-    const seatShare = total.km > 0 ? (seat.km / total.km) * 100 : 0;
 
-    box.appendChild(createUiEl('p', 'small muted', 'Wenn Kilometerstände und Tankbons für den Monat vollständig sind, bestätigst du den Monat hier. Danach fließen die tatsächlichen Kosten des Kraftstoffvorrats in die nächsten 12 Monate ein; eure Einzahlungen werden weiterhin nach dem Einkommen des jeweiligen Monats verteilt.'));
+    box.appendChild(createUiEl('p', 'small muted', 'Wenn die Tankbons des Monats vollständig sind, bestätigst du den Monat hier. Danach fließen die tatsächlichen Kraftstoffkosten in die Folgeplanung ein; eure Einzahlungen werden weiterhin nach dem Einkommen des jeweiligen Monats verteilt. Kilometerstände sind dafür nicht nötig.'));
     box.appendChild(createSummaryMetrics([
-      { label: 'Smart gefahren', value: `${smart.km.toFixed(0)} km`, hint: total.km > 0 ? `${smartShare.toFixed(1)} % der Kilometer` : 'noch keine Kilometer' },
-      { label: 'Seat gefahren', value: `${seat.km.toFixed(0)} km`, hint: total.km > 0 ? `${seatShare.toFixed(1)} % der Kilometer` : 'noch keine Kilometer' },
       { label: 'Kraftstoff gekauft', value: `${total.liters.toFixed(2)} l` },
       { label: 'Ausgegeben netto', value: euro(total.netCost), kind: total.netCost > 0 ? 'success' : 'warning' },
       { label: 'Status', value: closed ? '<span class="pill success">Bestätigt</span>' : '<span class="pill warning">Noch offen</span>' }
@@ -13791,7 +13598,6 @@ function showPersonalEditor(personId, editPost) {
       closeBtn.className = 'success';
       closeBtn.textContent = 'Monat bestätigen & Folgeplanung berechnen';
       closeBtn.addEventListener('click', () => {
-        if (!smartEntry || !seatEntry) return alert('Bitte zuerst für Smart und Seat die Kilometerstände dieses Monats speichern. Bei einem nicht gefahrenen Auto können Start- und Endstand gleich sein.');
         if (!(total.liters > 0) || !(total.netCost > 0)) return alert('Bitte zuerst mindestens einen vollständigen Tankbon mit Litern und Betrag speichern.');
         setTankMonthClosed(currentMonth, true);
         const nextPlanMonth = nextMonth(currentMonth);
@@ -13952,20 +13758,18 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', 'Einkaufsgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Das Monatsziel wird automatisch aus bis zu 12 erfassten Monaten berechnet. Für einen einzelnen Monat kannst du es überschreiben. Die persönlichen Anteile werden nach verfügbarem Einkommen verteilt und jeweils vom eigenen Lohnkonto bezahlt.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Das Einkaufsgeld nutzt ein festes Monatsziel. Übriges Bargeld kommt ins Sparglas und wird nicht vom nächsten Monatsziel abgezogen. Die persönlichen Anteile werden nach verfügbarem Einkommen verteilt und jeweils vom eigenen Lohnkonto bezahlt.'));
 
     const calc = getGroceryTopUpAllocation(currentMonth);
-    const stats = getGroceryAverageStats(currentMonth, 12);
     const config = getBudgetTopUpConfig('groceries');
     const manualTarget = getGroceryTargetOverride(currentMonth);
     const basisText = manualTarget != null
       ? `Manuell für ${formatMonthLabel(currentMonth)}`
-      : (stats.count ? `${stats.count} Monat(e) · Ø ${euro(stats.average)}` : 'Startziel 550 €');
+      : 'Festes Monatsziel';
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : 'automatisch berechnet' },
+      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : 'fester Planwert' },
       { label: 'Berechnungsbasis', value: basisText },
-      { label: 'Rest vom Vormonat', value: calc.active ? euro(calc.balance) : 'ab Juli 2026' },
-      { label: 'Aufstocken', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'ab Juli 2026'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' }
+      { label: 'Einzahlen', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'ab Juli 2026'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' }
     ]));
     const groceryAllocationLabels = getFoodMoneyPosts()
       .filter((post) => isPostActiveInMonth(post, currentMonth))
@@ -13980,7 +13784,7 @@ function showPersonalEditor(personId, editPost) {
     const targetEditor = document.createElement('div');
     targetEditor.className = 'sub-card grocery-target-editor';
     targetEditor.appendChild(createUiEl('h4', '', `Monatsziel für ${formatMonthLabel(currentMonth)}`));
-    targetEditor.appendChild(createUiEl('p', 'small muted', 'Die Änderung gilt nur für den ausgewählten Monat. Folgemonate werden weiterhin automatisch berechnet.'));
+    targetEditor.appendChild(createUiEl('p', 'small muted', 'Die Änderung gilt nur für den ausgewählten Monat. Für andere Monate gilt das feste Monatsziel.'));
     const targetRow = document.createElement('div');
     targetRow.className = 'row';
     const targetInput = document.createElement('input');
@@ -14008,7 +13812,7 @@ function showPersonalEditor(personId, editPost) {
     const automaticBtn = document.createElement('button');
     automaticBtn.type = 'button';
     automaticBtn.className = 'secondary';
-    automaticBtn.textContent = 'Wieder automatisch berechnen';
+    automaticBtn.textContent = 'Festes Monatsziel wiederherstellen';
     automaticBtn.disabled = manualTarget == null;
     automaticBtn.addEventListener('click', () => {
       setGroceryTargetOverride(currentMonth, null);
@@ -14016,7 +13820,7 @@ function showPersonalEditor(personId, editPost) {
       getFoodMoneyPosts().forEach((post) => {
         if (!isPostPaidForMonth(post, currentMonth)) setPostAmountForMonth(post, currentMonth, Number(automaticCalc.allocations && automaticCalc.allocations[post.id] || 0), 'once');
       });
-      addChangeLog('Einkaufsgeld', `Monatsziel ${formatMonthLabel(currentMonth)} wieder auf automatische Berechnung gestellt.`, currentMonth);
+      addChangeLog('Einkaufsgeld', `Festes Monatsziel für ${formatMonthLabel(currentMonth)} wiederhergestellt.`, currentMonth);
       saveState();
       render();
     });
@@ -14029,153 +13833,36 @@ function showPersonalEditor(personId, editPost) {
     info.className = 'info-box';
     if (calc.active) {
       info.innerHTML = manualTarget != null
-        ? `<strong>Manuelle Monatsvorgabe:</strong> ${euro(calc.target)} Monatsziel − ${euro(calc.balance)} Rest = <strong>${euro(calc.topUp)}</strong> exakt aufzufüllen.`
-        : `<strong>Berechnung:</strong> ${euro(calc.target)} Monatsziel − ${euro(calc.balance)} Rest = ${euro(calc.missing)} Bedarf; auf die nächsten 50 € aufgerundet werden <strong>${euro(calc.topUp)}</strong> aufgefüllt.`;
+        ? `<strong>Manuelle Monatsvorgabe:</strong> Für diesen Monat werden <strong>${euro(calc.topUp)}</strong> eingeplant.`
+        : `<strong>Festes Monatsziel:</strong> ${euro(calc.target)}; eingeplant werden <strong>${euro(calc.topUp)}</strong>. Übriges Geld kommt ins Sparglas.`;
     } else if (currentMonth === config.targetStartMonth) {
-      info.innerHTML = '<strong>Startmonat:</strong> Für Juni 2026 gilt das Startziel von <strong>550,00 €</strong>. Den verbleibenden Rest trägst du ab Juli ein.';
-    } else if (stats.count) {
-      info.innerHTML = `<strong>Vorschau:</strong> Der bisherige Ausgabendurchschnitt beträgt ${euro(stats.average)}; das auf volle 50 € gerundete Ziel wäre <strong>${euro(stats.roundedAverage)}</strong>. Die Aufstockung beginnt ab Juli 2026.`;
+      info.innerHTML = `<strong>Startmonat:</strong> Für ${formatMonthLabel(currentMonth)} gilt das feste Monatsziel von <strong>${euro(calc.target)}</strong>.`;
     } else {
-      info.innerHTML = '<strong>Noch nicht aktiv:</strong> Das Startziel von 550,00 € gilt ab Juni 2026; eine Rest-Aufstockung ist ab Juli möglich.';
+      info.innerHTML = `<strong>Noch nicht aktiv:</strong> Das feste Monatsziel von ${euro(calc.target)} gilt ab ${formatMonthLabel(config.targetStartMonth)}.`;
     }
     card.appendChild(info);
 
-    if (calc.active) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      const restInput = document.createElement('input');
-      restInput.type = 'text';
-      restInput.inputMode = 'decimal';
-      restInput.placeholder = 'z. B. 43,20';
-      restInput.value = calc.balance ? formatNumberInput(calc.balance) : '';
-      const noteInput = document.createElement('input');
-      noteInput.type = 'text';
-      noteInput.value = config.notes[currentMonth] || '';
-      noteInput.placeholder = 'z. B. Rest aus dem Vormonat';
-      row.appendChild(createLabelInput('Rest Einkaufsgeld', restInput));
-      row.appendChild(createLabelInput('Notiz', noteInput));
-      card.appendChild(row);
-
-      const saveBtn = document.createElement('button');
-      saveBtn.type = 'button';
-      saveBtn.className = 'success';
-      saveBtn.textContent = 'Rest speichern & Aufstockung übernehmen';
-      saveBtn.addEventListener('click', () => {
-        const rest = parseMoneyInput(restInput.value || 0);
-        if (!Number.isFinite(rest) || rest < 0) return alert('Bitte einen gültigen Restbetrag eingeben.');
-        setBudgetTopUpBalance('groceries', currentMonth, rest, noteInput.value);
-        const savedCalc = getGroceryTopUpAllocation(currentMonth);
-        syncGroceryTopUpExpense(currentMonth);
-        addChangeLog('Einkaufsgeld', `Rest ${euro(rest)} gespeichert; Aufstockung ${euro(savedCalc.topUp)} übernommen.`, currentMonth);
-        saveState();
-        render();
-      });
-      card.appendChild(saveBtn);
-    }
     parent.appendChild(card);
   }
 
   function renderGroceries() {
     if (!grocerySection) return;
     grocerySection.innerHTML = '';
-    const expenses = getGroceryExpenses();
-    const currentExpenses = expenses.filter((expense) => expense.month === currentMonth);
-    const spent = currentExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     const calc = getGroceryTopUpAllocation(currentMonth);
-    const difference = calc.target - spent;
 
     const card = document.createElement('div');
     card.className = 'card';
-    const header = document.createElement('div');
-    header.className = 'row';
     const title = document.createElement('h2');
     title.textContent = 'Einkaufsgeld';
-    title.style.flex = '1 1 auto';
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'primary';
-    addBtn.textContent = '+ Einkauf';
-    addBtn.addEventListener('click', () => showGroceryExpenseEditor());
-    header.appendChild(title);
-    header.appendChild(addBtn);
-    card.appendChild(header);
-    card.appendChild(createUiEl('p', 'small muted', 'Hier erfasst ihr eure tatsächlichen Einkäufe. Daraus berechnet die App für künftige Monate ein Einkaufsgeld aus den letzten bis zu 12 abgeschlossenen erfassten Monaten und rundet es auf volle 50 € auf.'));
+    card.appendChild(title);
+    card.appendChild(createUiEl('p', 'small muted', 'Einkäufe müssen nicht einzeln eingetragen werden. Hier seht ihr nur das geplante Monatsbudget und die Aufteilung auf eure Lohnkonten.'));
     card.appendChild(createSummaryMetrics([
       { label: `Ziel ${formatMonthLabel(currentMonth)}`, value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
-      { label: 'Ausgegeben', value: euro(spent), kind: spent > calc.target && calc.target > 0 ? 'danger' : '' },
-      { label: difference >= 0 ? 'Noch im Ziel' : 'Über Ziel', value: euro(Math.abs(difference)), kind: difference < 0 ? 'danger' : 'success' },
-      { label: 'Erfasste Einkäufe', value: String(currentExpenses.length) }
+      { label: calc.active ? 'Aufstockung' : 'Status', value: calc.active ? euro(calc.topUp) : 'Noch nicht aktiv', kind: calc.active ? 'success' : 'warning' }
     ]));
-
-    if (!currentExpenses.length) {
-      card.appendChild(createUiEl('p', 'small muted', `Für ${formatMonthLabel(currentMonth)} sind noch keine Einkäufe erfasst. Frühere Monate kannst du ebenfalls auswählen und nachtragen, damit die Berechnung schneller eine 12-Monats-Basis erhält.`));
-    } else {
-      const table = document.createElement('table');
-      table.className = 'list-table';
-      table.innerHTML = '<thead><tr><th>Datum</th><th>Einkauf</th><th>Betrag</th><th>Zahlungsweg</th><th>Notiz</th><th>Aktion</th></tr></thead>';
-      const tbody = document.createElement('tbody');
-      currentExpenses.forEach((expense) => {
-        const tr = document.createElement('tr');
-        const dateTd = document.createElement('td');
-        dateTd.textContent = expense.date || '-';
-        const nameTd = document.createElement('td');
-        nameTd.textContent = expense.name;
-        const amountTd = document.createElement('td');
-        amountTd.textContent = euro(expense.amount);
-        const paymentTd = document.createElement('td');
-        paymentTd.textContent = getHouseholdPaymentMethodLabel(expense.paymentMethod);
-        const noteTd = document.createElement('td');
-        noteTd.textContent = expense.note || '-';
-        const actionTd = document.createElement('td');
-        actionTd.appendChild(createActionMenu([
-          { label: 'Bearbeiten', className: 'primary', onClick: () => showGroceryExpenseEditor(expense) },
-          { label: 'Löschen', className: 'danger', onClick: () => {
-            if (confirm(`"${expense.name}" löschen?`)) {
-              deleteGroceryExpense(expense.id);
-              addChangeLog('Einkaufsgeld', `Einkauf gelöscht: ${expense.name} · ${euro(expense.amount)}.`, expense.month);
-              saveState();
-              render();
-            }
-          } }
-        ]));
-        tr.appendChild(dateTd);
-        tr.appendChild(nameTd);
-        tr.appendChild(amountTd);
-        tr.appendChild(paymentTd);
-        tr.appendChild(noteTd);
-        tr.appendChild(actionTd);
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      card.appendChild(table);
-    }
     grocerySection.appendChild(card);
 
     renderGroceryTopUpCard(grocerySection);
-
-    const totals = getGroceryMonthlyTotals().slice(0, 12);
-    const history = document.createElement('div');
-    history.className = 'card';
-    history.appendChild(createUiEl('h3', '', 'Monatsverlauf'));
-    history.appendChild(createUiEl('p', 'small muted', 'Das Ziel eines Monats nutzt nur die davor abgeschlossenen, erfassten Monate. So verändert ein noch laufender Einkaufsmonat das aktuelle Budget nicht rückwirkend.'));
-    if (!totals.length) {
-      history.appendChild(createUiEl('p', 'small muted', 'Noch kein Einkaufsverlauf vorhanden.'));
-    } else {
-      const table = document.createElement('table');
-      table.className = 'list-table';
-      table.innerHTML = '<thead><tr><th>Monat</th><th>Einkäufe</th><th>Ausgegeben</th><th>Ziel in diesem Monat</th><th>Abweichung</th></tr></thead>';
-      const tbody = document.createElement('tbody');
-      totals.forEach((row) => {
-        const target = getFoodMoneyPlannedTarget(row.month);
-        const delta = target - row.amount;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${formatMonthLabel(row.month)}</td><td>${row.count}</td><td>${euro(row.amount)}</td><td>${euro(target)}</td><td>${delta >= 0 ? euro(delta) + ' übrig' : euro(Math.abs(delta)) + ' darüber'}</td>`;
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      history.appendChild(table);
-    }
-    grocerySection.appendChild(history);
   }
 
   function showSmokingExpenseEditor(expense = null) {
@@ -15717,8 +15404,6 @@ function showPersonalEditor(personId, editPost) {
         { label: 'Preis genutzt', value: tankBudget.priceUsed ? `${tankBudget.priceUsed.toFixed(3)} €/l` : (tankBudget.avgStats && tankBudget.avgStats.count ? 'echter Schnitt' : '—'), kind: allocatedTankBudget > 0 ? 'success' : 'warning' },
         { label: 'Deine Einzahlung', value: `${euro(allocatedTankBudget)}`, kind: allocatedTankBudget > 0 ? 'success' : 'warning' }
       ]));
-
-      renderTankMonthlyTracking(sub, personKey, labelText);
 
       const linkedTankPost = getTankExpensePost(personKey);
       const linkInfo = document.createElement('div');
