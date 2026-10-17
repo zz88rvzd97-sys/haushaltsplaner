@@ -2862,6 +2862,14 @@ html, body {
 .compact-details > .card,
 .compact-details > table,
 .compact-details > .list-table { margin: 0; border-radius: 0; box-shadow: none; }
+.debt-details > .debt-month-assistant-card,
+.debt-details > .debt-balance-review-card { margin: 0 14px 14px; }
+.debt-details > .debt-list-details-content,
+.debt-details > .debt-forecast-details-content,
+.debt-details > .debt-clarification-card { margin: 0; padding: 0 14px 14px; }
+.debt-details > .debt-list-details-content > .list-table { margin: 0; }
+.debt-details > .debt-forecast-details-content > * { margin-left: 0; margin-right: 0; }
+.debt-details > .debt-clarification-card > p { margin-top: 0; }
 .backup-advanced-body {
   display: grid;
   gap: 14px;

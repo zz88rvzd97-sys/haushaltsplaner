@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.92
+ * Haushaltsplaner Version 2.93
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.92';
+  const APP_VERSION = '2.93';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -15675,6 +15675,17 @@ function showPersonalEditor(personId, editPost) {
     return ((plan && plan.rows) || []).find((entry) => entry.month === monthKey) || null;
   }
 
+  function createDebtDetails(summaryText, content, open = false) {
+    const details = document.createElement('details');
+    details.className = 'compact-details debt-details';
+    details.open = !!open;
+    const summary = document.createElement('summary');
+    summary.textContent = summaryText;
+    details.appendChild(summary);
+    details.appendChild(content);
+    return details;
+  }
+
   function renderDebtMonthlyAssistantCard(monthKey, plan = null) {
     if (!isMonthKey(monthKey)) return null;
     const activePlan = plan || buildSnowballPlan(monthKey, 120);
@@ -15689,18 +15700,21 @@ function showPersonalEditor(personId, editPost) {
     const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
     head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Hier siehst du die konkreten Zahlungen für den gewählten Monat. Der volle 800-€-Schulden-Pool wird im verfügbaren Betrag berücksichtigt. Was noch nicht sinnvoll gezahlt werden kann, bleibt als gebundene Schulden-Rücklage auf dem Tagesgeld.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Deine geplanten Zahlungen für diesen Monat. Der gesamte Schulden-Pool bleibt für Schulden reserviert.'));
     if (monthKey === snowballConfig.monthlyTargetStartMonth) {
       card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus September werden nicht übernommen. Ab Oktober zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
     }
     const debtSavingsDeposit = roundMoney(Number(row.debtSavingsDeposit || 0));
-    card.appendChild(createSummaryMetrics([
-      { label: 'Schulden-Pool', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
-      { label: 'Normale Raten', value: euro(row.base || 0) },
-      { label: 'Zusätzlich', value: euro(row.extra || 0), kind: Number(row.extra || 0) > 0 ? 'warning' : '' },
-      { label: 'Davon aufs Tagesgeld', value: euro(debtSavingsDeposit), kind: debtSavingsDeposit > 0 ? 'warning' : 'success', hint: 'Bleibt vollständig für Schulden gebunden.' },
-      { label: 'Bereits bezahlt', value: euro(row.alreadyPaid || 0), kind: Number(row.alreadyPaid || 0) > 0 ? 'success' : '' }
-    ]));
+    const remainingThisMonth = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
+    const monthlyMetrics = [
+      { label: 'Monatsziel', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
+      { label: 'Bereits bezahlt', value: euro(row.alreadyPaid || 0), kind: Number(row.alreadyPaid || 0) > 0 ? 'success' : '' },
+      { label: 'Noch offen', value: euro(remainingThisMonth), kind: remainingThisMonth > 0.005 ? 'warning' : 'success' }
+    ];
+    if (debtSavingsDeposit > 0.005) {
+      monthlyMetrics.push({ label: 'Davon zurücklegen', value: euro(debtSavingsDeposit), kind: 'warning', hint: 'Bleibt für Schulden gebunden.' });
+    }
+    card.appendChild(createSummaryMetrics(monthlyMetrics));
 
     const grouped = new Map();
     (row.payments || []).forEach((payment) => {
@@ -15920,16 +15934,6 @@ function showPersonalEditor(personId, editPost) {
       }
     });
 
-    getDueDebtBalanceChecks(monthKey).forEach((debt) => {
-      items.push({
-        key: `balance-${debt.id}`,
-        title: `${debt.name}: Schuldenstand fällig`,
-        detail: debt.balanceCheckMode === 'monthly' ? 'Der monatlich einsehbare Stand wurde für diesen Monat noch nicht bestätigt.' : 'Die jährliche Standprüfung ist fällig.',
-        actionLabel: 'Stand eintragen',
-        action: () => showDebtBalanceCheckEditor(debt, monthKey)
-      });
-    });
-
     const activePlan = plan || buildSnowballPlan(monthKey, 120);
     const row = getDebtPlanRowForMonth(activePlan, monthKey);
     const payoffNames = new Set();
@@ -15954,14 +15958,9 @@ function showPersonalEditor(personId, editPost) {
   function renderDebtClarificationCard(monthKey, plan = null) {
     const items = getDebtClarificationItems(monthKey, plan);
     if (!items.length) return null;
-    const card = document.createElement('div');
-    card.className = 'sub-card debt-clarification-card';
-    const head = document.createElement('div');
-    head.className = 'compact-section-head';
-    head.appendChild(createUiEl('h3', '', 'Offene Klärungen'));
-    head.appendChild(createUiEl('span', 'pill warning', String(items.length)));
-    card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Diese Punkte blockieren nur ungeeignete Zusatzvorschläge. Normale vereinbarte Raten bleiben weiterhin im Monatsplan.'));
+    const urgentItems = items.filter((item) => item.key.startsWith('payment-info-') || item.key.startsWith('rate-'));
+    const details = document.createElement('div');
+    details.className = 'debt-clarification-card';
     const list = document.createElement('div');
     list.className = 'debt-balance-review-list';
     items.forEach((item) => {
@@ -15980,8 +15979,9 @@ function showPersonalEditor(personId, editPost) {
       row.appendChild(button);
       list.appendChild(row);
     });
-    card.appendChild(list);
-    return card;
+    details.appendChild(createUiEl('p', 'small muted', 'Diese Punkte betreffen den Zahlungsplan oder einen möglichen Zusatzbetrag. Vereinbarte Raten bleiben eingeplant.'));
+    details.appendChild(list);
+    return createDebtDetails(`Zahlungsplan klären · ${items.length}`, details, urgentItems.length > 0);
   }
 
 
@@ -16342,39 +16342,40 @@ function showPersonalEditor(personId, editPost) {
     if (!activeDebts.length) return null;
     activeDebts.forEach(ensureDebtConfig);
     const dueDebts = getDueDebtBalanceChecks(monthKey);
-    const monthlyDebts = activeDebts.filter((debt) => debt.balanceCheckMode === 'monthly');
-    const annualDebts = activeDebts.filter((debt) => debt.balanceCheckMode !== 'monthly');
-    const nextCheckMonths = activeDebts
-      .map((debt) => getNextDebtBalanceCheckMonth(debt, monthKey))
-      .filter(isMonthKey)
-      .sort();
+    const monthlyDue = dueDebts.filter((debt) => debt.balanceCheckMode === 'monthly');
+    const annualDue = dueDebts.filter((debt) => debt.balanceCheckMode !== 'monthly');
 
     const card = document.createElement('div');
-    card.className = 'card debt-balance-review-card';
+    card.className = 'sub-card debt-balance-review-card';
     const head = document.createElement('div');
     head.className = 'compact-section-head';
-    head.appendChild(createUiEl('h3', '', `Schuldenstände · ${formatMonthLabel(monthKey)}`));
-    head.appendChild(createUiEl('span', dueDebts.length ? 'pill warning' : 'pill success', dueDebts.length ? `${dueDebts.length} fällig` : 'aktuell'));
+    head.appendChild(createUiEl('h3', '', 'Schuldenstände prüfen'));
+    head.appendChild(createUiEl('span', monthlyDue.length ? 'pill warning' : (annualDue.length ? 'pill' : 'pill success'), monthlyDue.length ? `${monthlyDue.length} monatlich fällig` : (annualDue.length ? 'jährliche Prüfung' : 'aktuell')));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Einsehbare Schulden fragst du monatlich ab, alle anderen nur alle zwölf Monate. Neue und bisher nicht geprüfte Schulden sind zunächst einmal fällig.'));
-    card.appendChild(createSummaryMetrics([
-      { label: 'Jetzt fällig', value: String(dueDebts.length), kind: dueDebts.length ? 'warning' : 'success' },
-      { label: 'Monatlich', value: String(monthlyDebts.length) },
-      { label: 'Jährlich', value: String(annualDebts.length) },
-      { label: dueDebts.length ? 'Fällig seit' : 'Nächste Prüfung', value: nextCheckMonths[0] ? formatMonthLabel(nextCheckMonths[0]) : '—' }
-    ]));
+    card.appendChild(createUiEl('p', 'small muted', 'Monatliche Abfragen stehen direkt hier. Jährliche Prüfungen sind getrennt darunter.'));
 
-    if (!dueDebts.length) {
+    if (monthlyDue.length) {
+      const monthlyList = document.createElement('div');
+      monthlyList.className = 'debt-balance-review-list';
+      monthlyDue.forEach((debt) => monthlyList.appendChild(createDebtBalanceReviewRow(debt, monthKey)));
+      card.appendChild(monthlyList);
+    } else if (!annualDue.length) {
       const done = document.createElement('div');
       done.className = 'notice success';
       done.textContent = 'Für diesen Monat ist keine weitere Schuldenstandsabfrage nötig.';
       card.appendChild(done);
-      return card;
     }
 
-    const list = document.createElement('div');
-    list.className = 'debt-balance-review-list';
-    dueDebts.forEach((debt) => {
+    if (annualDue.length) {
+      const annualList = document.createElement('div');
+      annualList.className = 'debt-balance-review-list';
+      annualDue.forEach((debt) => annualList.appendChild(createDebtBalanceReviewRow(debt, monthKey)));
+      card.appendChild(createDebtDetails(`Jährliche Standprüfungen · ${annualDue.length}`, annualList));
+    }
+    return card;
+  }
+
+  function createDebtBalanceReviewRow(debt, monthKey) {
       const row = document.createElement('div');
       row.className = 'debt-balance-review-row';
       const info = document.createElement('div');
@@ -16418,10 +16419,7 @@ function showPersonalEditor(personId, editPost) {
       row.appendChild(info);
       row.appendChild(modeSelect);
       row.appendChild(checkBtn);
-      list.appendChild(row);
-    });
-    card.appendChild(list);
-    return card;
+      return row;
   }
 
   function renderDebts() {
@@ -16430,9 +16428,6 @@ function showPersonalEditor(personId, editPost) {
     card.className = 'card';
     const header = document.createElement('div');
     header.className = 'row';
-    const filterSelect = document.createElement('select');
-    [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']].forEach(([value,label]) => { const opt = document.createElement('option'); opt.value = value; opt.textContent = label; if (debtFilter === value) opt.selected = true; filterSelect.appendChild(opt); });
-    filterSelect.addEventListener('change', (e) => { debtFilter = e.target.value; render(); });
     const addBtn = document.createElement('button');
     addBtn.textContent = '+ Neue Schuld';
     addBtn.className = 'primary';
@@ -16444,29 +16439,14 @@ function showPersonalEditor(personId, editPost) {
     header.appendChild(addBtn);
     card.appendChild(header);
 
-    let dueSum = 0;
-    let openThisMonth = 0;
     let totalDebtSum = 0;
     let activeDebts = 0;
     state.debts.forEach((d) => {
       ensureDebtConfig(d);
       const openAmount = Number(d.amountOpen || 0);
-      const monthlyRate = Number(getDebtRateForMonth(d, currentMonth) || 0);
-      const plannedAmount = getDebtPlannedAmountForMonth(d, currentMonth);
-      const coveredAmount = getDebtCoveredAmountForMonth(d, currentMonth);
-      const openMonthAmount = getDebtOpenAmountForMonth(d, currentMonth);
       totalDebtSum += openAmount;
       if (openAmount > 0) activeDebts += 1;
-
-      // Monatsplan = bereits in diesem Monat bezahlte Schulden + weiterhin fällige Schulden.
-      // Wichtig: Nach einer Zahlung springt nextDueMonth auf den Folgemonat. Trotzdem darf die
-      // bezahlte Mai-Rate nicht aus dem Mai-Plan verschwinden, sonst wird „Noch offen“ zu klein.
-      if (plannedAmount > 0 || coveredAmount > 0 || monthlyRate > 0) {
-        dueSum += plannedAmount;
-        openThisMonth += openMonthAmount;
-      }
     });
-    const paidSum = getDebtPaidAmountForMonth(currentMonth);
     const estimatedDebtFree = state.debts
       .filter((d) => Number(d.amountOpen || 0) > 0 && d.paymentType === 'installment' && getDebtRateForMonth(d, currentMonth) > 0)
       .map((d) => estimateDebtEndMonth(d))
@@ -16498,25 +16478,8 @@ function showPersonalEditor(personId, editPost) {
       });
     }
 
-    // Bezahlte Schuldzahlungen bleiben für den Monat fest. Der offene Plan wird
-    // danach nur noch für offene Schulden gewertet. So wird ein bereits bezahlter
-    // Betrag nicht bei späteren Änderungen an Lohn/Kosten/Rücklagen rückwirkend verändert.
-    const currentOpenPlannedDebtTotal = currentSnowballRow
-      ? Number(currentSnowballRow.plannedOpen || 0)
-      : Math.max(0, dueSum - paidSum);
-    const currentSnowballTotal = currentSnowballRow ? Number(currentSnowballRow.extra || 0) : 0;
-    const currentPlannedDebtTotal = currentSnowballRow
-      ? Number(currentSnowballRow.total || 0)
-      : paidSum + currentOpenPlannedDebtTotal;
-    if (currentPlannedDebtTotal > 0) {
-      dueSum = currentPlannedDebtTotal;
-      openThisMonth = currentOpenPlannedDebtTotal;
-    }
     card.appendChild(createSummaryMetrics([
-      { label: 'Restschuld gesamt', value: `${euro(totalDebtSum)}`, kind: totalDebtSum > 0 ? 'danger' : 'success' },
-      { label: 'Plan diesen Monat', value: `${euro(dueSum)}`, kind: dueSum > 0 ? 'warning' : '' },
-      { label: 'Bereits bezahlt', value: `${euro(paidSum)}`, kind: paidSum > 0 ? 'success' : '' },
-      { label: 'Noch offen', value: `${euro(openThisMonth)}`, kind: openThisMonth > 0 ? 'danger' : 'success' },
+      { label: 'Restschuld gesamt', value: euro(totalDebtSum), kind: totalDebtSum > 0 ? 'danger' : 'success' },
       { label: 'Aktive Schulden', value: String(activeDebts) },
       { label: 'Schuldenfrei nach Vorschlag', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : (estimatedDebtFree === '-' ? '-' : formatMonthLabel(estimatedDebtFree)) }
     ]));
@@ -16525,25 +16488,28 @@ function showPersonalEditor(personId, editPost) {
     const monthlyAssistantCard = renderDebtMonthlyAssistantCard(currentMonth, snowball);
     if (monthlyAssistantCard) card.appendChild(monthlyAssistantCard);
     const fixedBudgetSuggestionCard = renderMonthlyDebtBudgetSuggestionCard(currentMonth, snowball);
-    if (fixedBudgetSuggestionCard) card.appendChild(fixedBudgetSuggestionCard);
-    if (snowball && snowball.rows && snowball.rows.length) {
-      card.appendChild(renderDebtFreeForecastCard(snowball, currentMonth));
+    if (fixedBudgetSuggestionCard) {
+      const targetMonth = currentMonth < snowballConfig.monthlyTargetStartMonth
+        ? snowballConfig.monthlyTargetStartMonth
+        : currentMonth;
+      const suggestionRow = (snowball.rows || []).find((row) => row.month === targetMonth && Number(row.monthlyTarget || 0) > 0);
+      const suggestionSummary = `Zusatztilgungsvorschläge · ${euro(suggestionRow ? suggestionRow.extra || 0 : 0)}`;
+      card.appendChild(createDebtDetails(suggestionSummary, fixedBudgetSuggestionCard));
     }
-    if (snowball.rows.length > 0) {
-      card.appendChild(createSummaryMetrics([
-        { label: currentMonth >= snowballConfig.monthlyTargetStartMonth ? 'Festes Monatsziel' : 'Bisheriger Schulden-Pool', value: `${euro(currentSnowballRow && (currentSnowballRow.pool || currentSnowballRow.total) || currentPlannedDebtTotal)}` },
-        { label: 'Neue Regel ab Oktober', value: 'insgesamt 800 € pro Monat' },
-        { label: 'Plan aktueller Monat', value: `${euro(currentPlannedDebtTotal)}` },
-        { label: 'davon zusätzlich vorgeschlagen', value: `${euro(currentSnowballTotal)}` },
-        { label: 'Verteilung', value: 'kleinste geeignete offene Schuld zuerst' },
-        { label: 'Schuldenfrei nach Vorschlag', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : 'offen' }
-      ]));
+    const forecastDetails = document.createElement('div');
+    forecastDetails.className = 'debt-forecast-details-content';
+    if (snowball && snowball.rows && snowball.rows.length) {
+      forecastDetails.appendChild(renderDebtFreeForecastCard(snowball, currentMonth));
     }
     const fullPayoffReserveCard = currentMonth < snowballConfig.monthlyTargetStartMonth
       ? renderFullPayoffReserveCard(currentMonth, snowball)
       : null;
-    if (fullPayoffReserveCard) card.appendChild(fullPayoffReserveCard);
-    card.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
+    if (fullPayoffReserveCard) forecastDetails.appendChild(fullPayoffReserveCard);
+    const snowballCard = renderSnowballPlanCard(currentMonth);
+    if (snowballCard) forecastDetails.appendChild(snowballCard);
+    if (forecastDetails.children.length) {
+      card.appendChild(createDebtDetails('Prognose und Tilgungsweg', forecastDetails));
+    }
 
     let visibleDebts = state.debts.filter((d) => shouldShowDebtInMonth(d, currentMonth));
     visibleDebts = visibleDebts.filter((d) => {
@@ -16557,12 +16523,16 @@ function showPersonalEditor(personId, editPost) {
       return Number(d.amountOpen || 0) > 0 || paidAmount > 0;
     });
 
+    const debtListContent = document.createElement('div');
+    debtListContent.className = 'debt-list-details-content';
+    debtListContent.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
+
     if (visibleDebts.length === 0) {
       const p = document.createElement('p');
       p.textContent = state.debts.length === 0
         ? 'Keine Schulden eingetragen.'
         : 'Keine aktiven oder in diesem Monat abgeschlossenen Schulden sichtbar.';
-      card.appendChild(p);
+      debtListContent.appendChild(p);
     } else {
       const table = document.createElement('table');
       table.className = 'list-table';
@@ -16714,18 +16684,21 @@ function showPersonalEditor(personId, editPost) {
       });
 
       table.appendChild(tbody);
-      card.appendChild(table);
-
-      const info = document.createElement('p');
-      info.className = 'small muted';
-      info.innerHTML = `<strong>Monatsplan inklusive fest bezahlter Beträge:</strong> ${euro(dueSum)} · <strong>davon zusätzlich vorgeschlagen:</strong> ${euro(currentSnowballTotal)} · <strong>Bereits bezahlt:</strong> ${euro(paidSum)} · <strong>Noch zu bezahlen:</strong> ${euro(openThisMonth)}`;
-      card.appendChild(info);
+      debtListContent.appendChild(table);
     }
 
-    const snowballCard = renderSnowballPlanCard(currentMonth);
-    if (snowballCard) card.appendChild(snowballCard);
+    card.appendChild(createDebtDetails(`Schuldenliste und Verlauf · ${visibleDebts.length}`, debtListContent));
     const balanceReviewCard = renderDebtBalanceReviewCard(currentMonth);
-    if (balanceReviewCard) debtsSection.appendChild(balanceReviewCard);
+    if (balanceReviewCard) {
+      const checks = getDueDebtBalanceChecks(currentMonth);
+      const monthlyChecks = checks.filter((debt) => debt.balanceCheckMode === 'monthly').length;
+      const annualChecks = checks.length - monthlyChecks;
+      card.appendChild(createDebtDetails(
+        `Schuldenstände · ${monthlyChecks} monatlich · ${annualChecks} jährlich`,
+        balanceReviewCard,
+        monthlyChecks > 0
+      ));
+    }
     debtsSection.appendChild(card);
   }
 
