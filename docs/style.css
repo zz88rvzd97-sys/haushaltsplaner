@@ -5133,9 +5133,16 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   min-height: 82px;
 }
 
-.overview-focus-actions {
-  justify-content: flex-end;
-  margin-top: .9rem;
+.overview-focus-group {
+  grid-column: 1 / -1;
+  margin: .7rem 0 .1rem;
+  padding-bottom: .3rem;
+  border-bottom: 1px solid var(--ledger-line);
+  color: var(--hp-muted, #65756b);
+  font-size: .76rem;
+  font-weight: 750;
+  letter-spacing: .055em;
+  text-transform: uppercase;
 }
 
 .overview-more-details {

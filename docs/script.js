@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.94
+ * Haushaltsplaner Version 2.95
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.94';
+  const APP_VERSION = '2.95';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -9952,9 +9952,11 @@
     const fuel = calculateBudgetTopUp('fuel', monthKey);
     const fuelCfg = getBudgetTopUpConfig('fuel');
     const fuelRestEntered = !fuel.active || Object.prototype.hasOwnProperty.call(fuelCfg.balances || {}, monthKey);
-    const fuelNeedsAttention = fuel.active && (Number(fuel.target || 0) > 0.005 || Number(fuel.topUp || 0) > 0.005 || Number(fuel.balance || 0) > 0.005);
+    const fuelNeedsAttention = fuel.active
+      && !fuelRestEntered
+      && Number(fuel.balance || 0) > 0.005;
     if (fuelNeedsAttention) {
-      add('Tankgeld', 'Rest Tankgeld eintragen', fuelRestEntered, `Rest ${euro(fuel.balance)} · Aufstockung ${euro(fuel.topUp)}.`, 'tankcalc');
+      add('Tankgeld', 'Tankrest verbuchen', false, `${euro(fuel.balance)} Rest im Tanktopf.`, 'tankcalc');
     }
 
     const activeDebtsForBalanceCheck = (state.debts || []).filter((debt) => Number(debt && debt.amountOpen || 0) > 0);
@@ -10965,36 +10967,37 @@
     focusCard.appendChild(createUiEl(
       'p',
       'small muted',
-      'Laufende Kosten, Aufstockungen, verknüpfte Schuldenraten und der bestätigte Rest aus dem Vormonat werden automatisch vorbereitet. Hier erscheinen nur Punkte, die noch eine Entscheidung brauchen.'
+      'Hier stehen nur Punkte, die noch eine Aktion brauchen.'
     ));
 
     if (!tasks.length) {
       focusCard.appendChild(createUiEl('div', 'empty-state success', 'Für diesen Monat ist nichts Weiteres offen.'));
     } else {
       const taskList = createUiEl('div', 'todo-list overview-focus-list');
-      tasks.forEach((item) => {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = `todo-row ${item.kind || ''}`.trim();
-        const copy = document.createElement('span');
-        copy.appendChild(createUiEl('strong', '', item.title));
-        copy.appendChild(createUiEl('small', '', item.detail));
-        row.appendChild(copy);
-        row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
-        row.addEventListener('click', () => switchSection(item.section || 'overview'));
-        taskList.appendChild(row);
+      const taskGroups = [
+        { title: 'Geldeingänge', matches: (item) => item.area === 'Einkommen' || item.area === 'Gemeinsame Kosten' },
+        { title: 'Zahlungen', matches: (item) => item.area === 'Offene Zahlungen' },
+        { title: 'Prüfungen', matches: (item) => item.area !== 'Einkommen' && item.area !== 'Gemeinsame Kosten' && item.area !== 'Offene Zahlungen' }
+      ];
+      taskGroups.forEach((group) => {
+        const groupItems = tasks.filter(group.matches);
+        if (!groupItems.length) return;
+        taskList.appendChild(createUiEl('div', 'overview-focus-group', `${group.title} · ${groupItems.length}`));
+        groupItems.forEach((item) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = `todo-row ${item.kind || ''}`.trim();
+          const copy = document.createElement('span');
+          copy.appendChild(createUiEl('strong', '', item.title));
+          copy.appendChild(createUiEl('small', '', item.detail));
+          row.appendChild(copy);
+          row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
+          row.addEventListener('click', () => switchSection(item.section || 'overview'));
+          taskList.appendChild(row);
+        });
       });
       focusCard.appendChild(taskList);
     }
-
-    const focusActions = createUiEl('div', 'row overview-focus-actions');
-    const quickButton = document.createElement('button');
-    quickButton.type = 'button';
-    quickButton.className = 'primary compact';
-    quickButton.textContent = 'Schnell erfassen';
-    quickButton.addEventListener('click', showQuickCaptureModal);
-    focusActions.appendChild(quickButton);
-    focusCard.appendChild(focusActions);
     page.appendChild(focusCard);
     page.appendChild(kpiGrid);
 
