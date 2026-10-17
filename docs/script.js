@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.93
+ * Haushaltsplaner Version 2.94
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.93';
+  const APP_VERSION = '2.94';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -9182,7 +9182,7 @@
 
   function renderDataCheckAreaOverview(items, options = {}) {
     const compact = options.compact === true;
-    const summaries = getDataCheckAreaSummaries(items);
+    const summaries = getDataCheckAreaSummaries(items).filter((summary) => !options.actionableOnly || summary.danger > 0 || summary.warning > 0);
     const wrap = document.createElement('div');
     wrap.className = compact ? 'area-check-grid compact' : 'area-check-grid';
     summaries.forEach((summary) => {
@@ -9523,6 +9523,21 @@
     return 'openpayments';
   }
 
+  function getOpenPaymentOwnerLabel(item, group, accountId = '') {
+    if (group === 'Gemeinsame Kosten') return 'Gemeinsam';
+    const personId = item && (item.personId || item.ownerId);
+    if (personId) {
+      const person = getPersonById(personId)
+        || (state.persons || []).find((candidate) => normalizeTextKey(candidate.name) === normalizeTextKey(personId));
+      if (person && person.name) return person.name;
+      const normalizedPerson = normalizeAccountOwner(personId);
+      if (normalizedPerson === 'benny' || normalizedPerson === 'madeleine') return getAccountOwnerLabel(normalizedPerson);
+    }
+    const account = accountId ? getAccountById(accountId) : null;
+    if (account && account.owner) return getAccountOwnerLabel(account.owner);
+    return group === 'Persönliche Ausgaben' ? 'Person prüfen' : 'Nicht zugeordnet';
+  }
+
   function collectOpenPaymentsForMonth(monthKey = currentMonth) {
     normalizeAccountsConfig(false);
     const rows = [];
@@ -9537,6 +9552,7 @@
         const amount = Number(getEffectiveAmountForMonth(post, monthKey) || 0);
         if (!(amount > 0.005)) return;
         const accountId = post.accountId || inferAccountIdForPost(post) || '';
+        const linkedDebt = getLinkedDebtForPost(post);
         rows.push({
           id: `post:${post.id || generateId()}:${monthKey}`,
           targetType: 'post',
@@ -9544,13 +9560,14 @@
           batchEligible: !isOneTimePost(post) && !getLinkedSavingsGoal(post),
           group,
           name: post.name || 'Posten',
+          ownerLabel: getOpenPaymentOwnerLabel(post, group, accountId),
           amount,
           accountId,
           accountName: getAccountName(accountId),
           section: getOpenPaymentSectionForGroup(group),
           note: post.linkedSavingsGoalId
             ? `zurücklegen in ${getLinkedSavingsGoalName(post) || 'Rücklage'}`
-            : (post.linkedDebtId ? `verknüpft mit ${getLinkedDebtName(post) || 'Schuld'}` : '')
+            : (linkedDebt ? `Rate zu ${linkedDebt.name || 'Schuld'} · nur einmal gezählt` : '')
         });
       });
     };
@@ -9572,11 +9589,12 @@
         batchEligible: false,
         group: 'Schulden',
         name: debt.name || 'Schuld',
+        ownerLabel: getOpenPaymentOwnerLabel(debt, 'Schulden', accountId),
         amount: open,
         accountId,
         accountName: getAccountName(accountId),
         section: 'debts',
-        note: inferDebtPaymentType(debt) === 'one_time' ? 'Einmalzahlung' : ''
+        note: inferDebtPaymentType(debt) === 'one_time' ? 'Einmalzahlung' : 'Eigenständige Schuldenzahlung'
       });
     });
 
@@ -9684,12 +9702,14 @@
 
       const table = document.createElement('table');
       table.className = 'list-table compact-table';
-      table.innerHTML = '<thead><tr><th>Bereich</th><th>Posten</th><th>Betrag</th><th>Hinweis</th><th></th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Bereich</th><th>Posten · Person</th><th>Betrag</th><th>Hinweis</th><th></th></tr></thead>';
       const tbody = document.createElement('tbody');
       group.rows.slice(0, compact ? 4 : 999).forEach((row) => {
         const tr = document.createElement('tr');
         const tdGroup = document.createElement('td'); tdGroup.textContent = row.group;
-        const tdName = document.createElement('td'); tdName.textContent = row.name;
+        const tdName = document.createElement('td');
+        tdName.appendChild(createUiEl('strong', '', row.name));
+        tdName.appendChild(createUiEl('small', 'open-payment-owner', row.ownerLabel || 'Nicht zugeordnet'));
         const tdAmount = document.createElement('td'); tdAmount.textContent = euro(row.amount);
         const tdNote = document.createElement('td'); tdNote.textContent = row.note || 'offen';
         const tdAction = document.createElement('td');
@@ -9819,7 +9839,7 @@
         input.addEventListener('change', updateTotal);
         const copy = createUiEl('span');
         copy.appendChild(createUiEl('strong', '', row.name));
-        copy.appendChild(createUiEl('small', 'muted', `${row.group} · ${euro(row.amount)}`));
+        copy.appendChild(createUiEl('small', 'muted', `${row.ownerLabel || row.group} · ${euro(row.amount)}${row.note ? ` · ${row.note}` : ''}`));
         label.appendChild(input);
         label.appendChild(copy);
         list.appendChild(label);
@@ -10312,7 +10332,7 @@
     const success = items.filter((item) => item.kind === 'success').length;
     const info = items.filter((item) => item.kind === 'info').length;
     card.appendChild(createSummaryMetrics([
-      { label: 'Warnungen', value: String(warnings), kind: warnings > 0 ? 'warning' : 'success' },
+      { label: 'Zu prüfen', value: String(warnings), kind: warnings > 0 ? 'warning' : 'success' },
       { label: 'OK-Meldungen', value: String(success), kind: success > 0 ? 'success' : '' },
       { label: 'Hinweise', value: String(info) },
       { label: 'Geprüfter Monat', value: formatMonthLabel(currentMonth) }
@@ -10320,10 +10340,15 @@
     const runtimeNotice = renderRuntimeIssueNotice({ compact: true });
     if (runtimeNotice) card.appendChild(runtimeNotice);
 
+    const actionableItems = items
+      .filter((item) => item.kind === 'danger' || item.kind === 'warning')
+      .sort((a, b) => (a.kind === 'danger' ? 0 : 1) - (b.kind === 'danger' ? 0 : 1));
+    const supportingItems = items.filter((item) => item.kind !== 'danger' && item.kind !== 'warning');
     const areaTitle = document.createElement('h3');
-    areaTitle.textContent = 'Bereiche im Überblick';
+    areaTitle.textContent = actionableItems.length ? 'Bereiche mit offenen Prüfpunkten' : 'Prüfergebnis';
     card.appendChild(areaTitle);
-    card.appendChild(renderDataCheckAreaOverview(items));
+    if (actionableItems.length) card.appendChild(renderDataCheckAreaOverview(actionableItems, { actionableOnly: true }));
+    else card.appendChild(createUiEl('div', 'empty-state success', 'Keine offenen Prüfpunkte. Zusätzliche Informationen und bestandene Prüfungen sind weiter unten verfügbar.'));
 
     const repairRow = document.createElement('div');
     repairRow.className = 'row';
@@ -10360,21 +10385,43 @@
 
 
 
-    const table = document.createElement('table');
-    table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Status</th><th>Bereich</th><th>Prüfung</th><th>Details</th></tr></thead>';
-    const tbody = document.createElement('tbody');
-    items.forEach((item) => {
-      const tr = document.createElement('tr');
-      const label = item.kind === 'success' ? 'OK' : (item.kind === 'warning' ? 'Prüfen' : (item.kind === 'danger' ? 'Fehler' : 'Info'));
-      const cls = item.kind === 'success' ? 'success' : (item.kind === 'warning' ? 'warning' : (item.kind === 'danger' ? 'danger' : ''));
-      tr.innerHTML = `<td><span class="pill ${cls}">${label}</span></td><td>${item.area}</td><td>${item.title}</td><td>${item.detail}</td>`;
-      const actions = renderDataCheckItemActions(item);
-      if (actions) tr.children[3].appendChild(actions);
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    card.appendChild(table);
+    const appendItemsTable = (rows, parent = card) => {
+      const table = document.createElement('table');
+      table.className = 'list-table';
+      table.innerHTML = '<thead><tr><th>Status</th><th>Bereich</th><th>Prüfung</th><th>Details</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      rows.forEach((item) => {
+        const tr = document.createElement('tr');
+        const label = item.kind === 'success' ? 'OK' : (item.kind === 'warning' ? 'Prüfen' : (item.kind === 'danger' ? 'Fehler' : 'Info'));
+        const cls = item.kind === 'success' ? 'success' : (item.kind === 'warning' ? 'warning' : (item.kind === 'danger' ? 'danger' : ''));
+        const statusCell = document.createElement('td');
+        statusCell.appendChild(createUiEl('span', `pill ${cls}`, label));
+        const areaCell = createUiEl('td', '', item.area || 'System');
+        const titleCell = createUiEl('td', '', item.title || 'Prüfung');
+        const detailCell = createUiEl('td', '', item.detail || '');
+        const actions = renderDataCheckItemActions(item);
+        if (actions) detailCell.appendChild(actions);
+        tr.appendChild(statusCell);
+        tr.appendChild(areaCell);
+        tr.appendChild(titleCell);
+        tr.appendChild(detailCell);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      parent.appendChild(table);
+    };
+    if (actionableItems.length) appendItemsTable(actionableItems);
+    if (supportingItems.length) {
+      const details = document.createElement('details');
+      details.className = 'compact-details data-check-details';
+      const summary = document.createElement('summary');
+      summary.textContent = `Zusätzliche Infos und bestandene Prüfungen (${supportingItems.length})`;
+      details.appendChild(summary);
+      const supportingTableHost = document.createElement('div');
+      details.appendChild(supportingTableHost);
+      card.appendChild(details);
+      appendItemsTable(supportingItems, supportingTableHost);
+    }
     return card;
   }
 
@@ -10811,7 +10858,6 @@
 
     const details = computeMonthDetails(currentMonth);
     const commonAccountTarget = getCommonAccountTargetSummary(currentMonth);
-    const openPayments = collectOpenPaymentsForMonth(currentMonth);
     const page = createUiEl('div', 'dashboard-page simplified-dashboard');
 
     const appendSafe = (parent, builder, label) => {
@@ -10871,17 +10917,6 @@
       icon: details.free >= 0 ? '€' : '!',
       kind: details.free >= 0 ? 'mint' : 'danger'
     });
-    addKpi({
-      label: 'Offene Zahlungen',
-      value: String(openPayments.rows.length),
-      hint: openPayments.rows.length
-        ? `Noch ${euro(openPayments.totalOpen)} zu prüfen oder zu bezahlen`
-        : 'Keine offenen Zahlungen gefunden',
-      icon: openPayments.rows.length ? '!' : '✓',
-      kind: openPayments.rows.length ? 'violet' : 'mint'
-    });
-    page.appendChild(kpiGrid);
-
     const carryoverStatus = getCarryoverStatusForMonth(currentMonth);
     if (carryoverStatus.active) {
       const carryoverNotice = createUiEl(
@@ -10961,6 +10996,7 @@
     focusActions.appendChild(quickButton);
     focusCard.appendChild(focusActions);
     page.appendChild(focusCard);
+    page.appendChild(kpiGrid);
 
     const more = document.createElement('details');
     more.className = 'compact-details overview-more-details';

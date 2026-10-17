@@ -1,7 +1,8 @@
 <!--
-  Haushaltsplaner Version 2.93
+  Haushaltsplaner Version 2.94
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
+<!-- Aktualisierung Version&nbsp;2.94: Offene Zahlungen zeigen die zuständige Person und kennzeichnen verknüpfte Schuldenraten als einmalig gezählt. Die Startseite stellt offene Aufgaben vor die Monatskennzahlen; der Datencheck sortiert Prüfpunkte vor Zusatzinfos und bestandenen Prüfungen. -->
 <!-- Aktualisierung Version&nbsp;2.93: Die Schuldenansicht zeigt Monatszahlungen kompakt; Prognose, Zusatztilgung und Schuldenliste lassen sich bei Bedarf aufklappen. Jährliche Standprüfungen sind von offenen Zahlungsfragen getrennt. -->
 <!--
   Aktualisierung Version&nbsp;2.92: Kilometerstände müssen nicht mehr monatlich eingetragen werden. Einkäufe müssen nicht mehr einzeln erfasst werden; Einkaufsgeld nutzt ein festes Monatsziel ohne Restübertrag, übriges Geld kommt ins Sparglas.
@@ -146,11 +147,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=2.93">
-    <link rel="manifest" href="manifest.json?v=2.93">
+    <link rel="stylesheet" href="style.css?v=2.94">
+    <link rel="manifest" href="manifest.json?v=2.94">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.93">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.93">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.94">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.94">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -160,7 +161,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.93" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.94" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -219,7 +220,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.93 geladen</div>
+            <div class="version-chip" id="versionChip">Version 2.94 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -245,9 +246,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;2.93</footer>
+        <footer>Haushaltsplaner · Version&nbsp;2.94</footer>
       </div>
     </div>
-    <script src="script.js?v=2.93"></script>
+    <script src="script.js?v=2.94"></script>
   </body>
 </html>

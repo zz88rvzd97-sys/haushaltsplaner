@@ -4173,6 +4173,13 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   display: block;
   color: var(--text-strong, #102318);
 }
+.open-payment-owner {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-color);
+  font-size: .78rem;
+  line-height: 1.25;
+}
 @media (max-width: 720px) {
   .open-payments-account-header {
     align-items: flex-start;
