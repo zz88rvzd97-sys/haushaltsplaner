@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.96
+ * Haushaltsplaner Version 2.97
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.96';
+  const APP_VERSION = '2.97';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -3400,31 +3400,10 @@
   }
 
   function getAutomaticFullPayoffPlan() {
-    const source = (state.debts || []).find((debt) => {
-      const key = normalizeTextKey(debt && debt.name || '');
-      return key.includes('pair') && key.includes('az1');
-    });
-    const target = (state.debts || []).find((debt) => {
-      if (!(Number(debt && debt.amountOpen || 0) > 0) || !isDebtFullPayoffOnly(debt)) return false;
-      const key = normalizeTextKey(debt && debt.name || '');
-      return key.includes('riverty') && key.includes('az1');
-    });
-    if (!source || !target) return null;
-    ensureDebtConfig(source);
-    ensureDebtConfig(target);
-    const completedMonth = getDebtCompletedMonth(source);
-    if (!isMonthKey(completedMonth)) return null;
-    const monthlyAmount = getDebtFreedStandardRate(source, completedMonth);
-    if (!(monthlyAmount > 0)) return null;
-    return {
-      sourceDebtId: source.id,
-      sourceDebt: source.name || 'ausgelaufene Schuld',
-      targetDebtId: target.id,
-      targetDebt: target.name || 'Schuld',
-      completedMonth,
-      firstReserveMonth: nextMonth(completedMonth),
-      monthlyAmount
-    };
+    // Benny does not build a savings reserve from the freed Pair AZ1 payment.
+    // Keep the amount in the regular monthly debt pool so the snowball plan can
+    // allocate it to an eligible creditor instead of displaying a Tagesgeld deposit.
+    return null;
   }
 
   function getConfirmedDedicatedDebtReserveBeforeMonth(plan, monthKey) {
@@ -3587,8 +3566,8 @@
         })
         : null;
       // Das gesamte Zusatzbudget bleibt zusammen, wenn damit bereits eine Schuld
-      // vollständig erledigt werden kann. Erst wenn das nicht möglich ist, wird
-      // der feste 46-Euro-Anteil für Riverty AZ1 zurückgelegt.
+      // vollständig erledigt werden kann. Es wird kein zusätzlicher Betrag für
+      // eine Rücklage reserviert.
       if (fullPayoffCandidateBeforeSplit) dedicatedContribution = 0;
       if (dedicatedContribution > 0 && automaticPayoffPlan) {
         const target = active.find((debt) => debt.id === automaticPayoffPlan.targetDebtId);
