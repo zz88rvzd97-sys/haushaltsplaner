@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.95
+ * Haushaltsplaner Version 2.96
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.95';
+  const APP_VERSION = '2.96';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -242,12 +242,19 @@
     ensureAccountLinkField(debt);
     debt.rateTimeline = debt.rateTimeline
       .filter((entry) => entry && isMonthKey(entry.month) && Number.isFinite(Number(entry.amount)))
-      .map((entry) => ({ month: entry.month, amount: Math.max(0, Number(entry.amount || 0)) }))
+      .map((entry) => ({
+        month: entry.month,
+        amount: Math.max(0, Number(entry.amount || 0)),
+        pending: entry.pending === true
+      }))
       .sort((a, b) => a.month.localeCompare(b.month));
     const cleaned = [];
     debt.rateTimeline.forEach((entry) => {
       const existing = cleaned.find((item) => item.month === entry.month);
-      if (existing) existing.amount = entry.amount;
+      if (existing) {
+        existing.amount = entry.amount;
+        existing.pending = entry.pending;
+      }
       else cleaned.push(entry);
     });
     debt.rateTimeline = cleaned;
@@ -262,6 +269,16 @@
       if (monthDiff(entry.month, monthKey) >= 0) rate = Number(entry.amount || 0);
     });
     return Math.max(0, Number.isFinite(rate) ? rate : 0);
+  }
+
+  function isDebtRatePendingForMonth(debt, monthKey = currentMonth) {
+    if (!debt || !isMonthKey(monthKey)) return false;
+    normalizeDebtRateTimeline(debt);
+    let pending = false;
+    debt.rateTimeline.forEach((entry) => {
+      if (monthDiff(entry.month, monthKey) >= 0) pending = entry.pending === true;
+    });
+    return pending;
   }
 
   const DEBT_PAYMENT_RULE_MODES = ['flexible', 'regular_or_full', 'regular_only', 'payment_info_missing'];
@@ -361,8 +378,9 @@
     if (!rule) return true;
     const nameKey = normalizeTextKey(debt && debt.name || '');
     if (nameKey.includes('kreiskasse') || nameKey.includes('opr')) {
-      // Der bestehende Ratenplan wird nur gelesen. Neue manuelle oder automatische
-      // Änderungen sowie zusätzliche Ratenerhöhungen sind nicht erlaubt.
+      // Für diese Forderung bleiben automatische Ratenerhöhungen und
+      // Kostenposten-Synchronisierung gesperrt. Manuelle Änderungen der
+      // vereinbarten Monatsrate laufen separat über „Rate ändern“.
       return false;
     }
     return true;
@@ -386,15 +404,17 @@
     return null;
   }
 
-  function setDebtRateFromMonth(debt, month, amount) {
+  function setDebtRateFromMonth(debt, month, amount, options = {}) {
     if (!debt || !isMonthKey(month)) return false;
-    if (!canModifyDebtRateForCreditor(debt, month)) return false;
+    if (!options.manual && !canModifyDebtRateForCreditor(debt, month)) return false;
     if (!isDebtRateChangeAllowedInMonth(debt, month)) return false;
     const rate = Math.max(0, Number(amount || 0));
     normalizeDebtRateTimeline(debt);
     const existing = debt.rateTimeline.find((entry) => entry.month === month);
-    if (existing) existing.amount = rate;
-    else debt.rateTimeline.push({ month, amount: rate });
+    if (existing) {
+      existing.amount = rate;
+      existing.pending = options.pending === true;
+    } else debt.rateTimeline.push({ month, amount: rate, pending: options.pending === true });
     debt.rateTimeline.sort((a, b) => a.month.localeCompare(b.month));
     return true;
   }
@@ -402,7 +422,7 @@
   function getDebtRateTimelineText(debt) {
     normalizeDebtRateTimeline(debt);
     if (!debt.rateTimeline.length) return '';
-    return debt.rateTimeline.map((entry) => `ab ${formatMonthLabel(entry.month)}: ${euro(Number(entry.amount || 0))}`).join(' · ');
+    return debt.rateTimeline.map((entry) => `ab ${formatMonthLabel(entry.month)}: ${euro(Number(entry.amount || 0))}${entry.pending ? ' (beantragt – noch nicht bewilligt)' : ''}`).join(' · ');
   }
 
   function getNextDebtRateChangeText(debt, fromMonth = currentMonth) {
@@ -477,12 +497,13 @@
     return rule.label || `Rate darf nur jährlich zum 01.${String(rule.month).padStart(2, '0')}. geändert werden.`;
   }
 
-  function setDebtRateOnlyForMonth(debt, month, amount) {
+  function setDebtRateOnlyForMonth(debt, month, amount, options = {}) {
     if (!debt || !isMonthKey(month)) return false;
     const restoreMonth = addMonths(month, 1);
     const restoreRate = getDebtRateForMonth(debt, restoreMonth);
-    setDebtRateFromMonth(debt, month, amount);
-    setDebtRateFromMonth(debt, restoreMonth, restoreRate);
+    const restorePending = isDebtRatePendingForMonth(debt, restoreMonth);
+    setDebtRateFromMonth(debt, month, amount, options);
+    setDebtRateFromMonth(debt, restoreMonth, restoreRate, { ...options, pending: restorePending });
     normalizeDebtRateTimeline(debt);
     return true;
   }
@@ -3452,7 +3473,11 @@
         rate: Math.max(0, getDebtRateForMonth(debt, startMonth)),
         monthlyRate: Math.max(0, Number(debt.monthlyRate || 0)),
         baseRate: Math.max(0, Number(debt.monthlyRate || 0)),
-        rateTimeline: Array.isArray(debt.rateTimeline) ? debt.rateTimeline.map((entry) => ({ month: entry.month, amount: Number(entry.amount || 0) })) : [],
+        rateTimeline: Array.isArray(debt.rateTimeline) ? debt.rateTimeline.map((entry) => ({
+          month: entry.month,
+          amount: Number(entry.amount || 0),
+          pending: entry.pending === true
+        })) : [],
         nextDueMonth: isMonthKey(debt.nextDueMonth) ? debt.nextDueMonth : startMonth,
         snowballEligible: isInstallmentDebtForSnowball(debt, startMonth),
         paymentType: debt.paymentType,
@@ -15799,6 +15824,7 @@ function showPersonalEditor(personId, editPost) {
         if (item.rate > 0) parts.push(`Rate ${euro(item.rate)}`);
         if (item.extra > 0) parts.push(`zusätzlich ${euro(item.extra)}`);
       }
+      if (isDebtRatePendingForMonth(item.debt, monthKey)) parts.push('beantragt – noch nicht bewilligt');
       if (item.notes.length) parts.push(item.notes[0]);
       info.appendChild(createUiEl('small', 'muted', parts.join(' · ')));
 
@@ -16612,8 +16638,9 @@ function showPersonalEditor(personId, editPost) {
         const plannedSnowball = Number(planItem.snowball || 0);
         const openPlannedPayment = Number(planItem.planned || 0) || (!isFixedPaidThisMonth ? plannedRate : 0);
         const plannedTotal = isFixedPaidThisMonth ? paidAmount + openPlannedPayment : openPlannedPayment;
+        const pendingRateText = isDebtRatePendingForMonth(d, currentMonth) ? ' · beantragt, nicht bewilligt' : '';
         const plannedHtml = plannedTotal > 0
-          ? `<strong>${euro(plannedTotal)}</strong><div class="small muted">${isFixedPaidThisMonth ? (openPlannedPayment > 0 ? `${euro(paidAmount)} bezahlt · ${euro(openPlannedPayment)} vorgeschlagen` : 'fest bezahlt') : (planItem.fullPayoff ? 'vorgeschlagene Gesamtablösung' : 'Rate ' + euro(plannedRate))}</div>`
+          ? `<strong>${euro(plannedTotal)}</strong><div class="small muted">${isFixedPaidThisMonth ? (openPlannedPayment > 0 ? `${euro(paidAmount)} bezahlt · ${euro(openPlannedPayment)} vorgeschlagen` : 'fest bezahlt') : (planItem.fullPayoff ? 'vorgeschlagene Gesamtablösung' : 'Rate ' + euro(plannedRate) + pendingRateText)}</div>`
           : '-';
         tr.innerHTML = `<td class="debt-name-cell"><strong>${d.name}</strong></td><td class="account-only">${getAccountName(d.accountId)}</td><td>${euro(Number(d.amountOpen || 0))}</td><td>${euro(minRate)}</td><td>${plannedSnowball > 0 ? '<span class="snowball-pill">+' + euro(plannedSnowball) + '</span>' : '-'}</td><td class="${plannedSnowball > 0 ? 'amount-highlight' : ''}">${plannedHtml}</td><td>${d.nextDueMonth || '-'}</td><td>${estimatedEnd || '-'}</td><td>${progressHtml}</td><td>${statusHtml}</td><td></td><td></td>`;
 
@@ -16971,6 +16998,17 @@ function showPersonalEditor(personId, editPost) {
     row2.appendChild(createLabelInput('Gültigkeit', refs.modeSelect));
     content.appendChild(row2);
 
+    refs.pendingCheck = document.createElement('input');
+    refs.pendingCheck.type = 'checkbox';
+    refs.pendingCheck.checked = isDebtRatePendingForMonth(debt, refs.monthInput.value);
+    refs.monthInput.addEventListener('change', () => {
+      refs.pendingCheck.checked = isDebtRatePendingForMonth(debt, refs.monthInput.value);
+    });
+    const pendingLabel = createUiEl('label', 'check-line');
+    pendingLabel.appendChild(refs.pendingCheck);
+    pendingLabel.appendChild(document.createTextNode('Beantragt – noch nicht bewilligt'));
+    content.appendChild(pendingLabel);
+
     const rateRuleText = getDebtRateChangeRuleText(debt);
     if (rateRuleText) {
       const ruleInfo = document.createElement('p');
@@ -16988,7 +17026,9 @@ function showPersonalEditor(personId, editPost) {
     hint.className = 'small muted';
     hint.textContent = getDebtAnnualRateRule(debt)
       ? 'Reguläre Ratenänderungen sind bei dieser Schuld nur zum erlaubten Prüfmonat möglich. Freiwillige Sonderzahlungen bitte über „Zahlung eintragen“ buchen.'
-      : 'Beispiel: Kreiskasse ab Dezember 2026 auf 185 € setzen → Monat Dezember 2026 wählen, 185,00 € eintragen, „ab diesem Monat dauerhaft“ speichern.';
+      : (getDebtExtraPaymentMode(debt) === 'none'
+        ? 'Die neue Rate wird im Monatsplan berücksichtigt. Markiere sie als beantragt, solange die Bewilligung noch aussteht. Sondertilgungen bleiben ausgeschlossen.'
+        : 'Die neue Rate wird im Monatsplan ab dem gewählten Monat berücksichtigt. Markiere sie als beantragt, solange die Bewilligung noch aussteht.');
     content.appendChild(hint);
 
     showModal('Rate ändern', content, [
@@ -17007,12 +17047,14 @@ function showPersonalEditor(personId, editPost) {
             return alert(`${debt.name}: Die Rate darf nur jährlich zum 01.${String(getDebtAnnualRateRule(debt).month).padStart(2, '0')}. angepasst werden. Nächster zulässiger Monat: ${formatMonthLabel(allowed)}.`);
           }
           const oldRate = getDebtRateForMonth(debt, month);
+          const rateOptions = { manual: true, pending: refs.pendingCheck.checked };
+          const pendingLog = refs.pendingCheck.checked ? ' (beantragt – noch nicht bewilligt)' : '';
           if (refs.modeSelect.value === 'single_month') {
-            if (!setDebtRateOnlyForMonth(debt, month, amount)) return alert('Die Rate konnte für diesen Monat nicht geändert werden.');
-            addChangeLog('Schulden', `${debt.name}: Rate nur ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert`, month);
+            if (!setDebtRateOnlyForMonth(debt, month, amount, rateOptions)) return alert('Die Rate konnte für diesen Monat nicht geändert werden.');
+            addChangeLog('Schulden', `${debt.name}: Rate nur ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert${pendingLog}`, month);
           } else {
-            if (!setDebtRateFromMonth(debt, month, amount)) return alert('Die Rate konnte ab diesem Monat nicht geändert werden.');
-            addChangeLog('Schulden', `${debt.name}: Rate ab ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert`, month);
+            if (!setDebtRateFromMonth(debt, month, amount, rateOptions)) return alert('Die Rate konnte ab diesem Monat nicht geändert werden.');
+            addChangeLog('Schulden', `${debt.name}: Rate ab ${formatMonthLabel(month)} von ${euro(oldRate)} auf ${euro(amount)} geändert${pendingLog}`, month);
           }
           if (debt.paymentType === 'open_plan' && amount > 0) debt.paymentType = 'installment';
           saveState();
