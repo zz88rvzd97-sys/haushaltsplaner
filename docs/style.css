@@ -4508,6 +4508,35 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   min-width: 170px;
 }
 
+.common-contribution-payment-hint {
+  margin-top: 0.35rem;
+  line-height: 1.35;
+}
+
+.common-contribution-payment-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.common-contribution-payment-input {
+  flex: 1 1 135px;
+  width: auto;
+  min-width: 0;
+  padding: 0.62rem 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.common-contribution-payment-controls button {
+  flex: 1 1 135px;
+  width: auto;
+  min-width: 0;
+  padding: 0.62rem 0.75rem;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .common-account-target-card {
     border-radius: 20px;
@@ -4516,6 +4545,12 @@ button.danger { background: linear-gradient(135deg, #ef4444, #dc2626) !important
   .common-contribution-status button {
     width: 100%;
     min-width: 0;
+  }
+
+  .common-contribution-payment-input,
+  .common-contribution-payment-controls button {
+    width: 100%;
+    flex-basis: 100%;
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.97
+ * Haushaltsplaner Version 2.98
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.97';
+  const APP_VERSION = '2.98';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -2546,14 +2546,22 @@
   function setCommonAccountContributionPaid(monthKey, personId, paid, options = {}) {
     if (!isMonthKey(monthKey) || !personId) return;
     const map = getCommonAccountContributionMap(monthKey);
-    const wasPaid = map[personId] === true;
+    const previousPayment = getCommonAccountContributionPayment(monthKey, personId);
+    const plannedAmount = getCurrentContributionAmountForPerson(monthKey, personId);
+    const previousPaidAmount = map[personId] === true
+      ? roundMoney(Number(previousPayment && previousPayment.amount || plannedAmount))
+      : 0;
     const nextPaid = paid === true;
     if (nextPaid) {
       lockCommonAccountContributionPayment(monthKey, personId, options.amount, options);
     } else {
       clearCommonAccountContributionPayment(monthKey, personId);
     }
-    if (nextPaid && !wasPaid) markSharedLinkedReservePostsPaid(monthKey);
+    const nextPayment = nextPaid ? getCommonAccountContributionPayment(monthKey, personId) : null;
+    const nextPaidAmount = roundMoney(Number(nextPayment && nextPayment.amount || 0));
+    const reachedFullPayment = nextPaidAmount + 0.005 >= plannedAmount
+      && previousPaidAmount + 0.005 < plannedAmount;
+    if (reachedFullPayment) markSharedLinkedReservePostsPaid(monthKey);
   }
 
   function markSharedLinkedReservePostsPaid(monthKey) {
@@ -12491,12 +12499,12 @@ function renderCommon() {
     distBox.appendChild(createUiEl(
       'p',
       'small muted',
-      'Die automatische Aufteilung nutzt das verfügbare Einkommen nach direktem Lohnabzug und rundet jeden Anteil auf die nächsten 5 €. Du kannst jeden Anteil für diesen Monat manuell ändern.'
+      'Die automatische Aufteilung nutzt das verfügbare Einkommen nach direktem Lohnabzug und rundet jeden Anteil auf die nächsten 5 €. Du kannst jeden Anteil für diesen Monat manuell ändern. Bei „Bisher überwiesen“ immer den Gesamtbetrag eintragen, der für diesen Monatsanteil bereits eingegangen ist.'
     ));
     const distTable = document.createElement('table');
     distTable.className = 'list-table common-contribution-table';
     const distHead = document.createElement('thead');
-    distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Überwiesen?</th></tr>';
+    distHead.innerHTML = '<tr><th>Person</th><th>Monatsbeitrag</th><th>Überwiesen / offen</th></tr>';
     distTable.appendChild(distHead);
     const distBody = document.createElement('tbody');
     let automaticCommonRaw = 0;
@@ -12594,13 +12602,70 @@ function renderCommon() {
       statusButton.textContent = complete ? 'Überwiesen ✓' : (rowData.paid ? 'Rest als überwiesen' : 'Als überwiesen markieren');
       statusButton.title = complete
         ? 'Klicken, um die Markierung für diesen Monat zurückzusetzen.'
-        : 'Markiert euren Monatsbeitrag als überwiesen.';
+        : (rowData.paid ? 'Markiert den noch offenen Rest ebenfalls als überwiesen.' : 'Markiert den gesamten Monatsbeitrag als überwiesen.');
       statusButton.addEventListener('click', () => {
         setCommonAccountContributionPaid(currentMonth, rowData.person.id, !complete, { amount: rowData.plannedAmount });
         saveState();
         render();
       });
       statusCell.appendChild(statusButton);
+      statusCell.appendChild(createUiEl(
+        'div',
+        'small muted common-contribution-payment-hint',
+        rowData.paid
+          ? `${euro(rowData.paidAmount)} eingegangen · ${euro(rowData.openAmount)} noch offen`
+          : `${euro(rowData.openAmount)} noch offen`
+      ));
+      const paymentControls = document.createElement('div');
+      paymentControls.className = 'common-contribution-payment-controls';
+      const paymentInput = document.createElement('input');
+      paymentInput.type = 'text';
+      paymentInput.inputMode = 'decimal';
+      paymentInput.className = 'common-contribution-payment-input';
+      paymentInput.setAttribute('aria-label', `Gesamtbetrag, der bisher von ${rowData.person.name} überwiesen wurde, in Euro`);
+      paymentInput.placeholder = 'Bisher insgesamt';
+      paymentInput.value = formatNumberInput(rowData.paid ? rowData.paidAmount : 0);
+      const savePaymentButton = document.createElement('button');
+      savePaymentButton.type = 'button';
+      savePaymentButton.className = 'secondary compact';
+      savePaymentButton.textContent = 'Betrag speichern';
+      savePaymentButton.title = 'Erfasst den bereits überwiesenen Betrag und lässt den Rest offen. Es wird keine weitere Buchung erzeugt.';
+      savePaymentButton.addEventListener('click', () => {
+        if (!paymentInput.value.trim()) {
+          alert('Bitte den bisher überwiesenen Betrag eingeben. Für keine Überweisung 0 eintragen.');
+          return;
+        }
+        const amount = parseMoneyInput(paymentInput.value);
+        if (!Number.isFinite(amount) || amount < 0) {
+          alert('Bitte einen gültigen überwiesenen Betrag eingeben.');
+          return;
+        }
+        if (amount - rowData.plannedAmount > 0.005) {
+          alert(`Der überwiesene Betrag darf den Monatsanteil von ${euro(rowData.plannedAmount)} nicht überschreiten.`);
+          return;
+        }
+        if (amount <= 0) {
+          setCommonAccountContributionPaid(currentMonth, rowData.person.id, false);
+        } else {
+          setCommonAccountContributionPaid(currentMonth, rowData.person.id, true, { amount, source: 'status' });
+        }
+        addChangeLog(
+          'Gemeinsame Kosten',
+          `${rowData.person.name}: ${euro(amount)} von ${euro(rowData.plannedAmount)} Monatsanteil für ${formatMonthLabel(currentMonth)} eingegangen; ${euro(Math.max(rowData.plannedAmount - amount, 0))} offen.`,
+          currentMonth
+        );
+        saveState();
+        render();
+      });
+      paymentInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          savePaymentButton.click();
+        }
+      });
+      paymentControls.appendChild(paymentInput);
+      paymentControls.appendChild(savePaymentButton);
+      statusCell.appendChild(paymentControls);
       row.appendChild(nameCell);
       row.appendChild(amountCell);
       row.appendChild(statusCell);
