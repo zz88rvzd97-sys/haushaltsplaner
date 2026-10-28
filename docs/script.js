@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.98
+ * Haushaltsplaner Version 2.99
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.98';
+  const APP_VERSION = '2.99';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -1008,7 +1008,10 @@
   const snowballConfig = {
     shortTermSkipMonths: 6,
     monthlyTarget: 800,
-    monthlyTargetStartMonth: '2026-10'
+    monthlyTargetStartMonth: '2026-10',
+    incomeLinkedExtraStartMonth: '2027-01',
+    incomeLinkedExtraThreshold: 2300,
+    incomeLinkedExtraPersonName: 'Benny'
   };
 
   function sanitizeStateTextValues(value, seen = new WeakSet()) {
@@ -3233,7 +3236,7 @@
       map[month] = { planned: 0, base: 0, snowballExtra: 0, dynamicExtra: 0, dayMoneyTransfer: 0, creditorPayments: 0, notes: [] };
     });
 
-    const snowball = buildSnowballPlan(startMonth, horizon, { monthDetailsFn: options.monthDetailsFn });
+    const snowball = buildSnowballPlan(startMonth, horizon, { incomeResolver: options.incomeResolver });
     (snowball.rows || []).forEach((row) => {
       if (!map[row.month]) return;
       const fixedPool = Number(row.monthlyTarget || 0) > 0
@@ -3322,17 +3325,35 @@
     return Number.isFinite(months) && months <= limit;
   }
 
-  function getMonthlyDebtBudgetForMonth(monthKey) {
-    if (!isMonthKey(monthKey) || monthKey < snowballConfig.monthlyTargetStartMonth) return 0;
-    return roundMoney(Math.max(0, Number(snowballConfig.monthlyTarget || 0)));
+  function getIncomeLinkedDebtExtraForMonth(monthKey, incomeResolver = null) {
+    if (!isMonthKey(monthKey) || monthKey < snowballConfig.incomeLinkedExtraStartMonth) return 0;
+    const targetName = String(snowballConfig.incomeLinkedExtraPersonName || 'Benny').trim().toLowerCase();
+    const person = (state.persons || []).find((entry) => {
+      const name = String(entry && entry.name || '').trim().toLowerCase();
+      const id = String(entry && entry.id || '').trim().toLowerCase();
+      return name === targetName || id === targetName || name.includes(targetName);
+    });
+    if (!person) return 0;
+    // getPersonNet is the entered planning amount; for Benny it includes
+    // the direct Kreiskasse deduction, as requested.
+    const income = typeof incomeResolver === 'function'
+      ? incomeResolver(person, monthKey)
+      : getPersonNet(person, monthKey);
+    return roundMoney(Math.max(0, Number(income || 0) - Number(snowballConfig.incomeLinkedExtraThreshold || 0)));
   }
 
-  function getDebtBudgetReservationForMonth(monthKey) {
+  function getMonthlyDebtBudgetForMonth(monthKey, incomeResolver = null) {
+    if (!isMonthKey(monthKey) || monthKey < snowballConfig.monthlyTargetStartMonth) return 0;
+    return roundMoney(Math.max(0, Number(snowballConfig.monthlyTarget || 0)
+      + getIncomeLinkedDebtExtraForMonth(monthKey, incomeResolver)));
+  }
+
+  function getDebtBudgetReservationForMonth(monthKey, options = {}) {
     const linkedDebtCosts = roundMoney(Math.max(0, getLinkedDebtCostTotalForMonth(monthKey)));
     const hasDebtActivity = (state.debts || []).some((debt) => Number(debt && debt.amountOpen || 0) > 0.005
       || getDebtCompletedMonth(debt) === monthKey
       || getDebtCoveredAmountForMonth(debt, monthKey) > 0.005);
-    const monthlyTarget = hasDebtActivity ? getMonthlyDebtBudgetForMonth(monthKey) : 0;
+    const monthlyTarget = hasDebtActivity ? getMonthlyDebtBudgetForMonth(monthKey, options.incomeResolver) : 0;
     // Vor dem Start des festen 800-Euro-Pools bleibt die bisherige Haushaltsrechnung
     // unverändert. Ab September zählen bereits in den Kosten enthaltene Raten in die
     // 800 Euro hinein; nur die Differenz wird zusätzlich vom Monatsrest gebunden.
@@ -3518,7 +3539,8 @@
       let debtSavingsWithdrawal = 0;
       let generalDebtSavingsWithdrawal = 0;
       let generalDebtSavingsWithdrawalDebtId = '';
-      const monthlyTarget = getMonthlyDebtBudgetForMonth(month);
+      const incomeLinkedExtra = getIncomeLinkedDebtExtraForMonth(month, options.incomeResolver);
+      const monthlyTarget = getMonthlyDebtBudgetForMonth(month, options.incomeResolver);
       const alreadyPaid = i === 0 ? roundMoney(getDebtPaidAmountForMonth(month)) : 0;
       active.forEach((debt) => { debt.rate = getDebtRateForMonth(debt, month); });
       // Pflicht-/Normalraten müssen auch für feste Ratenpläne gezahlt werden.
@@ -3660,7 +3682,9 @@
         }
       }
 
-      // Ab Oktober 2026 ist das Monatsziel fest. Bereits gezahlte Beträge und
+      // Ab Oktober 2026 gilt der feste Grundpool von 800 Euro. Ab Januar 2027
+      // erhöht Bennys Einkommen über 2.300 Euro nur das getrennte Zusatzbudget.
+      // Bereits gezahlte Beträge und
       // Pflicht-/Normalraten zählen zuerst. Mit der noch fehlenden Summe wird
       // zuerst eine mögliche Komplettablösung gesucht; nur der danach übrige
       // Betrag wird als freiwillige Zusatztilgung verteilt. Die Höhe hängt
@@ -3788,10 +3812,10 @@
             remainingAfter: Math.max(0, Number(target.open || 0)),
             completed: Number(target.open || 0) <= 0.005,
             note: Number(target.open || 0) <= 0.005
-              ? 'mit dem festen 800-€-Budget erledigt'
-              : 'Vorschlag aus dem festen 800-€-Budget'
+              ? 'mit dem Schuldenbudget erledigt'
+              : 'Vorschlag aus dem Schuldenbudget'
           });
-          notes.push(`${target.name} +${euro(pay)} aus dem 800-€-Budget`);
+          notes.push(`${target.name} +${euro(pay)} aus dem Schuldenbudget`);
           if (Number(target.open || 0) <= 0.005) {
             target.open = 0;
             newlyFreed += Number(target.rate || 0);
@@ -3835,7 +3859,9 @@
         base: roundMoney(base),
         extra: roundMoney(extra),
         budgetExtra: roundMoney(budgetExtra),
-        dynamicExtra: 0,
+        dynamicExtra: incomeLinkedExtra,
+        incomeLinkedExtra,
+        fixedMonthlyTarget: monthlyTarget > 0 ? roundMoney(Math.max(0, monthlyTarget - incomeLinkedExtra)) : 0,
         alreadyPaid,
         plannedOpen: roundMoney(base + extra),
         total: roundMoney(alreadyPaid + base + extra),
@@ -4524,7 +4550,7 @@
     const miscOpen = roundMoney(Math.max(miscPlanned - miscPaid, 0));
     const carryoverIn = roundMoney(getCarryoverInForMonth(monthKey));
     const businessBudget = getSelfEmploymentBudgetImpactForMonth(monthKey);
-    const debtBudget = getDebtBudgetReservationForMonth(monthKey);
+    const debtBudget = getDebtBudgetReservationForMonth(monthKey, { incomeResolver });
     const freeBeforeDebtBudget = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment - totalCommonRounded - totalPersonal);
     const freeBeforeMisc = roundMoney(freeBeforeDebtBudget - debtBudget.additionalReservation);
     const freeCurrent = roundMoney(freeBeforeMisc - miscPaid);
@@ -11494,10 +11520,16 @@
       const raw = scenarioNet[person.id];
       return raw !== '' && raw != null && Number.isFinite(Number(raw));
     });
-    const projectionMap = buildDebtForecastProjection(currentMonth, forecastHorizon, { monthDetailsFn: hasScenario ? computeMonthDetailsWithScenario : computeMonthDetails });
+    const incomeResolver = hasScenario
+      ? (person, monthKey) => {
+        const raw = scenarioNet[person.id];
+        return (raw !== '' && raw != null && Number.isFinite(Number(raw))) ? Number(raw) : getPersonNet(person, monthKey);
+      }
+      : null;
+    const projectionMap = buildDebtForecastProjection(currentMonth, forecastHorizon, { incomeResolver });
     const debtInfo = document.createElement('div');
     debtInfo.className = 'notice success';
-    debtInfo.textContent = 'Ab Oktober 2026 zieht die Vorschau jeden Monat den vollständigen 800-€-Schulden-Pool vom verfügbaren Betrag ab. Standardraten zählen hinein; vorerst nicht sinnvoll einsetzbare Beträge gehen als gebundene Schulden-Rücklage aufs Tagesgeld.';
+    debtInfo.textContent = 'Ab Oktober 2026 wird der 800-€-Grundpool berücksichtigt. Ab Januar 2027 kommt zusätzlich Bennys eingetragenes Einkommen über 2.300 € dazu (einschließlich direktem Kreiskassen-Lohnabzug). Der Zusatz wird getrennt als Sondertilgung vorgeschlagen; vereinbarte Standardraten bleiben unverändert.';
     card.appendChild(debtInfo);
     card.appendChild(renderForecastTimelineCard(months, hasScenario, projectionMap));
 
@@ -15808,7 +15840,7 @@ function showPersonalEditor(personId, editPost) {
     const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
     head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Deine geplanten Zahlungen für diesen Monat. Der gesamte Schulden-Pool bleibt für Schulden reserviert.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Grundpool beträgt 800 €. Ab Januar 2027 kommt bei Benny Einkommen über 2.300 € als separates Sondertilgungsbudget hinzu. Keine vereinbarte Monatsrate wird dadurch erhöht.'));
     if (monthKey === snowballConfig.monthlyTargetStartMonth) {
       card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus September werden nicht übernommen. Ab Oktober zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
     }
@@ -15819,6 +15851,13 @@ function showPersonalEditor(personId, editPost) {
       { label: 'Bereits bezahlt', value: euro(row.alreadyPaid || 0), kind: Number(row.alreadyPaid || 0) > 0 ? 'success' : '' },
       { label: 'Noch offen', value: euro(remainingThisMonth), kind: remainingThisMonth > 0.005 ? 'warning' : 'success' }
     ];
+    if (monthKey >= snowballConfig.incomeLinkedExtraStartMonth && Number(row.monthlyTarget || 0) > 0) {
+      monthlyMetrics.splice(1, 0, {
+        label: 'Zusatz aus Bennys Einkommen',
+        value: euro(row.incomeLinkedExtra || 0),
+        hint: `Nur der Teil über ${euro(snowballConfig.incomeLinkedExtraThreshold)}; zusätzlich zum 800-€-Grundpool.`
+      });
+    }
     if (debtSavingsDeposit > 0.005) {
       monthlyMetrics.push({ label: 'Davon zurücklegen', value: euro(debtSavingsDeposit), kind: 'warning', hint: 'Bleibt für Schulden gebunden.' });
     }
@@ -16123,7 +16162,8 @@ function showPersonalEditor(personId, editPost) {
     [
       ['Offen aktuell', euro(totalOpen)],
       ['Schulden-Pool aktueller Monat', firstRow ? euro(firstRow.pool || firstRow.total || 0) : '0,00 €'],
-      ['Monatsziel ab Oktober', firstBudgetRow ? euro(firstBudgetRow.monthlyTarget || 0) : euro(snowballConfig.monthlyTarget)],
+      ['Schuldenbudget im ersten Zielmonat', firstBudgetRow ? euro(firstBudgetRow.monthlyTarget || 0) : euro(snowballConfig.monthlyTarget)],
+      ['Davon Einkommenszusatz', firstBudgetRow ? euro(firstBudgetRow.incomeLinkedExtra || 0) : '0,00 €'],
       ['Noch geplante Standardraten', firstRow ? euro(firstRow.base || 0) : '0,00 €'],
       ['Zusatz im ersten Zielmonat', firstBudgetRow ? euro(firstBudgetRow.extra || 0) : '0,00 €'],
       ['Neuberechnung', 'jeden Monat automatisch']
@@ -16173,7 +16213,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Ab Oktober 2026 bindet die App jeden Monat insgesamt 800 € für Schulden und zieht diesen Pool vollständig vom verfügbaren Betrag ab: zuerst alle Pflicht- und Standardraten, danach mögliche Komplettablösungen und Zusatztilgungen. Was wegen einer Zahlungsregel noch nicht sinnvoll eingesetzt werden kann, bleibt als Schulden-Rücklage auf dem Tagesgeld und wird in späteren Monaten wieder für Schulden berücksichtigt. Schulden mit „nur Rate“ oder unbekanntem Zahlungsweg bleiben als Ziel für zusätzliche Zahlungen ausgeschlossen.';
+    note.textContent = 'Ab Oktober 2026 bindet die App jeden Monat den 800-€-Grundpool für Schulden. Ab Januar 2027 kommt bei Benny zusätzlich das eingetragene Einkommen über 2.300 € dazu; der direkte Kreiskassen-Lohnabzug ist darin enthalten. Zuerst werden Pflicht- und Standardraten gezahlt, danach wird das Zusatzbudget getrennt als Sondertilgung verteilt. Vereinbarte Raten werden dadurch nicht erhöht. Was wegen einer Zahlungsregel nicht sinnvoll eingesetzt werden kann, bleibt als gebundene Schulden-Rücklage vorgemerkt.';
     card.appendChild(note);
     return card;
   }
@@ -16193,7 +16233,7 @@ function showPersonalEditor(personId, editPost) {
     const titleWrap = document.createElement('div');
     titleWrap.appendChild(createUiEl('span', 'pill success', `Start ${formatMonthLabel(snowballConfig.monthlyTargetStartMonth)}`));
     titleWrap.appendChild(createUiEl('h3', '', `Ratenvorschlag für ${formatMonthLabel(targetMonth)}`));
-    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den bestehenden Raten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Der volle Rest bis 800 € wird entweder sinnvoll verteilt oder als gebundene Schulden-Rücklage aufs Tagesgeld gelegt.'));
+    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den unveränderten Standardraten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Der 800-€-Grundpool bleibt bestehen; ab Januar 2027 wird Bennys Einkommen über 2.300 € getrennt als Sondertilgung ergänzt. Keine vereinbarte Rate wird erhöht. Nicht einsetzbare Beträge bleiben als gebundene Schulden-Rücklage vorgemerkt.'));
     const recalculationMonth = state.appMeta && state.appMeta.debtPlanLastRecalculatedMonth;
     const recalculationDebtName = state.appMeta && state.appMeta.debtPlanLastRecalculatedDebtName;
     if (isMonthKey(recalculationMonth) && recalculationDebtName) {
@@ -16208,7 +16248,9 @@ function showPersonalEditor(personId, editPost) {
     const dayMoneyTransfer = roundMoney(Number(row.debtSavingsDeposit || 0));
     const totalReserved = roundMoney(Math.max(Number(row.pool || 0), Number(row.total || 0)));
     card.appendChild(createSummaryMetrics([
-      { label: 'Festes Monatsziel', value: euro(row.monthlyTarget), kind: 'success' },
+      { label: '800-€-Grundpool', value: euro(row.fixedMonthlyTarget != null ? row.fixedMonthlyTarget : row.monthlyTarget), kind: 'success' },
+      { label: 'Zusatz aus Bennys Einkommen', value: euro(row.incomeLinkedExtra || 0), hint: `Eingetragenes Einkommen über ${euro(snowballConfig.incomeLinkedExtraThreshold)}; getrennt von Standardraten.` },
+      { label: 'Schuldenbudget gesamt', value: euro(row.monthlyTarget), kind: 'success' },
       { label: 'Standardraten geplant', value: euro(row.base || 0) },
       { label: 'Zusätzlich vorgeschlagen', value: euro(row.extra || 0), kind: Number(row.extra || 0) > 0 ? 'warning' : '' },
       { label: targetMonth === monthKey ? 'Bereits bezahlt' : 'Start', value: targetMonth === monthKey ? euro(row.alreadyPaid || 0) : formatMonthLabel(targetMonth) },
