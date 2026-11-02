@@ -6460,3 +6460,14 @@ footer {
     margin: 0 auto 0 0 !important;
   }
 }
+
+
+/* Version 3.01 – Inhaltskarten auf breiten Fenstern links ausrichten */
+@media (min-width: 721px) {
+  .dashboard-page,
+  .simplified-dashboard {
+    max-width: 1600px !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+  }
+}
