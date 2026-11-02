@@ -6451,3 +6451,12 @@ footer {
     border-radius: 9px !important;
   }
 }
+
+
+/* Version 3.00 – Inhalte auf breiten Fenstern linksbündig im App-Bereich halten */
+@media (min-width: 721px) {
+  .app-content main {
+    width: min(1600px, 100%) !important;
+    margin: 0 auto 0 0 !important;
+  }
+}
