@@ -6471,3 +6471,157 @@ footer {
     margin-right: auto !important;
   }
 }
+
+
+/* Version 3.02 – modernes, ruhiges Erscheinungsbild und bessere Lesbarkeit */
+:root {
+  --ledger-bg: #f3f6f3;
+  --ledger-paper: #ffffff;
+  --ledger-paper-muted: #f7faf7;
+  --ledger-ink: #1e2b24;
+  --ledger-muted: #5e6d64;
+  --ledger-line: #dce5de;
+  --ledger-green: #2f6b4f;
+  --ledger-green-dark: #24543d;
+  --ledger-danger: #a5453d;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+html,
+body,
+.app-content {
+  background: var(--ledger-bg) !important;
+  color: var(--ledger-ink) !important;
+}
+
+body {
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+.brand-copy h1,
+.dashboard-title-wrap h2,
+.dashboard-header h2 {
+  font-family: inherit !important;
+  letter-spacing: -.025em !important;
+  line-height: 1.2 !important;
+}
+
+.brand-copy h1 {
+  font-size: 1.2rem !important;
+  font-weight: 700 !important;
+}
+
+.dashboard-title-wrap h2,
+.dashboard-header h2 {
+  font-size: clamp(1.7rem, 2.2vw, 2.05rem) !important;
+  font-weight: 700 !important;
+}
+
+.app-content main {
+  padding: clamp(1.25rem, 2vw, 1.85rem) clamp(1.1rem, 2vw, 1.75rem) 2rem !important;
+}
+
+.app-content .card,
+.app-content .compact-card,
+.app-content [class$="-card"],
+.app-content [class*="-card "] {
+  border: 1px solid var(--ledger-line) !important;
+  border-radius: 14px !important;
+  background: var(--ledger-paper) !important;
+  box-shadow: 0 2px 8px rgba(28, 53, 38, .045) !important;
+}
+
+button {
+  min-height: 2.5rem;
+  border-radius: 9px !important;
+  font-size: .92rem !important;
+  font-weight: 600 !important;
+}
+
+button.primary,
+button.success,
+.app-sidebar .global-month-controls .ghost-btn.compact,
+.quick-capture-action {
+  border-color: var(--ledger-green) !important;
+  background: var(--ledger-green) !important;
+  color: #fff !important;
+}
+
+button.primary:hover,
+button.success:hover,
+.app-sidebar .global-month-controls .ghost-btn.compact:hover,
+.quick-capture-action:hover {
+  background: var(--ledger-green-dark) !important;
+}
+
+button.secondary,
+button.compact,
+.app-action-button,
+.action-menu-trigger {
+  border-color: var(--ledger-line) !important;
+  border-radius: 9px !important;
+  background: var(--ledger-paper) !important;
+  color: var(--ledger-ink) !important;
+}
+
+.app-sidebar {
+  background: #173c2e !important;
+  color: #f3f7f4 !important;
+}
+
+.app-sidebar .brand-copy h1 {
+  color: #f8fbf8 !important;
+}
+
+.app-sidebar .global-month-bar.sidebar-month-widget {
+  border: 1px solid rgba(255, 255, 255, .14) !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, .055) !important;
+  box-shadow: none !important;
+}
+
+.app-sidebar .side-nav-link {
+  min-height: 2.65rem;
+  border-radius: 10px !important;
+  font-size: .9rem !important;
+  font-weight: 550 !important;
+}
+
+.app-sidebar .side-nav-link.active {
+  border-color: rgba(255, 255, 255, .12) !important;
+  background: rgba(255, 255, 255, .11) !important;
+}
+
+.app-sidebar .side-nav-link .nav-icon {
+  border-radius: 8px !important;
+}
+
+.dashboard-header {
+  margin-bottom: 1.15rem !important;
+  padding-bottom: .85rem !important;
+  border-color: var(--ledger-line) !important;
+}
+
+.app-content footer {
+  color: var(--ledger-muted) !important;
+}
+
+@media (max-width: 720px) {
+  .app-content main {
+    padding: 1rem .85rem 1.5rem !important;
+  }
+}
