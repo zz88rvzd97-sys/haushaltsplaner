@@ -6625,3 +6625,16 @@ button.compact,
     padding: 1rem .85rem 1.5rem !important;
   }
 }
+
+
+/* Version 3.03 – Tabellenspalten klarer voneinander trennen */
+@media (min-width: 1401px) {
+  .list-table th:not(:last-child),
+  .list-table td:not(:last-child) {
+    border-right: 1px solid #d9dfd9 !important;
+  }
+
+  .list-table th {
+    background: #eceee9 !important;
+  }
+}
