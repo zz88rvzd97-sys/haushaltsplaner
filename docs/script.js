@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.00';
+  const APP_VERSION = '3.05';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -15150,23 +15150,23 @@ function showPersonalEditor(personId, editPost) {
     normalizeBudgetTopUpsConfig();
     const card = document.createElement('div');
     card.className = 'card';
-    card.appendChild(createUiEl('h3', '', 'Tankgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Der Rest aus dem Vormonat und die bezahlten Tankgeld-Posten bilden den Kraftstofftopf. Eure Anteile werden nach verfügbarem Einkommen aufgeteilt und jeweils vom eigenen Lohnkonto bezahlt. Gespeicherte Tankbons werden sofort abgezogen.'));
+    card.appendChild(createUiEl('h3', '', '2. Bisher bezahlt'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Rest ergibt sich aus dem übernommenen Vormonatsrest plus den bezahlten Einzahlungen minus den erfassten Tankausgaben.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
     const live = getFuelPoolLiveStatus(currentMonth);
     card.appendChild(createSummaryMetrics([
-      { label: 'Kraftstoff-Ziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
+      
       { label: 'Vom Lohnkonto bezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
       { label: 'Tankbons im Monat', value: calc.active ? euro(live.spent) : 'ab Juli 2026' },
-      { label: 'Aktuell im Tanktopf', value: calc.active ? euro(live.currentBalance) : 'ab Juli 2026', kind: live.shortage > 0 ? 'danger' : 'success' },
+      { label: '3. Noch im Tanktopf', value: calc.active ? euro(live.currentBalance) : 'ab Juli 2026', kind: live.shortage > 0 ? 'danger' : 'success' },
       { label: 'Noch einzuzahlen', value: calc.active ? euro(live.pendingTopUp) : 'ab Juli 2026', kind: live.pendingTopUp > 0 ? 'warning' : 'success' }
     ]));
 
     const info = document.createElement('div');
     info.className = 'info-box';
     if (calc.active) {
-      info.innerHTML = `<strong>Aktueller Stand:</strong> ${euro(live.openingBalance)} Rest aus dem Vormonat + ${euro(live.paidTopUp)} eingezahlt − ${euro(live.spent)} Tankbons = <strong>${euro(live.currentBalance)} im Tanktopf</strong>.${live.shortage > 0 ? ` Es fehlen aktuell ${euro(live.shortage)}.` : ''}<br><span class="muted">Monatsziel ${euro(calc.target)}; geplante Aufstockung ${euro(calc.topUp)}.</span>`;
+      info.innerHTML = `<strong>Verfügbar:</strong> ${euro(live.openingBalance)} Rest aus dem Vormonat + ${euro(live.paidTopUp)} eingezahlt − ${euro(live.spent)} Tankbons = <strong>${euro(live.currentBalance)} im Tanktopf</strong>.${live.shortage > 0 ? ` Es fehlen aktuell ${euro(live.shortage)}.` : ''}<br><span class="muted">Monatsziel ${euro(calc.target)}; geplante Aufstockung ${euro(calc.topUp)}.</span>`;
     } else {
       info.innerHTML = '<strong>Noch nicht aktiv:</strong> Die Rest-Aufstockung beginnt ab Juli 2026.';
     }
@@ -15384,7 +15384,7 @@ function showPersonalEditor(personId, editPost) {
     const bennyShare = combinedIncome > 0 ? bennyIncome / combinedIncome : 0.5;
     const madeleineShare = combinedIncome > 0 ? madeleineIncome / combinedIncome : 0.5;
     card.appendChild(createSummaryMetrics([
-      { label: 'Monatsbudget gesamt', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
+      { label: '1. Monatsprognose · Gesamtbedarf', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
       { label: 'Basis', value: householdTankStats.projectedCount > 0 ? `${householdTankStats.realCount} echt + ${householdTankStats.projectedCount} Prognose` : '12 echte Monate' },
       { label: 'Bennys Anteil vom Lohnkonto', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % nach Lohnabzug` },
       { label: 'Madeleines Anteil vom Lohnkonto', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % nach Lohnabzug` },
