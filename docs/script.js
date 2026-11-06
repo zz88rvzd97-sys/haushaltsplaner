@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 2.99
+ * Haushaltsplaner Version 3.00
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '2.99';
+  const APP_VERSION = '3.00';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -8151,7 +8151,7 @@
       .filter((month) => month < baseMonth)
       .sort((a, b) => String(b).localeCompare(String(a)))
       .map((month) => getTankHouseholdMonthlyRecord(month))
-      .filter((entry) => Number(entry.netCost || 0) > 0 && Number(entry.liters || 0) > 0);
+      .filter((entry) => Number(entry.netCost || 0) > 0);
   }
 
   function getTankHouseholdAverageStats(baseMonth = currentMonth, maxMonths = 12) {
@@ -13595,14 +13595,13 @@ function showPersonalEditor(personId, editPost) {
     const box = document.createElement('div');
     box.className = 'card';
     box.appendChild(createUiEl('h3', '', 'Tankbons und Kanister ab Juni erfassen'));
-    box.appendChild(createUiEl('p', 'small muted', 'Trage jeden Kauf mit Litern und Betrag ein. Er zählt als tatsächliche Ausgabe des gemeinsamen Kraftstoffvorrats, auch wenn der Sprit erst später aus einem Kanister genutzt wird. Die Höhe des Topfs folgt den echten Käufen und der Verbrauchsprognose; eure Einzahlungen werden automatisch nach dem verfügbaren Einkommen nach Lohnabzug verteilt.'));
+    box.appendChild(createUiEl('p', 'small muted', 'Trage Datum und bezahlten Betrag ein. Jeder Kauf zählt als tatsächliche Ausgabe des gemeinsamen Kraftstoffvorrats, auch wenn der Sprit erst später aus einem Kanister genutzt wird. Die Höhe des Topfs folgt den echten Käufen und der Verbrauchsprognose; eure Einzahlungen werden automatisch nach dem verfügbaren Einkommen nach Lohnabzug verteilt.'));
 
     const form = document.createElement('div');
     form.className = 'row tank-receipt-form';
     const fields = [
       ['month', 'Monat', 'month', currentMonth],
       ['date', 'Datum', 'date', currentMonth + '-01'],
-      ['liters', 'Liter gesamt', 'text', ''],
       ['paid', 'Bezahlt €', 'text', ''],
       ['cashback', 'Cashback/Coupon €', 'text', '']
     ];
@@ -13620,8 +13619,6 @@ function showPersonalEditor(personId, editPost) {
       wrap.appendChild(input);
       form.appendChild(wrap);
     });
-    inputs.paymentMethod = createHouseholdPaymentMethodSelect('transfer');
-    form.appendChild(createLabelInput('Zahlungsweg', inputs.paymentMethod));
     const canWrap = document.createElement('label');
     canWrap.className = 'checkbox-row';
     const canInput = document.createElement('input');
@@ -13647,24 +13644,22 @@ function showPersonalEditor(personId, editPost) {
     saveBtn.className = 'success';
     saveBtn.textContent = 'Tankbon speichern';
     saveBtn.addEventListener('click', () => {
-      const liters = parseMoneyInput(inputs.liters.value || 0);
       const paid = parseMoneyInput(inputs.paid.value || 0);
       const cashback = parseMoneyInput(inputs.cashback.value || 0);
       if (!isMonthKey(inputs.month.value) || inputs.month.value < TANK_REAL_DATA_START_MONTH) return alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
-      if (!(liters > 0) || !(paid > 0)) return alert('Bitte Liter und bezahlten Betrag eintragen.');
+      if (!(paid > 0)) return alert('Bitte einen bezahlten Betrag größer als 0 eintragen.');
       reopenTankMonthAfterEdit(inputs.month.value);
       const receipt = upsertTankReceipt({
         month: inputs.month.value,
         date: inputs.date.value,
-        liters,
+        liters: 0,
         paid,
         cashback,
-        paymentMethod: normalizeHouseholdPaymentMethod(inputs.paymentMethod.value),
         isCanister: inputs.isCanister.checked,
         allocations: {},
         note: inputs.note.value
       });
-      addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · ${receipt.liters.toFixed(2)} l · netto ${euro(receipt.netCost)}`, receipt.month);
+      addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · netto ${euro(receipt.netCost)}`, receipt.month);
       saveState();
       render();
     });
@@ -13679,13 +13674,12 @@ function showPersonalEditor(personId, editPost) {
       details.appendChild(summary);
       const table = document.createElement('table');
       table.className = 'list-table compact-table';
-      table.innerHTML = '<thead><tr><th>Datum</th><th>Liter</th><th>bezahlt</th><th>Zahlungsweg</th><th>gespart</th><th>€/l netto</th><th>Art / Hinweis</th><th></th></tr></thead>';
+      table.innerHTML = '<thead><tr><th>Datum</th><th>bezahlt</th><th>gespart</th><th>Art / Hinweis</th><th></th></tr></thead>';
       const tbody = document.createElement('tbody');
       currentReceipts.forEach((receipt) => {
         const tr = document.createElement('tr');
-        const netPerLiter = receipt.liters > 0 ? receipt.netCost / receipt.liters : 0;
         const note = `${receipt.isCanister ? 'Kanister' : 'Tankstelle'}${receipt.note ? ' · ' + escapeHtml(receipt.note) : ''}`;
-        tr.innerHTML = `<td>${receipt.date || '-'}</td><td>${receipt.liters.toFixed(2)} l</td><td>${euro(receipt.paid)}</td><td>${getHouseholdPaymentMethodLabel(receipt.paymentMethod)}</td><td>${euro(receipt.cashback)}</td><td>${netPerLiter.toFixed(3)} €/l</td><td>${note}</td>`;
+        tr.innerHTML = `<td>${receipt.date || '-'}</td><td>${euro(receipt.paid)}</td><td>${euro(receipt.cashback)}</td><td>${note}</td>`;
         const td = document.createElement('td');
         const del = document.createElement('button');
         del.type = 'button';
@@ -13725,7 +13719,7 @@ function showPersonalEditor(personId, editPost) {
 
     box.appendChild(createUiEl('p', 'small muted', 'Wenn die Tankbons des Monats vollständig sind, bestätigst du den Monat hier. Danach fließen die tatsächlichen Kraftstoffkosten in die Folgeplanung ein; eure Einzahlungen werden weiterhin nach dem Einkommen des jeweiligen Monats verteilt. Kilometerstände sind dafür nicht nötig.'));
     box.appendChild(createSummaryMetrics([
-      { label: 'Kraftstoff gekauft', value: `${total.liters.toFixed(2)} l` },
+      { label: 'Tankbons erfasst', value: String(total.receiptCount) },
       { label: 'Ausgegeben netto', value: euro(total.netCost), kind: total.netCost > 0 ? 'success' : 'warning' },
       { label: 'Status', value: closed ? '<span class="pill success">Bestätigt</span>' : '<span class="pill warning">Noch offen</span>' }
     ]));
@@ -13738,7 +13732,7 @@ function showPersonalEditor(personId, editPost) {
       closeBtn.className = 'success';
       closeBtn.textContent = 'Monat bestätigen & Folgeplanung berechnen';
       closeBtn.addEventListener('click', () => {
-        if (!(total.liters > 0) || !(total.netCost > 0)) return alert('Bitte zuerst mindestens einen vollständigen Tankbon mit Litern und Betrag speichern.');
+        if (!(total.receiptCount > 0) || !(total.netCost > 0)) return alert('Bitte zuerst mindestens einen Tankbon mit Betrag speichern.');
         setTankMonthClosed(currentMonth, true);
         const nextPlanMonth = nextMonth(currentMonth);
         const carriedFuelBalance = syncFuelCarryoverFromMonth(currentMonth);
@@ -13828,7 +13822,6 @@ function showPersonalEditor(personId, editPost) {
       name: '',
       amount: 0,
       note: '',
-      paymentMethod: 'transfer'
     };
     const content = document.createElement('div');
     content.className = 'modal-form';
@@ -13850,8 +13843,6 @@ function showPersonalEditor(personId, editPost) {
     row.appendChild(createLabelInput('Datum', dateInput));
     row.appendChild(createLabelInput('Einkauf', nameInput));
     row.appendChild(createLabelInput('Betrag', amountInput));
-    const paymentMethodSelect = createHouseholdPaymentMethodSelect(item.paymentMethod || '');
-    row.appendChild(createLabelInput('Zahlungsweg', paymentMethodSelect));
     content.appendChild(row);
 
     const noteInput = document.createElement('input');
@@ -13880,8 +13871,7 @@ function showPersonalEditor(personId, editPost) {
             date: dateInput.value,
             name: nameInput.value.trim() || 'Einkauf',
             amount,
-            note: noteInput.value.trim(),
-            paymentMethod: normalizeHouseholdPaymentMethod(paymentMethodSelect.value)
+            note: noteInput.value.trim()
           });
           if (!saved) return alert('Der Einkauf konnte nicht gespeichert werden.');
           addChangeLog('Einkaufsgeld', `${isNew ? 'Einkauf erfasst' : 'Einkauf geändert'}: ${saved.name} · ${euro(saved.amount)}.`, saved.month);
