@@ -1,8 +1,8 @@
 <!--
-  Haushaltsplaner Version 3.07
+  Haushaltsplaner Version 3.08
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
-<!-- Aktualisierung Version&nbsp;3.07: Bei direktem Lohnabzug genügt die Eingabe der tatsächlichen Auszahlung; die aktive Abtretung wird dem Plan-Netto automatisch zugerechnet. Der Kontoeingang bleibt auf den tatsächlich ausgezahlten Betrag begrenzt. -->
+<!-- Aktualisierung Version&nbsp;3.08: Nach Standardraten prüft die App mögliche Komplettablösungen. Wenn keine geeignete Schuld vollständig getilgt werden kann, geht die zusätzliche Tilgung an Hoist Finance (Targobank). Die direkte Kreiskassen-Abtretung wird weiterhin automatisch zum Plan-Netto zugerechnet. -->
 <!-- Aktualisierung Version&nbsp;3.05: Tankgeld zeigt zuerst die Monatsprognose, danach die bezahlten Einzahlungen und Tankausgaben sowie den klar hervorgehobenen verbleibenden Tanktopf. Preis- und Fahrprofileinstellungen sind eingeklappt. -->
 <!-- Aktualisierung Version&nbsp;3.06: Einkaufsgeld zeigt Monatsziel und persönliche Einzahlungsanteile, danach bezahlte und offene Beträge. Nicht erfasste Einkäufe und Bargeldreste werden klar ausgewiesen; übriges Geld kommt ins Sparglas. -->
 <!-- Aktualisierung Version&nbsp;2.97: Manuelle Ratenänderungen sind auch bei der Kreiskasse möglich. Beantragte, noch nicht bewilligte Raten lassen sich unter Vorbehalt einplanen; freie Beträge aus dem Schulden-Pool werden regulär zur Tilgung verteilt, ohne dafür eine Rücklage anzulegen. -->
@@ -153,11 +153,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=3.07">
-    <link rel="manifest" href="manifest.json?v=3.07">
+    <link rel="stylesheet" href="style.css?v=3.08">
+    <link rel="manifest" href="manifest.json?v=3.08">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.07">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.07">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.08">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.08">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -167,7 +167,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.07" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.08" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -255,6 +255,6 @@
         <footer>Haushaltsplaner · Version&nbsp;3.07</footer>
       </div>
     </div>
-    <script src="script.js?v=3.07"></script>
+    <script src="script.js?v=3.08"></script>
   </body>
 </html>
