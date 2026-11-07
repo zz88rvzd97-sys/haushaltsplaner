@@ -6676,3 +6676,50 @@ button.compact,
 
   .brand-logo-image { border-radius: 9px !important; }
 }
+
+/* Tankgeld: Prognose und tatsächlichen Rest klar voneinander trennen */
+.tank-forecast-card {
+  margin: 1rem 0;
+  border-color: rgba(69, 111, 87, .2);
+}
+
+.tank-balance-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tank-remaining-balance {
+  margin: .2rem 0 1rem;
+  padding: 1rem 1.15rem;
+  border: 2px solid rgba(49, 111, 73, .42);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #eff8f0, #e5f1e7);
+  box-shadow: 0 8px 20px rgba(35, 90, 54, .1);
+}
+
+.tank-remaining-label {
+  color: #315d3b;
+  font-size: .9rem;
+  font-weight: 800;
+}
+
+.tank-remaining-amount {
+  margin: .2rem 0;
+  color: #174b2b;
+  font-size: 1.7rem;
+  font-weight: 850;
+  letter-spacing: -.02em;
+}
+
+.tank-settings-details {
+  margin-top: 1rem;
+  padding: .95rem 1rem;
+  border: 1px solid #dce5de;
+  border-radius: 16px;
+  background: #fff;
+}
+
+@media (max-width: 720px) {
+  .tank-balance-metrics {
+    grid-template-columns: 1fr;
+  }
+}

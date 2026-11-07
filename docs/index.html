@@ -1,7 +1,10 @@
 <!--
-  Haushaltsplaner Version 3.05
+  Haushaltsplaner Version 3.07
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
+<!-- Aktualisierung Version&nbsp;3.07: Bei direktem Lohnabzug genügt die Eingabe der tatsächlichen Auszahlung; die aktive Abtretung wird dem Plan-Netto automatisch zugerechnet. Der Kontoeingang bleibt auf den tatsächlich ausgezahlten Betrag begrenzt. -->
+<!-- Aktualisierung Version&nbsp;3.05: Tankgeld zeigt zuerst die Monatsprognose, danach die bezahlten Einzahlungen und Tankausgaben sowie den klar hervorgehobenen verbleibenden Tanktopf. Preis- und Fahrprofileinstellungen sind eingeklappt. -->
+<!-- Aktualisierung Version&nbsp;3.06: Einkaufsgeld zeigt Monatsziel und persönliche Einzahlungsanteile, danach bezahlte und offene Beträge. Nicht erfasste Einkäufe und Bargeldreste werden klar ausgewiesen; übriges Geld kommt ins Sparglas. -->
 <!-- Aktualisierung Version&nbsp;2.97: Manuelle Ratenänderungen sind auch bei der Kreiskasse möglich. Beantragte, noch nicht bewilligte Raten lassen sich unter Vorbehalt einplanen; freie Beträge aus dem Schulden-Pool werden regulär zur Tilgung verteilt, ohne dafür eine Rücklage anzulegen. -->
 <!-- Aktualisierung Version&nbsp;2.99: Benny-Einkommen über 2.300 € erhöht ab Januar 2027 getrennt vom 800-€-Grundpool die vorgeschlagene Sondertilgung. Vertragsraten bleiben unverändert. -->
 <!-- Aktualisierung Version&nbsp;2.95: Die Startseite gruppiert offene Schritte nach Geldeingängen, Zahlungen und Prüfungen. Die Tankrest-Erinnerung erscheint nur bei einem noch zu verbuchenden Rest; den doppelten Schnellzugriff gibt es nicht mehr. -->
@@ -150,11 +153,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=3.05">
-    <link rel="manifest" href="manifest.json?v=2.99">
+    <link rel="stylesheet" href="style.css?v=3.07">
+    <link rel="manifest" href="manifest.json?v=3.07">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.99">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2.99">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.07">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.07">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -164,7 +167,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=2.99" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.07" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -223,7 +226,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 2.99 geladen</div>
+            <div class="version-chip" id="versionChip">Version 3.07 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -249,9 +252,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-                <footer>Haushaltsplaner · Version&nbsp;3.05</footer>
+        <footer>Haushaltsplaner · Version&nbsp;3.07</footer>
       </div>
     </div>
-    <script src="script.js?v=3.05"></script>
+    <script src="script.js?v=3.07"></script>
   </body>
 </html>

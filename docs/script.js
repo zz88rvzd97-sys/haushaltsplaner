@@ -1,5 +1,5 @@
 /*
- * Haushaltsplaner Version 3.00
+ * Haushaltsplaner Version 3.06
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.05';
+  const APP_VERSION = '3.07';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -6209,7 +6209,7 @@
     const existing = getPersonIncomeReceivedEntry(person, month);
     if (!existing) return false;
     if (!ACCOUNTS_ENABLED) {
-      const amount = Number(getPersonNet(person, month) || 0);
+      const amount = getPersonCashPayout(person, month);
       if (!Number.isFinite(amount) || amount < 0) return false;
       const changed = Math.abs(Number(existing.amount || 0) - amount) >= 0.005;
       existing.accountId = '';
@@ -6231,7 +6231,7 @@
       ? existingAccount.id
       : (storedBySource ? storedBySource.account.id : getPersonIncomeAccountId(person));
     if (!targetAccountId || !getAccountById(targetAccountId)) return false;
-    const amount = Number(getPersonNet(person, month) || 0);
+    const amount = getPersonCashPayout(person, month);
     if (!Number.isFinite(amount) || amount < 0) return false;
     const changed = Math.abs(Number(existing.amount || 0) - amount) >= 0.005
       || (preservedTx && Math.abs(Number(preservedTx.amount || 0) - amount) >= 0.005)
@@ -6270,7 +6270,7 @@
     if (received) {
       if (existing) return true;
       if (!ACCOUNTS_ENABLED) {
-        const amount = Number(getPersonNet(person, month) || 0);
+        const amount = getPersonCashPayout(person, month);
         person.incomeReceived[month] = {
           accountId: '',
           amount,
@@ -6289,7 +6289,7 @@
         alert('Bitte zuerst ein Zielkonto für den Lohn auswählen.');
         return false;
       }
-      const amount = Number(getPersonNet(person, month) || 0);
+      const amount = getPersonCashPayout(person, month);
       person.incomeReceived[month] = {
         accountId: targetAccountId,
         amount,
@@ -6532,6 +6532,7 @@
     if (!ACCOUNTS_ENABLED) return false;
     if (!post) return false;
     ensurePostConfig(post);
+    if (post.paidWithIncome === true) return false;
     if (getLinkedSavingsGoal(post)) return false;
     const accountId = inferAccountIdForPost(post);
     if (!(accountId && getAccountById(accountId))) return false;
@@ -7937,6 +7938,11 @@
       return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
     }, 0);
     return roundMoney(Math.max(0, amount));
+  }
+
+  function getPersonCashPayout(person, monthKey = currentMonth) {
+    if (!person) return 0;
+    return roundMoney(Math.max(0, Number(getPersonNet(person, monthKey) || 0) - getPayrollDeductionForPerson(person, monthKey)));
   }
 
   function getIncomeShareBasis(person, monthKey = currentMonth, enteredIncome) {
@@ -11268,15 +11274,18 @@
       monthInput.type = 'text';
       monthInput.inputMode = 'decimal';
       monthInput.placeholder = 'leer = Grundlohn / Planwert';
-      monthInput.value = hasOverride ? formatNumberInput(Number(person.netOverrides[currentMonth])) : '';
+      monthInput.value = hasOverride
+        ? formatNumberInput(Math.max(0, Number(person.netOverrides[currentMonth]) - payrollDeduction))
+        : '';
 
       form.appendChild(createLabelInput('Grundlohn / Basis-Netto', standardInput));
-      form.appendChild(createLabelInput(
-        payrollDeduction > 0
-          ? `Auszahlung + Lohnabzug in ${currentLabel}`
-          : `Tatsächlich ausgezahlt in ${currentLabel}`,
-        monthInput
-      ));
+      form.appendChild(createLabelInput(`Tatsächlich ausgezahlt in ${currentLabel}`, monthInput));
+      if (payrollDeduction > 0) {
+        const payrollNote = document.createElement('p');
+        payrollNote.className = 'small muted';
+        payrollNote.textContent = `Abtretung: ${euro(payrollDeduction)} · wird automatisch zum Plan-Netto addiert. Hier nur den Betrag eintragen, der auf dem Konto angekommen ist.`;
+        form.appendChild(payrollNote);
+      }
       const shiftNote = document.createElement('p');
       shiftNote.className = 'small muted';
       shiftNote.textContent = hasShiftOverride
@@ -11292,7 +11301,7 @@
       receivedBox.className = receivedEntry ? 'notice success income-received-status' : 'notice income-received-status';
       receivedBox.innerHTML = receivedEntry
         ? `<strong>Erhalten:</strong> ${euro(receivedEntry.amount)} für ${currentLabel} markiert.`
-        : `<strong>Noch nicht erhalten:</strong> ${euro(active)} für ${currentLabel} ist noch nicht als Eingang markiert.`;
+        : `<strong>Noch nicht erhalten:</strong> ${euro(getPersonCashPayout(person, currentMonth))} Auszahlung für ${currentLabel} ist noch nicht als Eingang markiert.`;
       incomeAccountRow.appendChild(receivedBox);
       form.appendChild(incomeAccountRow);
 
@@ -11327,8 +11336,9 @@
             alert('Bitte eine gültige tatsächliche Auszahlung eingeben.');
             return;
           }
-          person.netOverrides[currentMonth] = monthValue;
-          addChangeLog('Einkommen', `${person.name}: tatsächliche Auszahlung für ${currentLabel} auf ${euro(monthValue)} gesetzt.`);
+          const totalIncome = roundMoney(monthValue + payrollDeduction);
+          person.netOverrides[currentMonth] = totalIncome;
+          addChangeLog('Einkommen', `${person.name}: Auszahlung für ${currentLabel} auf ${euro(monthValue)} gesetzt${payrollDeduction > 0 ? `; Lohnabtretung ${euro(payrollDeduction)} ergänzt (Plan-Netto ${euro(totalIncome)}).` : '.'}`);
         }
 
         syncPersonIncomeReceivedAmount(person, currentMonth);
@@ -13885,35 +13895,70 @@ function showPersonalEditor(personId, editPost) {
 
   function renderGroceryTopUpCard(parent) {
     normalizeBudgetTopUpsConfig();
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.appendChild(createUiEl('h3', '', 'Einkaufsgeld auffüllen'));
-    card.appendChild(createUiEl('p', 'small muted', 'Das Einkaufsgeld nutzt ein festes Monatsziel. Übriges Bargeld kommt ins Sparglas und wird nicht vom nächsten Monatsziel abgezogen. Die persönlichen Anteile werden nach verfügbarem Einkommen verteilt und jeweils vom eigenen Lohnkonto bezahlt.'));
-
     const calc = getGroceryTopUpAllocation(currentMonth);
     const config = getBudgetTopUpConfig('groceries');
     const manualTarget = getGroceryTargetOverride(currentMonth);
+    const activePosts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, currentMonth));
+    const paidTotal = roundMoney(activePosts.reduce((sum, post) => {
+      if (!isPostPaidForMonth(post, currentMonth)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, currentMonth) || 0);
+    }, 0));
+    const plannedTotal = roundMoney(Number(calc.topUp || 0));
+    const stillToPay = roundMoney(Math.max(0, plannedTotal - paidTotal));
     const basisText = manualTarget != null
       ? `Manuell für ${formatMonthLabel(currentMonth)}`
       : 'Festes Monatsziel';
-    card.appendChild(createSummaryMetrics([
+    const forecastCard = document.createElement('div');
+    forecastCard.className = 'card tank-forecast-card';
+    forecastCard.appendChild(createUiEl('h3', '', '1. Monatsprognose'));
+    forecastCard.appendChild(createUiEl('p', 'small muted', 'Festes Monatsziel und geplanter Anteil pro Lohnkonto.'));
+    forecastCard.appendChild(createSummaryMetrics([
       { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : 'fester Planwert' },
-      { label: 'Berechnungsbasis', value: basisText },
-      { label: 'Einzahlen', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'ab Juli 2026'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' }
+      { label: 'Einzahlung geplant', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'Noch nicht aktiv'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' },
+      { label: 'Berechnungsbasis', value: basisText }
     ]));
-    const groceryAllocationLabels = getFoodMoneyPosts()
-      .filter((post) => isPostActiveInMonth(post, currentMonth))
-      .map((post) => {
+    const groceryAllocationLabels = activePosts.map((post) => {
         const person = (state.persons || []).find((entry) => entry.id === post.personId);
         return `${person ? person.name : 'Unbekannt'} ${euro(Number(calc.allocations && calc.allocations[post.id] || 0))}`;
       });
     if (groceryAllocationLabels.length) {
-      card.appendChild(createUiEl('p', 'small muted', `Anteile vom jeweiligen Lohnkonto: ${groceryAllocationLabels.join(' · ')}`));
+      forecastCard.appendChild(createUiEl('p', 'small muted', `Anteile vom jeweiligen Lohnkonto: ${groceryAllocationLabels.join(' · ')}`));
     }
+    parent.appendChild(forecastCard);
+
+    const paidCard = document.createElement('div');
+    paidCard.className = 'card';
+    paidCard.appendChild(createUiEl('h3', '', '2. Bisher bezahlt'));
+    paidCard.appendChild(createUiEl('p', 'small muted', 'Hier zählt nur, was bei den persönlichen Einkaufsgeld-Anteilen als bezahlt markiert ist.'));
+    const paymentMetrics = createSummaryMetrics([
+      { label: 'Bereits eingezahlt', value: calc.active ? euro(paidTotal) : 'Noch nicht aktiv', kind: paidTotal > 0 ? 'success' : 'warning' },
+      { label: 'Noch einzuzahlen', value: calc.active ? euro(stillToPay) : '—', kind: stillToPay > 0 ? 'warning' : 'success' }
+    ]);
+    paymentMetrics.classList.add('tank-balance-metrics');
+    paidCard.appendChild(paymentMetrics);
+    const paymentDetails = activePosts.map((post) => {
+      const person = (state.persons || []).find((entry) => entry.id === post.personId);
+      const label = person ? person.name : 'Unbekannt';
+      const amount = Number(getEffectiveAmountForMonth(post, currentMonth) || 0);
+      return `${label}: ${euro(amount)} ${isPostPaidForMonth(post, currentMonth) ? 'bezahlt' : 'offen'}`;
+    });
+    if (paymentDetails.length) paidCard.appendChild(createUiEl('p', 'small muted', paymentDetails.join(' · ')));
+    if (!calc.active) paidCard.appendChild(createUiEl('div', 'info-box', `Die Aufstockung für diesen Monat ist noch nicht aktiv. Das feste Monatsziel gilt ab ${formatMonthLabel(config.targetStartMonth)}.`));
+    parent.appendChild(paidCard);
+
+    const remainingCard = document.createElement('div');
+    remainingCard.className = 'card';
+    remainingCard.appendChild(createUiEl('h3', '', '3. Übriges Einkaufsgeld'));
+    remainingCard.appendChild(createUiEl('div', 'info-box', 'Einkäufe und Bargeldreste werden nicht einzeln erfasst. Übriges Einkaufsgeld kommt ins Sparglas. Deshalb zeigt die App hier keinen laufenden Einkaufsrest an.'));
+    parent.appendChild(remainingCard);
+
+    const targetCard = document.createElement('div');
+    targetCard.className = 'card';
+    targetCard.appendChild(createUiEl('h3', '', 'Monatsziel anpassen'));
 
     const targetEditor = document.createElement('div');
     targetEditor.className = 'sub-card grocery-target-editor';
-    targetEditor.appendChild(createUiEl('h4', '', `Monatsziel für ${formatMonthLabel(currentMonth)}`));
+    targetEditor.appendChild(createUiEl('h4', '', `${formatMonthLabel(currentMonth)}`));
     targetEditor.appendChild(createUiEl('p', 'small muted', 'Die Änderung gilt nur für den ausgewählten Monat. Für andere Monate gilt das feste Monatsziel.'));
     const targetRow = document.createElement('div');
     targetRow.className = 'row';
@@ -13957,7 +14002,7 @@ function showPersonalEditor(personId, editPost) {
     targetActions.appendChild(automaticBtn);
     targetEditor.appendChild(targetRow);
     targetEditor.appendChild(targetActions);
-    card.appendChild(targetEditor);
+    targetCard.appendChild(targetEditor);
 
     const info = document.createElement('div');
     info.className = 'info-box';
@@ -13970,26 +14015,20 @@ function showPersonalEditor(personId, editPost) {
     } else {
       info.innerHTML = `<strong>Noch nicht aktiv:</strong> Das feste Monatsziel von ${euro(calc.target)} gilt ab ${formatMonthLabel(config.targetStartMonth)}.`;
     }
-    card.appendChild(info);
-
-    parent.appendChild(card);
+    targetCard.appendChild(info);
+    parent.appendChild(targetCard);
   }
 
   function renderGroceries() {
     if (!grocerySection) return;
     grocerySection.innerHTML = '';
-    const calc = getGroceryTopUpAllocation(currentMonth);
 
     const card = document.createElement('div');
     card.className = 'card';
     const title = document.createElement('h2');
     title.textContent = 'Einkaufsgeld';
     card.appendChild(title);
-    card.appendChild(createUiEl('p', 'small muted', 'Einkäufe müssen nicht einzeln eingetragen werden. Hier seht ihr nur das geplante Monatsbudget und die Aufteilung auf eure Lohnkonten.'));
-    card.appendChild(createSummaryMetrics([
-      { label: `Ziel ${formatMonthLabel(currentMonth)}`, value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning' },
-      { label: calc.active ? 'Aufstockung' : 'Status', value: calc.active ? euro(calc.topUp) : 'Noch nicht aktiv', kind: calc.active ? 'success' : 'warning' }
-    ]));
+    card.appendChild(createUiEl('p', 'small muted', 'Einkäufe werden nicht einzeln erfasst. Die Monatsansicht zeigt deshalb erst die geplante Einzahlung, dann den Zahlungsstand und zuletzt den Umgang mit einem möglichen Rest.'));
     grocerySection.appendChild(card);
 
     renderGroceryTopUpCard(grocerySection);
@@ -15151,22 +15190,28 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', '2. Bisher bezahlt'));
-    card.appendChild(createUiEl('p', 'small muted', 'Der Rest ergibt sich aus dem übernommenen Vormonatsrest plus den bezahlten Einzahlungen minus den erfassten Tankausgaben.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Die Restmenge ergibt sich aus dem übernommenen Rest des Vormonats plus den bezahlten Einzahlungen minus den erfassten Tankausgaben.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
     const live = getFuelPoolLiveStatus(currentMonth);
-    card.appendChild(createSummaryMetrics([
-      
-      { label: 'Vom Lohnkonto bezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
-      { label: 'Tankbons im Monat', value: calc.active ? euro(live.spent) : 'ab Juli 2026' },
-      { label: '3. Noch im Tanktopf', value: calc.active ? euro(live.currentBalance) : 'ab Juli 2026', kind: live.shortage > 0 ? 'danger' : 'success' },
-      { label: 'Noch einzuzahlen', value: calc.active ? euro(live.pendingTopUp) : 'ab Juli 2026', kind: live.pendingTopUp > 0 ? 'warning' : 'success' }
-    ]));
+    const balanceMetrics = createSummaryMetrics([
+      { label: 'Eingezahlt', value: calc.active ? euro(live.paidTopUp) : 'ab Juli 2026', kind: live.paidTopUp > 0 ? 'success' : 'warning' },
+      { label: 'Für Tanken ausgegeben', value: calc.active ? euro(live.spent) : 'ab Juli 2026' }
+    ]);
+    balanceMetrics.classList.add('tank-balance-metrics');
+    card.appendChild(balanceMetrics);
+
+    const remaining = document.createElement('div');
+    remaining.className = 'tank-remaining-balance';
+    remaining.appendChild(createUiEl('div', 'tank-remaining-label', '3. Noch im Tanktopf'));
+    remaining.appendChild(createUiEl('div', 'tank-remaining-amount', calc.active ? euro(live.currentBalance) : 'ab Juli 2026'));
+    remaining.appendChild(createUiEl('div', 'small muted', 'Verfügbar für weiteres Tanken; Rest vom Vormonat ist eingerechnet.'));
+    card.appendChild(remaining);
 
     const info = document.createElement('div');
     info.className = 'info-box';
     if (calc.active) {
-      info.innerHTML = `<strong>Verfügbar:</strong> ${euro(live.openingBalance)} Rest aus dem Vormonat + ${euro(live.paidTopUp)} eingezahlt − ${euro(live.spent)} Tankbons = <strong>${euro(live.currentBalance)} im Tanktopf</strong>.${live.shortage > 0 ? ` Es fehlen aktuell ${euro(live.shortage)}.` : ''}<br><span class="muted">Monatsziel ${euro(calc.target)}; geplante Aufstockung ${euro(calc.topUp)}.</span>`;
+      info.innerHTML = `<strong>Verfügbar:</strong> ${euro(live.openingBalance)} Rest vom Vormonat + ${euro(live.paidTopUp)} eingezahlt − ${euro(live.spent)} ausgegeben = <strong>${euro(live.currentBalance)} noch im Tanktopf</strong>.${live.shortage > 0 ? ` Es fehlen aktuell ${euro(live.shortage)}.` : ''}${live.pendingTopUp > 0 ? `<br><span class="muted">Von der geplanten Aufstockung sind noch ${euro(live.pendingTopUp)} offen.</span>` : ''}`;
     } else {
       info.innerHTML = '<strong>Noch nicht aktiv:</strong> Die Rest-Aufstockung beginnt ab Juli 2026.';
     }
@@ -15221,8 +15266,34 @@ function showPersonalEditor(personId, editPost) {
     note.textContent = 'Der gemeinsame Tanktopf ist mit euren persönlichen Tankgeld-Posten verknüpft. Jede Person bezahlt ihren nach dem verfügbaren Einkommen (nach direktem Lohnabzug) berechneten Anteil vom eigenen Lohnkonto. Ist der aktuelle Monat bereits bezahlt, bleibt dieser Betrag fest; Änderungen gelten ab dem Folgemonat.';
     card.appendChild(note);
 
+    const householdTankStats = getTankHouseholdAverageStats(currentMonth, 12);
+    const fuelAllocation = getFuelTopUpAllocation(currentMonth);
+    const bennyBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.benny || 0);
+    const madeleineBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.madeleine || 0);
+    const bennyIncome = getIncomeWeightForPerson('benny', currentMonth);
+    const madeleineIncome = getIncomeWeightForPerson('madeleine', currentMonth);
+    const combinedIncome = bennyIncome + madeleineIncome;
+    const bennyShare = combinedIncome > 0 ? bennyIncome / combinedIncome : 0.5;
+    const madeleineShare = combinedIncome > 0 ? madeleineIncome / combinedIncome : 0.5;
+    const forecastCard = document.createElement('div');
+    forecastCard.className = 'card tank-forecast-card';
+    forecastCard.appendChild(createUiEl('h3', '', '1. Monatsprognose'));
+    forecastCard.appendChild(createUiEl('p', 'small muted', 'Geschätzter Bedarf und die geplante Aufteilung nach Einkommen.'));
+    forecastCard.appendChild(createSummaryMetrics([
+      { label: 'Geschätzter Monatsbedarf', value: euro(householdTankStats.roundedBudget), kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
+      { label: 'Bennys geplanter Anteil', value: euro(bennyBudget), hint: `${(bennyShare * 100).toFixed(1)} %` },
+      { label: 'Madeleines geplanter Anteil', value: euro(madeleineBudget), hint: `${(madeleineShare * 100).toFixed(1)} %` }
+    ]));
+    forecastCard.appendChild(createUiEl('div', 'small muted', householdTankStats.projectedCount > 0 ? `Grundlage: ${householdTankStats.realCount} echte Monate und ${householdTankStats.projectedCount} Prognosemonate.` : 'Grundlage: 12 echte Monate.'));
+    card.appendChild(forecastCard);
+
     const settingsRow = document.createElement('div');
     settingsRow.className = 'row';
+    const settingsDetails = document.createElement('details');
+    settingsDetails.className = 'details-box tank-settings-details';
+    const settingsSummary = document.createElement('summary');
+    settingsSummary.textContent = 'Tankberechnung, Preise und Einstellungen';
+    settingsDetails.appendChild(settingsSummary);
 
     const keyWrap = document.createElement('div');
     const keyLabel = document.createElement('label');
@@ -15359,7 +15430,7 @@ function showPersonalEditor(personId, editPost) {
     settingsRow.appendChild(keyWrap);
     settingsRow.appendChild(radWrap);
     settingsRow.appendChild(locWrap);
-    card.appendChild(settingsRow);
+    settingsDetails.appendChild(settingsRow);
 
     const apiStatus = getTankApiStatusInfo();
     const apiStatusBox = document.createElement('div');
@@ -15367,29 +15438,12 @@ function showPersonalEditor(personId, editPost) {
     const keyFormatLabel = state.tankCalc.apiKey ? (isTankApiKeyFormatValid(state.tankCalc.apiKey) ? 'Format OK' : 'Format prüfen') : 'kein Key';
     const tankLocationLabel = state.tankCalc.locationName || (state.tankCalc.locationQuery ? state.tankCalc.locationQuery : 'Gerätestandort');
     apiStatusBox.innerHTML = `<strong>Tankerkönig-Status:</strong> ${state.tankCalc.apiKey ? 'API-Key vorhanden' : 'API-Key fehlt'} · ${keyFormatLabel} · Standort: ${tankLocationLabel} · Letzter Abruf: ${apiStatus.lastRequestLabel}<br><span class="muted">${apiStatus.lastStatus ? apiStatus.lastStatus + ': ' : ''}${apiStatus.lastError || 'Noch keine Diagnose durchgeführt.'}</span>`;
-    card.appendChild(apiStatusBox);
+    settingsDetails.appendChild(apiStatusBox);
 
     const householdTankInfo = document.createElement('div');
     householdTankInfo.className = 'info-box';
     householdTankInfo.innerHTML = '<strong>Planung ab Juni 2026:</strong> Bestätigte Tankbons und Kanisterkäufe bestimmen nach und nach die echte Höhe des gemeinsamen Kraftstofftopfs. Kilometer, Verbrauch und Preis bestimmen die Prognose; auf euch verteilt wird der Topf automatisch nach dem verfügbaren Einkommen nach Lohnabzug. Bis 12 echte Monate vorliegen, ergänzt die bisherige Prognose die fehlenden Monate.';
-    card.appendChild(householdTankInfo);
-
-    const householdTankStats = getTankHouseholdAverageStats(currentMonth, 12);
-    const fuelAllocation = getFuelTopUpAllocation(currentMonth);
-    const bennyBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.benny || 0);
-    const madeleineBudget = Number(fuelAllocation.allocations && fuelAllocation.allocations.madeleine || 0);
-    const bennyIncome = getIncomeWeightForPerson('benny', currentMonth);
-    const madeleineIncome = getIncomeWeightForPerson('madeleine', currentMonth);
-    const combinedIncome = bennyIncome + madeleineIncome;
-    const bennyShare = combinedIncome > 0 ? bennyIncome / combinedIncome : 0.5;
-    const madeleineShare = combinedIncome > 0 ? madeleineIncome / combinedIncome : 0.5;
-    card.appendChild(createSummaryMetrics([
-      { label: '1. Monatsprognose · Gesamtbedarf', value: `${euro(householdTankStats.roundedBudget)}`, kind: householdTankStats.roundedBudget > 0 ? 'success' : 'warning' },
-      { label: 'Basis', value: householdTankStats.projectedCount > 0 ? `${householdTankStats.realCount} echt + ${householdTankStats.projectedCount} Prognose` : '12 echte Monate' },
-      { label: 'Bennys Anteil vom Lohnkonto', value: `${euro(bennyBudget)}`, hint: `${(bennyShare * 100).toFixed(1)} % nach Lohnabzug` },
-      { label: 'Madeleines Anteil vom Lohnkonto', value: `${euro(madeleineBudget)}`, hint: `${(madeleineShare * 100).toFixed(1)} % nach Lohnabzug` },
-      { label: 'API-Key', value: state.tankCalc.apiKey ? 'Gespeichert' : 'Fehlt', kind: state.tankCalc.apiKey ? 'success' : 'warning' }
-    ]));
+    settingsDetails.appendChild(householdTankInfo);
 
     renderFuelTopUpCard(card);
 
@@ -15406,6 +15460,12 @@ function showPersonalEditor(personId, editPost) {
     card.appendChild(tankSyncInfo);
 
     renderTankReceiptTracking(card);
+
+    const personDetails = document.createElement('details');
+    personDetails.className = 'details-box tank-settings-details';
+    const personSummary = document.createElement('summary');
+    personSummary.textContent = 'Fahrprofile und Preisannahmen';
+    personDetails.appendChild(personSummary);
 
     const personConfigs = [
       ['benny', 'Benny'],
@@ -15568,9 +15628,11 @@ function showPersonalEditor(personId, editPost) {
       buttonRow.appendChild(applyBtn);
       sub.appendChild(buttonRow);
 
-      card.appendChild(sub);
+      personDetails.appendChild(sub);
     });
 
+    settingsDetails.appendChild(personDetails);
+    card.appendChild(settingsDetails);
     renderTankMonthCompletion(card);
     tankCalcSection.appendChild(card);
   }
@@ -20598,6 +20660,7 @@ function createPotsCard() {
     content.className = 'modal-form';
 
     const activeNetForMonth = getPersonNet(person, currentMonth);
+    const payrollDeduction = getPayrollDeductionForPerson(person, currentMonth);
     const sourceLabel = getPersonNetSourceLabel(person, currentMonth);
 
     const currentInfo = document.createElement('p');
@@ -20635,16 +20698,34 @@ function createPotsCard() {
     refs.newNetInput = document.createElement('input');
     refs.newNetInput.type = 'text';
     refs.newNetInput.inputMode = 'decimal';
-    refs.newNetInput.value = activeNetForMonth.toFixed(2);
+    refs.newNetInput.value = Math.max(0, activeNetForMonth - payrollDeduction).toFixed(2);
     refs.modeSelect = document.createElement('select');
     refs.modeSelect.innerHTML = `
       <option value="once">Tatsächliche Auszahlung nur dieser Monat</option>
       <option value="future">Grundlohn / Planwert ab diesem Monat</option>
     `;
     refs.modeSelect.value = 'once';
-    incomeRow.appendChild(createLabelInput(`Netto für ${formatMonthLabel(currentMonth)}`, refs.newNetInput));
+    incomeRow.appendChild(createLabelInput(`Betrag für ${formatMonthLabel(currentMonth)}`, refs.newNetInput));
     incomeRow.appendChild(createLabelInput('Speichern als', refs.modeSelect));
     content.appendChild(incomeRow);
+    let incomeEntryMode = 'once';
+    refs.modeSelect.addEventListener('change', () => {
+      const nextMode = refs.modeSelect.value === 'once' ? 'once' : 'future';
+      if (payrollDeduction > 0 && nextMode !== incomeEntryMode) {
+        const entered = parseMoneyInput(refs.newNetInput.value);
+        if (Number.isFinite(entered)) {
+          const adjusted = nextMode === 'future' ? entered + payrollDeduction : entered - payrollDeduction;
+          refs.newNetInput.value = Math.max(0, adjusted).toFixed(2);
+        }
+      }
+      incomeEntryMode = nextMode;
+    });
+    const payrollHelp = document.createElement('p');
+    payrollHelp.className = 'small muted';
+    payrollHelp.textContent = payrollDeduction > 0
+      ? `Bei tatsächlicher Auszahlung gibst du den Kontoeingang ein; die Abtretung von ${euro(payrollDeduction)} wird automatisch ergänzt. Bei einem dauerhaften Planwert wird das vollständige Netto einschließlich Abtretung gespeichert.`
+      : 'Bei einer tatsächlichen Auszahlung gibst du den Betrag ein, der auf dem Konto angekommen ist.';
+    content.appendChild(payrollHelp);
 
     const standardBox = document.createElement('details');
     standardBox.className = 'details-box';
@@ -20720,9 +20801,10 @@ function createPotsCard() {
           else clearPersonShiftForMonth(person, currentMonth);
 
           const mode = refs.modeSelect.value === 'once' ? 'once' : 'future';
-          if (!setPersonNetForMonth(person, currentMonth, newNet, mode)) return alert('Das Netto konnte nicht gespeichert werden.');
+          const storedNet = mode === 'once' ? roundMoney(newNet + payrollDeduction) : newNet;
+          if (!setPersonNetForMonth(person, currentMonth, storedNet, mode)) return alert('Das Netto konnte nicht gespeichert werden.');
 
-          addChangeLog('Einkommen', `${person.name}: ${mode === 'once' ? 'tatsächliche Auszahlung für ' + formatMonthLabel(currentMonth) : 'Grundlohn / Planwert ab ' + formatMonthLabel(currentMonth)} auf ${euro(newNet)} gesetzt.`);
+          addChangeLog('Einkommen', `${person.name}: ${mode === 'once' ? 'Auszahlung für ' + formatMonthLabel(currentMonth) + ' auf ' + euro(newNet) + (payrollDeduction > 0 ? ` gesetzt; Abtretung ${euro(payrollDeduction)} ergänzt (Plan-Netto ${euro(storedNet)}).` : ' gesetzt.') : 'Grundlohn / Planwert ab ' + formatMonthLabel(currentMonth) + ' auf ' + euro(newNet) + ' gesetzt.'}`);
           syncPersonIncomeReceivedAmount(person, currentMonth);
           syncIncomeBasedSharedTopUps(currentMonth);
           saveState();
