@@ -1,5 +1,4 @@
-/*
- * Haushaltsplaner Version 3.06
+/* * Haushaltsplaner Version 3.08
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.07';
+  const APP_VERSION = '3.08';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -3381,6 +3380,13 @@
       .sort((a, b) => Number(a.open || 0) - Number(b.open || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de'));
   }
 
+  function getHoistDebtBudgetCandidate(debts) {
+    return (debts || []).find((debt) => {
+      const key = normalizeTextKey(debt && debt.name || '');
+      return key.includes('hoist') || key.includes('targobank');
+    }) || null;
+  }
+
   function findFullPayoffCandidateBeforeSplit(debts, availableBudget, options = {}) {
     const budget = roundMoney(Math.max(0, Number(availableBudget || 0)));
     if (!(budget > 0)) return null;
@@ -3706,7 +3712,7 @@
               reserveAmount: dedicatedReserve
             }
           );
-          let target = fullPayoffCandidate || candidates[0];
+          let target = fullPayoffCandidate || getHoistDebtBudgetCandidate(candidates); if (!target) break;
 
           const isAutomaticReserveTarget = !!(automaticPayoffPlan && target.id === automaticPayoffPlan.targetDebtId);
           const targetDedicatedReserve = isAutomaticReserveTarget
@@ -3725,7 +3731,7 @@
             // Eine bereits vorgemerkte Rücklage für den Gesamtausgleich bleibt
             // trotzdem erhalten.
             if (neededFromBudget > availableBudget + 0.005) {
-              const flexibleTarget = candidates.find((candidate) => !isDebtFullPayoffOnly(candidate));
+              const flexibleTarget = getHoistDebtBudgetCandidate(candidates);
               if (!flexibleTarget) break;
               target = flexibleTarget;
             } else {
@@ -15892,7 +15898,7 @@ function showPersonalEditor(personId, editPost) {
     const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
     head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Der Grundpool beträgt 800 €. Ab Januar 2027 kommt bei Benny Einkommen über 2.300 € als separates Sondertilgungsbudget hinzu. Keine vereinbarte Monatsrate wird dadurch erhöht.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Grundpool beträgt 800 €. Ab Januar 2027 kommt bei Benny Einkommen über 2.300 € als separates Sondertilgungsbudget hinzu. Erst prüft die App, ob eine geeignete Schuld vollständig ablösbar ist; wenn nicht, geht die zusätzliche Tilgung an Hoist Finance (Targobank). Vereinbarte Monatsraten bleiben unverändert.'));
     if (monthKey === snowballConfig.monthlyTargetStartMonth) {
       card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus September werden nicht übernommen. Ab Oktober zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
     }
@@ -16265,7 +16271,7 @@ function showPersonalEditor(personId, editPost) {
 
     const note = document.createElement('p');
     note.className = 'small muted';
-    note.textContent = 'Ab Oktober 2026 bindet die App jeden Monat den 800-€-Grundpool für Schulden. Ab Januar 2027 kommt bei Benny zusätzlich das eingetragene Einkommen über 2.300 € dazu; der direkte Kreiskassen-Lohnabzug ist darin enthalten. Zuerst werden Pflicht- und Standardraten gezahlt, danach wird das Zusatzbudget getrennt als Sondertilgung verteilt. Vereinbarte Raten werden dadurch nicht erhöht. Was wegen einer Zahlungsregel nicht sinnvoll eingesetzt werden kann, bleibt als gebundene Schulden-Rücklage vorgemerkt.';
+    note.textContent = 'Ab Oktober 2026 bindet die App jeden Monat den 800-€-Grundpool. Ab Januar 2027 kommt Bennys Einkommen über 2.300 € zusätzlich dazu; der direkte Kreiskassen-Lohnabzug ist darin enthalten. Nach Standardraten prüft sie mögliche Komplettablösungen. Wenn keine passende Schuld komplett getilgt werden kann, geht die zusätzliche Zahlung an Hoist Finance (Targobank). Vereinbarte Raten bleiben unverändert.';
     card.appendChild(note);
     return card;
   }
@@ -16285,7 +16291,7 @@ function showPersonalEditor(personId, editPost) {
     const titleWrap = document.createElement('div');
     titleWrap.appendChild(createUiEl('span', 'pill success', `Start ${formatMonthLabel(snowballConfig.monthlyTargetStartMonth)}`));
     titleWrap.appendChild(createUiEl('h3', '', `Ratenvorschlag für ${formatMonthLabel(targetMonth)}`));
-    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den unveränderten Standardraten prüft sie zuerst, ob sich eine Schuld vollständig bezahlen lässt. Der 800-€-Grundpool bleibt bestehen; ab Januar 2027 wird Bennys Einkommen über 2.300 € getrennt als Sondertilgung ergänzt. Keine vereinbarte Rate wird erhöht. Nicht einsetzbare Beträge bleiben als gebundene Schulden-Rücklage vorgemerkt.'));
+    titleWrap.appendChild(createUiEl('p', 'small muted', 'Die App rechnet jeden Monat neu. Nach den unveränderten Standardraten prüft sie zuerst, ob eine geeignete Schuld vollständig ablösbar ist. Wenn nicht, geht die zusätzliche Tilgung an Hoist Finance (Targobank). Der 800-€-Grundpool bleibt bestehen; Bennys Einkommen über 2.300 € kommt ab Januar 2027 zusätzlich hinzu. Vereinbarte Monatsraten bleiben unverändert.'));
     const recalculationMonth = state.appMeta && state.appMeta.debtPlanLastRecalculatedMonth;
     const recalculationDebtName = state.appMeta && state.appMeta.debtPlanLastRecalculatedDebtName;
     if (isMonthKey(recalculationMonth) && recalculationDebtName) {
