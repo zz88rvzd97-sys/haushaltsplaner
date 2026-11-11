@@ -2437,6 +2437,7 @@ html, body {
 .month-money-open { color: var(--warning-text, #8b5600); font-weight: 700; }
 .month-debt-budget-note { margin-top: .85rem; }
 .month-close-review { margin: .75rem 0 1rem; }
+.debt-budget-overrun { color: #8b5600; font-weight: 700; }
 
 /* Developer Beta 1.16: Start immer im aktuellen Monat, Vergangenheit weiter bearbeitbar. */
 
