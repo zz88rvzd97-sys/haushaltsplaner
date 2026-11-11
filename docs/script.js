@@ -11079,36 +11079,9 @@
         { title: 'Prüfungen', matches: (item) => item.area !== 'Einkommen' && item.area !== 'Gemeinsame Kosten' && item.area !== 'Offene Zahlungen' }
       ];
       taskGroups.forEach((group) => {
-        const groupItems = tasks.filter(group.matches);
-        if (!groupItems.length) return;
-        taskList.appendChild(createUiEl('div', 'overview-focus-group', `${group.title} · ${groupItems.length}`));
-        groupItems.forEach((item) => {
-          const row = document.createElement('button');
-          row.type = 'button';
-          row.className = `todo-row ${item.kind || ''}`.trim();
-          const copy = document.createElement('span');
-          copy.appendChild(createUiEl('strong', '', item.title));
-          copy.appendChild(createUiEl('small', '', item.detail));
-          row.appendChild(copy);
-          row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
-          row.addEventListener('click', () => switchSection(item.section || 'overview'));
-          taskList.appendChild(row);
-        });
-      });
-      focusCard.appendChild(taskList);
-    }
-    page.appendChild(focusCard);
-    page.appendChild(kpiGrid);
-    appendSafe(page, () => renderMonthMoneyMap(currentMonth), 'Monatszahlen');
-
-    const more = document.createElement('details');
-    more.className = 'compact-details overview-more-details';
-    const moreSummary = document.createElement('summary');
-    moreSummary.textContent = 'Weitere Auswertungen anzeigen';
-    more.appendChild(moreSummary);
-    const moreContent = createUiEl('div', 'overview-more-content');
-
-    const financeStatus = getFinanceStatus(details.free);
+        const groupItems = tasks.f
+... 1392 bytes omitted ...
+ls.free);
     const criticalMonths = findCriticalMonths(currentMonth);
     const financeCard = createUiEl('div', 'card compact-card finance-guard-card');
     financeCard.appendChild(createUiEl('h3', '', 'Finanz-Ampel'));
@@ -16802,6 +16775,8 @@ function showPersonalEditor(personId, editPost) {
     const debtBudgetRow = (snowball.rows || []).find((row) => row.month === currentMonth && Number(row.monthlyTarget || 0) > 0);
     if (debtBudgetRow) {
       const budgetSummary = createUiEl('div', 'sub-card debt-budget-quick-summary');
+      const fixedDebtPool = Number(debtBudgetRow.fixedMonthlyTarget != null ? debtBudgetRow.fixedMonthlyTarget : debtBudgetRow.monthlyTarget || 0);
+      const standardRateOverage = roundMoney(Math.max(0, Number(debtBudgetRow.base || 0) - fixedDebtPool));
       budgetSummary.appendChild(createUiEl('h3', '', `Schuldenbudget · ${formatMonthLabel(currentMonth)}`));
       budgetSummary.appendChild(createSummaryMetrics([
         { label: '800-€-Grundpool', value: euro(debtBudgetRow.fixedMonthlyTarget != null ? debtBudgetRow.fixedMonthlyTarget : debtBudgetRow.monthlyTarget), kind: 'success' },
@@ -16810,7 +16785,9 @@ function showPersonalEditor(personId, editPost) {
         { label: 'Sondertilgung vorgeschlagen', value: euro(debtBudgetRow.extra || 0), kind: Number(debtBudgetRow.extra || 0) > 0 ? 'warning' : '' },
         { label: 'Noch nicht verplant', value: euro(debtBudgetRow.unallocatedBudget || 0) }
       ]));
-      budgetSummary.appendChild(createUiEl('p', 'small muted', 'Der Vorschlag hält feste Raten getrennt von Sondertilgungen. „Noch nicht verplant“ ist ein Rechenrest im Schuldenpool, kein Kontostand.'));
+      budgetSummary.appendChild(createUiEl('p', `small ${standardRateOverage > 0.005 ? 'debt-budget-overrun' : 'muted'}`, standardRateOverage > 0.005
+        ? `Die fest eingeplanten Standardraten liegen ${euro(standardRateOverage)} über dem 800-€-Grundpool. Deshalb ist im Grundpool nichts zusätzlich verfügbar; die App hält feste Raten und Sondertilgung getrennt.`
+        : 'Der Vorschlag hält feste Raten getrennt von Sondertilgungen. „Noch nicht verplant“ ist ein Rechenrest im Schuldenpool, kein Kontostand.'));
       card.appendChild(budgetSummary);
     }
     const clarificationCard = renderDebtClarificationCard(currentMonth, snowball);
