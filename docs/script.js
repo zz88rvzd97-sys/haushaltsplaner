@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.10
+/* * Haushaltsplaner Version 3.11
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.10';
+  const APP_VERSION = '3.11';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -5050,6 +5050,9 @@
 
   function getMonthWarnings(monthKey) {
     const warnings = [];
+    const actualMonth = dateToMonthKey(new Date());
+    const pastMonth = monthKey < actualMonth;
+    const currentMonthPending = monthKey === actualMonth;
     const unpaidCommon = state.commonCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidPersonal = state.personalCosts.filter((item) => isDue(item, monthKey) && !isPostPaidForMonth(item, monthKey)).length;
     const unpaidDebts = state.debts.filter((d) => isDebtOpenForMonth(d, monthKey)).length;
@@ -5060,11 +5063,14 @@
       : 0;
     const miscOpen = getBufferExpenseOpenSumForMonth(monthKey);
     const free = computeFreeSumForMonth(monthKey);
-    if (unpaidCommon > 0) warnings.push({ kind: 'warning', text: `${unpaidCommon} gemeinsame Zahlung(en) noch offen` });
-    if (unpaidPersonal > 0) warnings.push({ kind: 'warning', text: `${unpaidPersonal} persönliche Zahlung(en) noch offen` });
-    if (unpaidDebts > 0) warnings.push({ kind: 'danger', text: `${unpaidDebts} Schuld(en) diesen Monat noch offen` });
-    if (openRecurringBusiness > 0) warnings.push({ kind: 'warning', text: `${openRecurringBusiness} wiederkehrende Betriebsausgabe(n) noch nicht als bezahlt in die EÜR übernommen` });
-    if (miscOpen > 0) warnings.push({ kind: 'warning', text: `Sonstige Ausgaben offen geplant: ${euro(miscOpen)}` });
+    if (pastMonth && unpaidCommon > 0) warnings.push({ kind: 'warning', text: `${unpaidCommon} gemeinsame Zahlung(en) aus dem Vormonat: Status prüfen` });
+    else if (currentMonthPending && unpaidCommon > 0) warnings.push({ kind: 'info', text: `${unpaidCommon} gemeinsame Zahlung(en) im Monatsverlauf geplant` });
+    if (pastMonth && unpaidPersonal > 0) warnings.push({ kind: 'warning', text: `${unpaidPersonal} persönliche Zahlung(en) aus dem Vormonat: Status prüfen` });
+    else if (currentMonthPending && unpaidPersonal > 0) warnings.push({ kind: 'info', text: `${unpaidPersonal} persönliche Zahlung(en) im Monatsverlauf geplant` });
+    if (pastMonth && unpaidDebts > 0) warnings.push({ kind: 'warning', text: `${unpaidDebts} Schuldzahlung(en) aus dem Vormonat: Zahlungsstatus prüfen` });
+    else if (currentMonthPending && unpaidDebts > 0) warnings.push({ kind: 'info', text: `${unpaidDebts} Schuldzahlung(en) im Monatsverlauf geplant` });
+    if (openRecurringBusiness > 0 && (pastMonth || currentMonthPending)) warnings.push({ kind: pastMonth ? 'warning' : 'info', text: `${openRecurringBusiness} wiederkehrende Betriebsausgabe(n) ${pastMonth ? 'aus dem Vormonat' : 'im Monatsverlauf'} noch nicht als bezahlt in die EÜR übernommen` });
+    if (miscOpen > 0 && (pastMonth || currentMonthPending)) warnings.push({ kind: pastMonth ? 'warning' : 'info', text: `Sonstige Ausgaben ${pastMonth ? 'aus dem Vormonat' : 'im Monatsverlauf'} noch offen: ${euro(miscOpen)}` });
     if (free < 0) warnings.push({ kind: 'danger', text: `Monat rechnerisch im Minus: ${euro(free)}` });
     if (!state.monthlyClosings || !state.monthlyClosings[monthKey]) warnings.push({ kind: 'info', text: 'Monatsabschluss noch offen' });
     return warnings;
@@ -9591,6 +9597,12 @@
   function collectOpenPaymentsForMonth(monthKey = currentMonth) {
     normalizeAccountsConfig(false);
     const rows = [];
+    const actualMonth = dateToMonthKey(new Date());
+    const timing = monthKey < actualMonth
+      ? { label: 'Monat vorbei · Status prüfen', kind: 'warning' }
+      : (monthKey > actualMonth
+        ? { label: 'Noch nicht fällig', kind: '' }
+        : { label: 'Diesen Monat geplant', kind: 'info' });
     const linkedDebtIds = new Set([...(state.commonCosts || []), ...(state.personalCosts || []), ...(state.bufferExpenses || [])]
       .map((post) => post && post.linkedDebtId)
       .filter(Boolean));
@@ -9612,6 +9624,8 @@
           name: post.name || 'Posten',
           ownerLabel: getOpenPaymentOwnerLabel(post, group, accountId),
           amount,
+          timingLabel: timing.label,
+          timingKind: timing.kind,
           accountId,
           accountName: getAccountName(accountId),
           section: getOpenPaymentSectionForGroup(group),
@@ -9641,6 +9655,8 @@
         name: debt.name || 'Schuld',
         ownerLabel: getOpenPaymentOwnerLabel(debt, 'Schulden', accountId),
         amount: open,
+        timingLabel: timing.label,
+        timingKind: timing.kind,
         accountId,
         accountName: getAccountName(accountId),
         section: 'debts',
@@ -9702,9 +9718,11 @@
     card.appendChild(h);
     const p = document.createElement('p');
     p.className = 'small muted';
+    const actualMonth = dateToMonthKey(new Date());
+    const paymentPeriodLabel = monthKey > actualMonth ? 'vorgemerkt' : (monthKey < actualMonth ? 'ungeklärt' : 'im Monatsverlauf geplant');
     p.textContent = compact
-      ? 'Die wichtigsten offenen Posten im ausgewählten Monat.'
-      : 'Hier siehst du alle offenen Zahlungen im ausgewählten Monat nach Bereich gruppiert. So erkennst du schnell, was noch markiert oder geprüft werden muss.';
+      ? `Die wichtigsten Zahlungen ${paymentPeriodLabel} im ausgewählten Monat.`
+      : `Hier siehst du alle Zahlungen ${paymentPeriodLabel} im ausgewählten Monat nach Bereich gruppiert. Die App kennt keine individuellen Abbuchungstage; offene Beträge im laufenden Monat sind daher keine automatische Überfälligkeitsmeldung.`;
     card.appendChild(p);
     if (!compact) {
       card.appendChild(createUiEl('p', 'small muted', 'Verknüpfte Schuldenraten werden beim Bezahlt-Markieren genau einmal in der Schuld erfasst. Die Rate steht zusätzlich in der Schuldenübersicht, wird dort aber nicht ein zweites Mal vom freien Betrag abgezogen.'));
@@ -9712,8 +9730,8 @@
 
     const accountsMissing = ACCOUNTS_ENABLED ? data.groups.filter((group) => group.account && getAccountAvailability(group.account, monthKey).missing > 0).length : 0;
     const metrics = [
-      { label: 'Offen gesamt', value: euro(data.totalOpen), kind: data.totalOpen > 0 ? 'warning' : 'success' },
-      { label: 'Offene Posten', value: String(data.rows.length), hint: data.rows.length === 1 ? '1 Zahlung offen' : `${data.rows.length} Zahlungen offen` },
+      { label: `${paymentPeriodLabel[0].toUpperCase()}${paymentPeriodLabel.slice(1)} gesamt`, value: euro(data.totalOpen), kind: monthKey < actualMonth && data.totalOpen > 0 ? 'warning' : '' },
+      { label: 'Zahlungen', value: String(data.rows.length), hint: data.rows.length === 1 ? '1 Zahlung' : `${data.rows.length} Zahlungen` },
       { label: 'Offene Monatsanteile', value: euro(data.totalIncoming), kind: data.totalIncoming > 0 ? 'warning' : 'success' }
     ];
     if (ACCOUNTS_ENABLED) metrics.splice(2, 0, { label: 'Konten mit Fehlbetrag', value: String(accountsMissing), kind: accountsMissing > 0 ? 'danger' : 'success' });
@@ -9764,7 +9782,9 @@
         tdName.appendChild(createUiEl('strong', '', row.name));
         tdName.appendChild(createUiEl('small', 'open-payment-owner', row.ownerLabel || 'Nicht zugeordnet'));
         const tdAmount = document.createElement('td'); tdAmount.textContent = euro(row.amount);
-        const tdNote = document.createElement('td'); tdNote.textContent = row.note || 'offen';
+        const tdNote = document.createElement('td');
+        tdNote.appendChild(createUiEl('span', `pill ${row.timingKind || ''}`.trim(), row.timingLabel || 'Offen'));
+        if (row.note) tdNote.appendChild(createUiEl('small', 'open-payment-note', row.note));
         const tdAction = document.createElement('td');
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -9977,15 +9997,18 @@
 
   function getMonthStartChecklist(monthKey = currentMonth) {
     const items = [];
+    const actualMonth = dateToMonthKey(new Date());
     const add = (area, title, done, detail, section, actionLabel = 'Öffnen', danger = false) => {
       items.push({ area, title, done: !!done, detail: detail || '', section: section || 'overview', actionLabel, kind: monthStartStatusKind(done, danger) });
     };
 
     (state.persons || []).forEach((person) => {
       const net = Number(getPersonNet(person, monthKey) || 0);
-      if (net > 0) {
+      if (net > 0 && monthKey <= actualMonth) {
         const received = isPersonIncomeReceived(person, monthKey);
-        add('Einkommen', `${person.name} Lohn erhalten`, received, received ? `${euro(net)} wurde gebucht.` : `${euro(net)} noch nicht als erhalten markiert.`, 'income');
+        if (received || monthKey < actualMonth) {
+          add('Einkommen', `${person.name} Ist-Auszahlung prüfen`, received, received ? `${euro(net)} als tatsächliche Auszahlung erfasst.` : `${euro(net)} Planwert; tatsächliche Auszahlung noch nicht erfasst.`, 'income', 'Öffnen');
+        }
       }
     });
 
@@ -10033,7 +10056,9 @@
     }
 
     const openPayments = collectOpenPaymentsForMonth(monthKey);
-    add('Offene Zahlungen', 'Offene Zahlungen prüfen', openPayments.rows.length === 0, openPayments.rows.length ? `${openPayments.rows.length} offene Zahlung(en) · ${euro(openPayments.totalOpen)}.` : 'Keine offenen Zahlungen gefunden.', 'openpayments', 'Prüfen', openPayments.rows.length > 0);
+    if (monthKey < actualMonth) {
+      add('Offene Zahlungen', 'Vorperioden prüfen', openPayments.rows.length === 0, openPayments.rows.length ? `${openPayments.rows.length} Zahlung(en) aus diesem Monat · ${euro(openPayments.totalOpen)}. Prüfe, ob sie bezahlt wurden oder noch offen sind.` : 'Keine ungeklärten Zahlungen aus dieser Periode.', 'openpayments', 'Prüfen', openPayments.rows.length > 0);
+    }
 
     const accounts = ACCOUNTS_ENABLED ? (state.accounts || []) : [];
     if (accounts.length) {
@@ -10454,7 +10479,7 @@
         const areaCell = createUiEl('td', '', item.area || 'System');
         const titleCell = createUiEl('td', '', item.title || 'Prüfung');
         const detailCell = createUiEl('td', '', item.detail || '');
-        const actions = renderDataCheckItemActions(item);
+        const actions = renderDataCheckItemActions(item, { includeOpenSection: true });
         if (actions) detailCell.appendChild(actions);
         tr.appendChild(statusCell);
         tr.appendChild(areaCell);
@@ -11016,7 +11041,7 @@
       });
     const focusCard = createUiEl('div', 'card overview-focus-card');
     const focusHead = createUiEl('div', 'compact-section-head');
-    focusHead.appendChild(createUiEl('h3', '', 'Jetzt erledigen'));
+    focusHead.appendChild(createUiEl('h3', '', 'Monatsstand'));
     focusHead.appendChild(createUiEl(
       'span',
       tasks.length ? 'pill warning' : 'pill success',
@@ -11026,8 +11051,23 @@
     focusCard.appendChild(createUiEl(
       'p',
       'small muted',
-      'Hier stehen nur Punkte, die noch eine Aktion brauchen.'
+      'Kurzer Blick auf Gehalt, Zahlungen und Abschlussstatus.'
     ));
+    const monthOpenPayments = collectOpenPaymentsForMonth(currentMonth);
+    const incomeReceived = (state.persons || []).filter((person) => isPersonIncomeReceived(person, currentMonth)).length;
+    const incomeIsFuture = currentMonth > dateToMonthKey(new Date());
+    const monthClosed = isMonthClosed(currentMonth);
+    focusCard.appendChild(createSummaryMetrics([
+      { label: 'Geldeingänge', value: incomeIsFuture ? `${(state.persons || []).length} Planwerte` : `${incomeReceived}/${(state.persons || []).length}`, hint: incomeIsFuture ? 'Ist-Auszahlungen noch nicht fällig' : 'tatsächliche Eingänge erfasst', kind: incomeIsFuture ? '' : (incomeReceived === (state.persons || []).length ? 'success' : 'warning') },
+      { label: 'Zahlungen noch offen', value: `${monthOpenPayments.rows.length} · ${euro(monthOpenPayments.totalOpen)}`, hint: currentMonth > dateToMonthKey(new Date()) ? 'für den Planmonat vorgemerkt' : (currentMonth === dateToMonthKey(new Date()) ? 'im Monatsverlauf; Abbuchungstage sind nicht hinterlegt' : 'Vorperiode: Zahlungsstatus prüfen'), kind: currentMonth < dateToMonthKey(new Date()) && monthOpenPayments.rows.length ? 'warning' : '' },
+      { label: 'Monatsstatus', value: monthClosed ? 'Abgeschlossen' : 'Vorläufig', hint: monthClosed ? 'Beleg gespeichert' : 'Bleibt offen, bis du abschließt', kind: monthClosed ? 'success' : 'warning' }
+    ]));
+    const paymentReviewButton = document.createElement('button');
+    paymentReviewButton.type = 'button';
+    paymentReviewButton.className = 'secondary compact';
+    paymentReviewButton.textContent = 'Zahlungen ansehen';
+    paymentReviewButton.addEventListener('click', () => switchSection('openpayments'));
+    focusCard.appendChild(paymentReviewButton);
 
     if (!tasks.length) {
       focusCard.appendChild(createUiEl('div', 'empty-state success', 'Für diesen Monat ist nichts Weiteres offen.'));
@@ -11249,8 +11289,12 @@
     normalizeAllPersonConfigs();
     const totalNet = (state.persons || []).reduce((sum, person) => sum + getPersonNet(person, currentMonth), 0);
     const overrideCount = (state.persons || []).filter((person) => person.netOverrides && person.netOverrides[currentMonth] != null).length;
+    const planCount = Math.max(0, (state.persons || []).length - overrideCount);
+    const incomeStatusLabel = overrideCount === 0
+      ? 'Planwerte'
+      : (planCount === 0 ? 'Ist-Auszahlungen' : 'Mix aus Ist und Plan');
     wrapper.appendChild(createSummaryMetrics([
-      { label: 'Netto gesamt', value: euro(totalNet), hint: currentLabel },
+      { label: `Netto gesamt · ${incomeStatusLabel}`, value: euro(totalNet), hint: overrideCount === 0 ? 'Noch keine tatsächliche Auszahlung eingetragen.' : `${overrideCount} Ist · ${planCount} Planwert(e)` },
       { label: 'Personen', value: String((state.persons || []).length) },
       { label: 'Ist-Auszahlungen erfasst', value: String(overrideCount) }
     ]));
@@ -11798,7 +11842,7 @@
     reviewBox.appendChild(createUiEl('strong', '', closed ? 'Monat abgeschlossen' : 'Vorläufige Monatsansicht'));
     reviewBox.appendChild(createUiEl('p', 'small muted', closed
       ? 'Der gespeicherte Abschluss bleibt ein Snapshot. Wenn du danach Einträge änderst, zeigt die App die Abweichungen.'
-      : `${openPaymentData.rows.length ? `${openPaymentData.rows.length} Zahlung(en) über ${euro(openPaymentData.totalOpen)} sind noch nicht als bezahlt markiert. ` : 'Aktuell sind keine offenen Zahlungen gelistet. '}${currentMonth === dateToMonthKey(new Date()) ? 'Prüfe diese Liste zum Monatsende erneut; eine noch nicht bezahlte Monatsrate ist bis zur Fälligkeit kein Rechenfehler.' : 'Der Monat bleibt offen, bis du ihn ausdrücklich abschließt.'}`));
+      : `${openPaymentData.rows.length ? `${openPaymentData.rows.length} Zahlung(en) über ${euro(openPaymentData.totalOpen)} sind noch nicht als bezahlt markiert. ` : 'Aktuell sind keine offenen Zahlungen gelistet. '}${currentMonth === dateToMonthKey(new Date()) ? 'Prüfe die Liste zum Monatsende. Individuelle Abbuchungstage sind nicht hinterlegt; offene Monatsbeträge werden deshalb nicht als überfällig eingestuft.' : 'Der Monat bleibt offen, bis du ihn ausdrücklich abschließt.'}`));
     if (!closed && openPaymentData.rows.length) {
       const pendingList = document.createElement('ul');
       pendingList.className = 'month-close-pending-list';
@@ -16755,6 +16799,20 @@ function showPersonalEditor(personId, editPost) {
       { label: 'Aktive Schulden', value: String(activeDebts) },
       { label: 'Schuldenfrei nach Vorschlag', value: snowball.debtFreeMonth ? formatMonthLabel(snowball.debtFreeMonth) : (estimatedDebtFree === '-' ? '-' : formatMonthLabel(estimatedDebtFree)) }
     ]));
+    const debtBudgetRow = (snowball.rows || []).find((row) => row.month === currentMonth && Number(row.monthlyTarget || 0) > 0);
+    if (debtBudgetRow) {
+      const budgetSummary = createUiEl('div', 'sub-card debt-budget-quick-summary');
+      budgetSummary.appendChild(createUiEl('h3', '', `Schuldenbudget · ${formatMonthLabel(currentMonth)}`));
+      budgetSummary.appendChild(createSummaryMetrics([
+        { label: '800-€-Grundpool', value: euro(debtBudgetRow.fixedMonthlyTarget != null ? debtBudgetRow.fixedMonthlyTarget : debtBudgetRow.monthlyTarget), kind: 'success' },
+        { label: 'Zusatz aus Einkommen', value: euro(debtBudgetRow.incomeLinkedExtra || 0) },
+        { label: 'Standardraten geplant', value: euro(debtBudgetRow.base || 0) },
+        { label: 'Sondertilgung vorgeschlagen', value: euro(debtBudgetRow.extra || 0), kind: Number(debtBudgetRow.extra || 0) > 0 ? 'warning' : '' },
+        { label: 'Noch nicht verplant', value: euro(debtBudgetRow.unallocatedBudget || 0) }
+      ]));
+      budgetSummary.appendChild(createUiEl('p', 'small muted', 'Der Vorschlag hält feste Raten getrennt von Sondertilgungen. „Noch nicht verplant“ ist ein Rechenrest im Schuldenpool, kein Kontostand.'));
+      card.appendChild(budgetSummary);
+    }
     const clarificationCard = renderDebtClarificationCard(currentMonth, snowball);
     if (clarificationCard) card.appendChild(clarificationCard);
     const monthlyAssistantCard = renderDebtMonthlyAssistantCard(currentMonth, snowball);
@@ -16797,7 +16855,8 @@ function showPersonalEditor(personId, editPost) {
 
     const debtListContent = document.createElement('div');
     debtListContent.className = 'debt-list-details-content';
-    debtListContent.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Aktive'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigt'],['all','Alle']]));
+    debtListContent.appendChild(makeSearchFilterBar(debtSearch, debtFilter, (v) => { debtSearch = v; }, (v) => { debtFilter = v; }, [['active','Laufende'],['due','Nur fällig'],['paid','Diesen Monat bezahlt'],['done','Erledigte'],['all','Alle']]));
+    debtListContent.appendChild(createUiEl('p', 'small muted', 'Die Standardansicht zeigt nur laufende Schulden. Erledigte bleiben über „Erledigte“ oder „Alle“ auffindbar.'));
 
     if (visibleDebts.length === 0) {
       const p = document.createElement('p');
@@ -16823,6 +16882,7 @@ function showPersonalEditor(personId, editPost) {
         const paidNow = paidAmount > 0 && monthOpenAmount <= 0.005;
         const canResetDebtPayment = d.paidMonths.includes(currentMonth) || historyPaidAmount > 0;
         const estimatedEnd = estimateDebtEndMonth(d);
+        const actualMonth = dateToMonthKey(new Date());
         const paidTotal = (d.paymentHistory || []).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
         const progressBase = Number(d.amountOpen || 0) + paidTotal;
         const progress = progressBase > 0 ? Math.min(100, Math.round((paidTotal / progressBase) * 100)) : 100;
@@ -16830,10 +16890,14 @@ function showPersonalEditor(personId, editPost) {
         let statusHtml = '<span class="pill">Plan</span>';
         if (Number(d.amountOpen || 0) <= 0) statusHtml = '<span class="pill success">Erledigt</span>';
         else if (d.paymentType === 'open_plan') statusHtml = '<span class="pill warning">Ratenplan offen</span>';
-        else if (d.paymentType === 'one_time' && dueNow) statusHtml = '<span class="pill danger">Einmalzahlung fällig</span>';
+        else if (d.paymentType === 'one_time' && dueNow) statusHtml = currentMonth < actualMonth
+          ? '<span class="pill warning">Monat vorbei · prüfen</span>'
+          : (currentMonth === actualMonth ? '<span class="pill">Diesen Monat geplant</span>' : '<span class="pill">Noch nicht fällig</span>');
         else if (d.paymentType === 'one_time') statusHtml = '<span class="pill">Einmalzahlung</span>';
         else if (paidNow) statusHtml = '<span class="pill success">Monat bezahlt</span>';
-        else if (dueNow) statusHtml = '<span class="pill danger">Fällig</span>';
+        else if (dueNow) statusHtml = currentMonth < actualMonth
+          ? '<span class="pill warning">Monat vorbei · prüfen</span>'
+          : (currentMonth === actualMonth ? '<span class="pill">Diesen Monat geplant</span>' : '<span class="pill">Noch nicht fällig</span>');
         else if (monthDiff(currentMonth, d.nextDueMonth) > 0) statusHtml = '<span class="pill">Später</span>';
 
         const typeClass = d.paymentType === 'installment' ? 'success' : (d.paymentType === 'one_time' ? '' : 'warning');
