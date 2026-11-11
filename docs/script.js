@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.09
+/* * Haushaltsplaner Version 3.10
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.09';
+  const APP_VERSION = '3.10';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -9307,10 +9307,10 @@
           const debtRate = getDebtRateForMonth(linked, checkMonth);
           if (linked.paymentType === 'installment' && Number(post.interval || 1) === 1 && Math.abs(postAmount - debtRate) > 0.01) {
             items.push({
-              kind: 'warning',
+              kind: checkMonth === currentMonth ? 'warning' : 'info',
               area,
-              title: `Rate weicht ab: ${post.name}`,
-              detail: `${formatMonthLabel(checkMonth)}: Posten ${euro(postAmount)} · Schuld ${euro(debtRate)}. Über „Daten reparieren“ bzw. Speichern wird die Schuld synchronisiert.`
+              title: `${checkMonth === currentMonth ? 'Rate weicht ab' : 'Geplante Rate prüfen'}: ${post.name}`,
+              detail: `${formatMonthLabel(checkMonth)}: Posten ${euro(postAmount)} · Schuld ${euro(debtRate)}. ${checkMonth === currentMonth ? 'Über „Daten reparieren“ bzw. Speichern wird die Schuld synchronisiert.' : 'Das ist eine zukünftige Planung und noch keine fällige Zahlung.'}`
             });
           }
         });
@@ -9706,6 +9706,9 @@
       ? 'Die wichtigsten offenen Posten im ausgewählten Monat.'
       : 'Hier siehst du alle offenen Zahlungen im ausgewählten Monat nach Bereich gruppiert. So erkennst du schnell, was noch markiert oder geprüft werden muss.';
     card.appendChild(p);
+    if (!compact) {
+      card.appendChild(createUiEl('p', 'small muted', 'Verknüpfte Schuldenraten werden beim Bezahlt-Markieren genau einmal in der Schuld erfasst. Die Rate steht zusätzlich in der Schuldenübersicht, wird dort aber nicht ein zweites Mal vom freien Betrag abgezogen.'));
+    }
 
     const accountsMissing = ACCOUNTS_ENABLED ? data.groups.filter((group) => group.account && getAccountAvailability(group.account, monthKey).missing > 0).length : 0;
     const metrics = [
@@ -10397,7 +10400,7 @@
       .sort((a, b) => (a.kind === 'danger' ? 0 : 1) - (b.kind === 'danger' ? 0 : 1));
     const supportingItems = items.filter((item) => item.kind !== 'danger' && item.kind !== 'warning');
     const areaTitle = document.createElement('h3');
-    areaTitle.textContent = actionableItems.length ? 'Bereiche mit offenen Prüfpunkten' : 'Prüfergebnis';
+    areaTitle.textContent = actionableItems.length ? 'Jetzt prüfen: Fehler und Abweichungen' : 'Prüfergebnis';
     card.appendChild(areaTitle);
     if (actionableItems.length) card.appendChild(renderDataCheckAreaOverview(actionableItems, { actionableOnly: true }));
     else card.appendChild(createUiEl('div', 'empty-state success', 'Keine offenen Prüfpunkte. Zusätzliche Informationen und bestandene Prüfungen sind weiter unten verfügbar.'));
@@ -10467,7 +10470,7 @@
       const details = document.createElement('details');
       details.className = 'compact-details data-check-details';
       const summary = document.createElement('summary');
-      summary.textContent = `Zusätzliche Infos und bestandene Prüfungen (${supportingItems.length})`;
+      summary.textContent = `Zukünftige Planung, Regeln und bestandene Prüfungen (${supportingItems.length})`;
       details.appendChild(summary);
       const supportingTableHost = document.createElement('div');
       details.appendChild(supportingTableHost);
@@ -10581,7 +10584,7 @@
       ...(options.debtBudget ? [
         ['Schuldenbudget insgesamt', euro(options.debtBudget.monthlyTarget || 0)],
         ['Davon Raten bereits eingeplant', euro(options.debtBudget.linkedDebtCosts || 0)],
-        ['Zusätzlich im Schuldenbudget reserviert', euro(options.debtBudget.additionalReservation || 0)],
+        ['Zusätzlich für Schuldentilgung eingeplant', euro(options.debtBudget.additionalReservation || 0)],
         ['Sicher frei nach Tilgung', euro(options.safeFree || 0)]
       ] : [])
     ].forEach(([label, value]) => {
@@ -11056,6 +11059,7 @@
     }
     page.appendChild(focusCard);
     page.appendChild(kpiGrid);
+    appendSafe(page, () => renderMonthMoneyMap(currentMonth), 'Monatszahlen');
 
     const more = document.createElement('details');
     more.className = 'compact-details overview-more-details';
@@ -11100,6 +11104,60 @@
     page.appendChild(more);
 
     overviewSection.appendChild(page);
+  }
+
+  function renderMonthMoneyMap(monthKey) {
+    const common = getCommonAccountTargetSummary(monthKey);
+    const personal = (state.personalCosts || []).reduce((sum, post) => {
+      if (isDue(post, monthKey)) return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+      return sum;
+    }, 0);
+    const personalPaid = (state.personalCosts || []).reduce((sum, post) => {
+      if (isDue(post, monthKey) && isPostPaidForMonth(post, monthKey)) return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+      return sum;
+    }, 0);
+    const debt = getDebtPlanForMonth(monthKey);
+    const misc = {
+      planned: getBufferExpensePlannedSumForMonth(monthKey),
+      paid: getBufferExpenseSumForMonth(monthKey),
+      open: getBufferExpenseOpenSumForMonth(monthKey)
+    };
+    const rows = [
+      { label: 'Gemeinsame Abbuchungen', planned: common.dueTotal, paid: common.paidTotal, open: common.openTotal },
+      { label: 'Persönliche Ausgaben', planned: personal, paid: personalPaid, open: Math.max(0, personal - personalPaid) },
+      { label: 'Schuldenraten', planned: debt.planned, paid: debt.paid, open: debt.open },
+      { label: 'Sonstige Ausgaben', ...misc }
+    ];
+    const card = createUiEl('section', 'card compact-card month-money-map');
+    const head = createUiEl('div', 'compact-section-head');
+    head.appendChild(createUiEl('h3', '', `Monatszahlen · ${formatMonthLabel(monthKey)}`));
+    head.appendChild(createUiEl('span', 'pill', 'geplant · bezahlt · offen'));
+    card.appendChild(head);
+    card.appendChild(createUiEl('p', 'small muted', 'Offen bedeutet: im ausgewählten Monat fällig, aber noch nicht als bezahlt erfasst. Schuldenraten sind bereits Teil der gemeinsamen oder persönlichen Kosten, wenn sie dort verknüpft sind; die Zeilen daher nicht addieren.'));
+    const table = document.createElement('table');
+    table.className = 'list-table compact-table month-money-table';
+    table.innerHTML = '<thead><tr><th>Bereich</th><th>Geplant</th><th>Bezahlt</th><th>Offen</th></tr></thead>';
+    const body = document.createElement('tbody');
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      [row.label, euro(row.planned), euro(row.paid), euro(row.open)].forEach((value, index) => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        if (index === 3 && row.open > 0.005) td.className = 'month-money-open';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    card.appendChild(table);
+    const budget = getDebtBudgetReservationForMonth(monthKey);
+    if (budget.monthlyTarget > 0) {
+      const debtNote = createUiEl('div', 'notice info month-debt-budget-note');
+      debtNote.appendChild(createUiEl('strong', '', `Schuldenbudget: ${euro(budget.monthlyTarget)} insgesamt`));
+      debtNote.appendChild(createUiEl('p', 'small muted', `${euro(budget.linkedDebtCosts)} davon stecken bereits in den Kostenposten; ${euro(budget.additionalReservation)} werden zusätzlich für Schuldentilgung gebunden. Aktuelle Raten: ${euro(debt.planned)} geplant · ${euro(debt.paid)} bezahlt · ${euro(debt.open)} offen. Der sichere freie Betrag oben berücksichtigt die Budgetbindung bereits.`));
+      card.appendChild(debtNote);
+    }
+    return card;
   }
 
   function matchesSearchText(value, search) {
@@ -11735,15 +11793,35 @@
     const displayedCarryoverOut = closedSnapshot && Number.isFinite(Number(closedSnapshot.carryoverOut))
       ? roundMoney(Math.max(0, Number(closedSnapshot.carryoverOut || 0)))
       : automaticCarryoverOut;
+    const openPaymentData = collectOpenPaymentsForMonth(currentMonth);
+    const reviewBox = createUiEl('div', `notice ${closed ? 'success' : 'info'} month-close-review`);
+    reviewBox.appendChild(createUiEl('strong', '', closed ? 'Monat abgeschlossen' : 'Vorläufige Monatsansicht'));
+    reviewBox.appendChild(createUiEl('p', 'small muted', closed
+      ? 'Der gespeicherte Abschluss bleibt ein Snapshot. Wenn du danach Einträge änderst, zeigt die App die Abweichungen.'
+      : `${openPaymentData.rows.length ? `${openPaymentData.rows.length} Zahlung(en) über ${euro(openPaymentData.totalOpen)} sind noch nicht als bezahlt markiert. ` : 'Aktuell sind keine offenen Zahlungen gelistet. '}${currentMonth === dateToMonthKey(new Date()) ? 'Prüfe diese Liste zum Monatsende erneut; eine noch nicht bezahlte Monatsrate ist bis zur Fälligkeit kein Rechenfehler.' : 'Der Monat bleibt offen, bis du ihn ausdrücklich abschließt.'}`));
+    if (!closed && openPaymentData.rows.length) {
+      const pendingList = document.createElement('ul');
+      pendingList.className = 'month-close-pending-list';
+      openPaymentData.rows.slice(0, 5).forEach((row) => {
+        pendingList.appendChild(createUiEl('li', '', `${row.name} · ${euro(row.amount)}`));
+      });
+      if (openPaymentData.rows.length > 5) pendingList.appendChild(createUiEl('li', 'muted', `und ${openPaymentData.rows.length - 5} weitere`));
+      reviewBox.appendChild(pendingList);
+      const openListBtn = document.createElement('button');
+      openListBtn.type = 'button';
+      openListBtn.className = 'secondary compact';
+      openListBtn.textContent = 'Offene Zahlungen ansehen';
+      openListBtn.addEventListener('click', () => switchSection('openpayments'));
+      reviewBox.appendChild(openListBtn);
+    }
+    card.appendChild(reviewBox);
     card.appendChild(createSummaryMetrics([
       { label: 'Insgesamt verfügbar am Monatsende', value: `${euro(details.free)}`, kind: details.free >= 0 ? 'success' : 'danger', hint: Number(details.miscOpen || 0) > 0 ? `${euro(details.miscOpen)} offene sonstige Ausgaben bereits abgezogen.` : (details.businessBudgetHasActivity ? 'Private und frühere betriebliche Zahlungen zusammen.' : 'Alle privaten Zahlungen zusammen.') },
       { label: 'Übertrag aus Vormonat', value: `${euro(details.carryoverIn || 0)}`, kind: Number(details.carryoverIn || 0) > 0 ? 'success' : '', hint: currentMonth === CARRYOVER_START_MONTH ? 'Neustart ab August ohne alten Übertrag.' : 'Bereits im sicheren freien Betrag enthalten.' },
       { label: `Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, value: `${euro(displayedCarryoverOut)}`, kind: displayedCarryoverOut > 0 ? 'success' : '', hint: carryoverActive ? 'Wird beim Abschluss automatisch gespeichert.' : 'Automatischer Übertrag startet ab August 2026.' },
-      { label: 'In Töpfe verteilbar', value: `${euro(details.distributable)}`, kind: details.distributable > 0 ? 'success' : '', hint: details.distributable > 0 ? `${euro(details.keptFreeBuffer || savingsConfig.minFree)} bleibt als Puffer.` : `Unter ${euro(savingsConfig.minFree)} bleibt der Rest als Puffer.` },
-      { label: 'Rücklagen 70 % über Puffer', value: `${euro(details.reserves)}` },
-      { label: 'Sparen 30 % über Puffer', value: `${euro(details.savings)}` },
-      { label: 'Schulden-Pool im Monat', value: `${euro(Number(details.debtPlanned || 0))}`, hint: 'Normale Raten zählen hinein; die Differenz ist zusätzlich im verfügbaren Betrag abgezogen.' },
-      { label: 'Davon aufs Tagesgeld', value: `${euro(Number(details.debtDayMoneyTransfer || 0))}`, kind: Number(details.debtDayMoneyTransfer || 0) > 0 ? 'warning' : 'success', hint: 'Bleibt als Schulden-Rücklage gebunden.' },
+      { label: 'Schuldenbudget', value: `${euro(Number(details.debtPlanned || 0))}`, hint: `${euro(details.linkedDebtCosts || 0)} bereits in Kosten · ${euro(details.debtBudgetAdditionalReservation || 0)} zusätzlich gebunden` },
+      { label: 'Schuldenraten bezahlt', value: `${euro(Number(details.debtPaid || 0))}`, kind: Number(details.debtPaid || 0) > 0 ? 'success' : '' },
+      { label: 'Schuldenraten noch offen', value: `${euro(Number(details.debtOpen || 0))}`, kind: Number(details.debtOpen || 0) > 0 ? 'warning' : 'success' },
       { label: 'Sonstige bezahlt', value: `${euro(details.miscPaid)}` },
       { label: 'Sonstige offen geplant', value: `${euro(Number(details.miscOpen || 0))}`, kind: Number(details.miscOpen || 0) > 0 ? 'warning' : 'success' },
       { label: 'Status', value: closed ? '<span class="pill success">Abgeschlossen</span>' : '<span class="pill warning">Offen</span>' }
@@ -11766,13 +11844,9 @@
     receipt.appendChild(createReceiptRow('Davon bereits in den Kosten', euro(details.linkedDebtCosts || 0)));
     receipt.appendChild(createReceiptRow('Zusätzlich zum Kostenplan gebunden', `− ${euro(details.debtBudgetAdditionalReservation || 0)}`));
     receipt.appendChild(createReceiptRow('davon zusätzlich vorgeschlagen', euro(details.debtSnowballExtra || 0)));
-    receipt.appendChild(createReceiptRow('Davon Schulden-Rücklage Tagesgeld', euro(details.debtDayMoneyTransfer || 0)));
     receipt.appendChild(createReceiptRow('Sonstige bezahlt', `− ${euro(details.miscPaid)}`));
     receipt.appendChild(createReceiptRow('Sonstige offen geplant', `− ${euro(details.miscOpen || 0)}`));
     receipt.appendChild(createReceiptRow('Insgesamt verfügbar', euro(details.free), details.free >= 0 ? 'success' : 'danger'));
-    receipt.appendChild(createReceiptRow('Puffer bleibt frei', euro(details.keptFreeBuffer || 0)));
-    receipt.appendChild(createReceiptRow('Davon Rücklagen', euro(details.reserves)));
-    receipt.appendChild(createReceiptRow('Davon Sparen', euro(details.savings)));
     receipt.appendChild(createReceiptRow(`Übertrag nach ${formatMonthLabel(carryoverTargetMonth)}`, euro(displayedCarryoverOut), displayedCarryoverOut > 0 ? 'success' : ''));
     card.appendChild(receipt);
 
@@ -11831,10 +11905,7 @@
 
     const wizard = document.createElement('div');
     wizard.className = 'month-wizard';
-    const distributionText = details.distributable > 0
-      ? `${euro(details.reserves)} Rücklagen · ${euro(details.savings)} Sparen`
-      : `${euro(Math.max(0, details.free || 0))} bleibt als Puffer · unter ${euro(savingsConfig.minFree)} keine Verteilung`;
-    wizard.innerHTML = `<div><strong>1. Prüfen</strong><span>Offene Zahlungen und Hinweise kontrollieren</span></div><div><strong>2. Verteilen</strong><span>${distributionText}</span></div><div><strong>3. Abschließen</strong><span>${closed ? 'Monat ist abgeschlossen' : 'Beleg speichern'}</span></div>`;
+    wizard.innerHTML = `<div><strong>1. Zahlen prüfen</strong><span>Offene Posten ansehen</span></div><div><strong>2. Monatsrest</strong><span>Nur den tatsächlich übrigen Betrag berücksichtigen</span></div><div><strong>3. Abschließen</strong><span>${closed ? 'Monat ist abgeschlossen' : 'Beleg speichern'}</span></div>`;
     card.appendChild(wizard);
 
     const warnings = getMonthWarnings(currentMonth).filter((w) => !w.text.includes('Monatsabschluss'));
@@ -11854,22 +11925,6 @@
       card.appendChild(warn);
     }
 
-
-    const table = document.createElement('table');
-    table.className = 'list-table';
-    table.innerHTML = '<thead><tr><th>Topf</th><th>Anteil</th><th>Betrag</th></tr></thead>';
-    const tbody = document.createElement('tbody');
-    Object.entries(savingsConfig.reservePotShares).forEach(([name, share]) => {
-      const amount = details.reserves * share;
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${name}</td><td>${(share * 100).toFixed(0)} %</td><td>${euro(amount)}</td>`;
-      tbody.appendChild(tr);
-    });
-    const saveRow = document.createElement('tr');
-    saveRow.innerHTML = `<td>Sparen</td><td>30 % vom Betrag über ${euro(savingsConfig.minFree)}</td><td>${euro(details.savings)}</td>`;
-    tbody.appendChild(saveRow);
-    table.appendChild(tbody);
-    card.appendChild(table);
 
     const actions = document.createElement('div');
     actions.className = 'row';
