@@ -6735,3 +6735,36 @@ button.compact,
     grid-template-columns: 1fr;
   }
 }
+
+.overview-budget-balance-card {
+  border-color: rgba(69, 111, 87, .22);
+}
+
+.overview-budget-balance-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.overview-budget-balance-metrics .summary-metric:last-child {
+  border-width: 2px;
+  border-color: rgba(49, 111, 73, .36);
+}
+
+.overview-budget-quick-actions {
+  flex-wrap: wrap;
+  margin-top: .4rem;
+}
+
+.overview-budget-quick-actions button {
+  width: auto;
+  min-width: 180px;
+}
+
+@media (max-width: 720px) {
+  .overview-budget-balance-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-budget-quick-actions button {
+    flex: 1 1 100%;
+  }
+}

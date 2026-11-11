@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.14
+/* * Haushaltsplaner Version 3.15
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.14';
+  const APP_VERSION = '3.15';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -11099,6 +11099,7 @@
     }
     page.appendChild(focusCard);
     page.appendChild(kpiGrid);
+    appendSafe(page, () => renderTrackedBudgetBalances(currentMonth), 'Restbeträge Tank- und Einkaufsgeld');
     appendSafe(page, () => renderMonthMoneyMap(currentMonth), 'Monatszahlen');
 
     const more = document.createElement('details');
@@ -11144,6 +11145,78 @@
     page.appendChild(more);
 
     overviewSection.appendChild(page);
+  }
+
+  function renderTrackedBudgetBalances(monthKey) {
+    const card = createUiEl('div', 'card overview-budget-balance-card');
+    card.appendChild(createUiEl('h3', '', 'Tank- und Einkaufsgeld'));
+    card.appendChild(createUiEl('p', 'small muted', `${formatMonthLabel(monthKey)} · eingezahlt, ausgegeben und noch verfügbar`));
+
+    const fuel = getFuelPoolLiveStatus(monthKey);
+    const groceryPlan = getGroceryTopUpAllocation(monthKey);
+    const groceryPosts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
+    const groceryPaid = roundMoney(groceryPosts.reduce((sum, post) => {
+      if (!isPostPaidForMonth(post, monthKey)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    }, 0));
+    const groceryExpenses = getGroceryExpenses().filter((expense) => expense.month === monthKey);
+    const grocerySpent = roundMoney(groceryExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+    const groceryAvailable = roundMoney(groceryPaid - grocerySpent);
+    const fuelAvailable = roundMoney(fuel.shortage > 0 ? -fuel.shortage : fuel.currentBalance);
+    const totalAvailable = roundMoney(fuelAvailable + groceryAvailable);
+
+    const metrics = createSummaryMetrics([
+      {
+        label: 'Tankgeld eingezahlt',
+        value: euro(fuel.funded),
+        hint: fuel.openingBalance > 0 ? `${euro(fuel.openingBalance)} Übertrag + ${euro(fuel.paidTopUp)} bezahlt` : 'bezahlte Einzahlungen',
+        kind: fuel.funded > 0 ? 'success' : 'warning'
+      },
+      { label: 'Getankt', value: euro(fuel.spent), hint: `${fuel.receipts.receiptCount} Tankbelege erfasst` },
+      {
+        label: fuel.shortage > 0 ? 'Tankgeld fehlt' : 'Tankgeld verfügbar',
+        value: euro(Math.abs(fuelAvailable)),
+        hint: fuel.shortage > 0 ? 'Ausgaben übersteigen den Topf' : 'im gemeinsamen Tanktopf',
+        kind: fuel.shortage > 0 ? 'danger' : 'success'
+      },
+      {
+        label: 'Einkaufsgeld eingezahlt',
+        value: euro(groceryPaid),
+        hint: groceryPlan.active ? `${euro(groceryPlan.topUp)} geplant` : 'Monatsziel noch nicht aktiv',
+        kind: groceryPaid > 0 ? 'success' : 'warning'
+      },
+      { label: 'Eingekauft', value: euro(grocerySpent), hint: `${groceryExpenses.length} Einkäufe erfasst` },
+      {
+        label: groceryAvailable < 0 ? 'Einkaufsgeld fehlt' : 'Einkaufsgeld verfügbar',
+        value: euro(Math.abs(groceryAvailable)),
+        hint: groceryAvailable < 0 ? 'Ausgaben übersteigen die Einzahlung' : 'vom eingezahlten Betrag',
+        kind: groceryAvailable < 0 ? 'danger' : 'success'
+      },
+      {
+        label: totalAvailable < 0 ? 'Zusammen fehlt' : 'Zusammen verfügbar',
+        value: euro(Math.abs(totalAvailable)),
+        hint: 'Tankgeld und Einkaufsgeld',
+        kind: totalAvailable < 0 ? 'danger' : 'success'
+      }
+    ]);
+    metrics.classList.add('overview-budget-balance-metrics');
+    card.appendChild(metrics);
+
+    const actions = createUiEl('div', 'row overview-budget-quick-actions');
+    const groceryButton = document.createElement('button');
+    groceryButton.type = 'button';
+    groceryButton.className = 'primary compact';
+    groceryButton.textContent = '+ Einkauf erfassen';
+    groceryButton.addEventListener('click', () => showGroceryExpenseEditor());
+    const fuelButton = document.createElement('button');
+    fuelButton.type = 'button';
+    fuelButton.className = 'secondary compact';
+    fuelButton.textContent = '+ Tankbeleg erfassen';
+    fuelButton.addEventListener('click', () => showTankReceiptEditor());
+    actions.appendChild(groceryButton);
+    actions.appendChild(fuelButton);
+    card.appendChild(actions);
+    return card;
   }
 
   function renderMonthMoneyMap(monthKey) {
@@ -13712,6 +13785,94 @@ function showPersonalEditor(personId, editPost) {
   }
 
 
+  function persistTankReceiptEntry({ month, date, paid, cashback = 0, isCanister = false, note = '' }) {
+    const entryMonth = getMonthKeyFromDateValue(date, month);
+    if (!isMonthKey(entryMonth) || entryMonth < TANK_REAL_DATA_START_MONTH) {
+      alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
+      return false;
+    }
+    if (!(paid > 0)) {
+      alert('Bitte einen bezahlten Betrag größer als 0 eintragen.');
+      return false;
+    }
+    const duplicate = getTankReceipts().find((receipt) => receipt.month === entryMonth
+      && receipt.date === date
+      && Math.abs(Number(receipt.paid || 0) - paid) < 0.005
+      && Math.abs(Number(receipt.cashback || 0) - cashback) < 0.005);
+    if (duplicate && !confirm(`Möglicher doppelter Tankbeleg über ${euro(paid)} vom ${date} ist bereits erfasst. Trotzdem speichern?`)) return false;
+
+    reopenTankMonthAfterEdit(entryMonth);
+    const receipt = upsertTankReceipt({
+      month: entryMonth,
+      date,
+      liters: 0,
+      paid,
+      cashback,
+      isCanister,
+      allocations: {},
+      note
+    });
+    addChangeLog('Tankgeld', `Tankbeleg ${formatMonthLabel(receipt.month)} gespeichert · netto ${euro(receipt.netCost)}`, receipt.month);
+    saveState();
+    return true;
+  }
+
+  function showTankReceiptEditor() {
+    const today = new Date();
+    const defaultDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const content = document.createElement('div');
+    content.className = 'modal-form';
+    const row = document.createElement('div');
+    row.className = 'row';
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = defaultDate;
+    const paidInput = document.createElement('input');
+    paidInput.type = 'text';
+    paidInput.inputMode = 'decimal';
+    paidInput.placeholder = 'z. B. 69,56';
+    const cashbackInput = document.createElement('input');
+    cashbackInput.type = 'text';
+    cashbackInput.inputMode = 'decimal';
+    cashbackInput.placeholder = 'optional';
+    row.appendChild(createLabelInput('Datum', dateInput));
+    row.appendChild(createLabelInput('Bezahlt €', paidInput));
+    row.appendChild(createLabelInput('Cashback/Coupon €', cashbackInput));
+    content.appendChild(row);
+
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.placeholder = 'optional: Tankstelle oder Hinweis';
+    content.appendChild(createLabelInput('Notiz', noteInput));
+    const canisterLabel = document.createElement('label');
+    canisterLabel.className = 'checkbox-row';
+    const canisterInput = document.createElement('input');
+    canisterInput.type = 'checkbox';
+    canisterLabel.appendChild(canisterInput);
+    canisterLabel.appendChild(document.createTextNode(' Kanister / mitgebracht'));
+    content.appendChild(canisterLabel);
+    content.appendChild(createUiEl('p', 'small muted', 'Der Betrag wird vom eingezahlten Tankgeld abgezogen. Es wird keine zweite Kontobuchung angelegt.'));
+
+    showModal('Tankbeleg erfassen', content, [
+      { label: 'Abbrechen', className: 'secondary', onClick: (close) => close() },
+      {
+        label: 'Speichern',
+        className: 'primary',
+        onClick: (close) => {
+          if (!dateInput.value) return alert('Bitte ein Datum eintragen.');
+          const paid = parseMoneyInput(paidInput.value || 0);
+          const cashback = parseMoneyInput(cashbackInput.value || 0);
+          if (!Number.isFinite(paid) || !(paid > 0)) return alert('Bitte einen bezahlten Betrag größer als 0 eintragen.');
+          if (!Number.isFinite(cashback) || cashback < 0) return alert('Bitte einen gültigen Cashback-/Couponbetrag eintragen.');
+          const month = getMonthKeyFromDateValue(dateInput.value, currentMonth);
+          if (!persistTankReceiptEntry({ month, date: dateInput.value, paid, cashback, isCanister: canisterInput.checked, note: noteInput.value.trim() })) return;
+          close();
+          render();
+        }
+      }
+    ]);
+  }
+
   function renderTankReceiptTracking(card) {
     const receipts = getTankReceipts();
     const currentReceipts = receipts.filter((receipt) => receipt.month === currentMonth);
@@ -13769,21 +13930,18 @@ function showPersonalEditor(personId, editPost) {
     saveBtn.addEventListener('click', () => {
       const paid = parseMoneyInput(inputs.paid.value || 0);
       const cashback = parseMoneyInput(inputs.cashback.value || 0);
-      if (!isMonthKey(inputs.month.value) || inputs.month.value < TANK_REAL_DATA_START_MONTH) return alert('Echte Tankdaten werden ab Juni 2026 erfasst.');
-      if (!(paid > 0)) return alert('Bitte einen bezahlten Betrag größer als 0 eintragen.');
-      reopenTankMonthAfterEdit(inputs.month.value);
-      const receipt = upsertTankReceipt({
+      if (!isMonthKey(inputs.month.value)) return alert('Bitte einen gültigen Tankmonat wählen.');
+      if (!inputs.date.value) return alert('Bitte ein Datum eintragen.');
+      if (!Number.isFinite(paid) || !(paid > 0)) return alert('Bitte einen bezahlten Betrag größer als 0 eintragen.');
+      if (!Number.isFinite(cashback) || cashback < 0) return alert('Bitte einen gültigen Cashback-/Couponbetrag eintragen.');
+      if (!persistTankReceiptEntry({
         month: inputs.month.value,
         date: inputs.date.value,
-        liters: 0,
         paid,
         cashback,
         isCanister: inputs.isCanister.checked,
-        allocations: {},
         note: inputs.note.value
-      });
-      addChangeLog('Tankgeld', `Tankbon ${formatMonthLabel(receipt.month)} gespeichert · netto ${euro(receipt.netCost)}`, receipt.month);
-      saveState();
+      })) return;
       render();
     });
     box.appendChild(saveBtn);
@@ -13988,6 +14146,12 @@ function showPersonalEditor(personId, editPost) {
           const amount = parseMoneyInput(amountInput.value);
           if (!dateInput.value) return alert('Bitte ein Datum eintragen.');
           if (!Number.isFinite(amount) || !(amount > 0)) return alert('Bitte einen Betrag größer als 0 eintragen.');
+          const normalizedName = normalizeTextKey(nameInput.value.trim() || 'Einkauf');
+          const duplicate = getGroceryExpenses().find((entry) => entry.id !== item.id
+            && entry.date === dateInput.value
+            && normalizeTextKey(entry.name) === normalizedName
+            && Math.abs(Number(entry.amount || 0) - amount) < 0.005);
+          if (duplicate && !confirm(`Möglicher Doppeleintrag: „${duplicate.name}“ über ${euro(duplicate.amount)} vom ${formatSelfEmploymentDate(duplicate.date)} ist bereits erfasst. Trotzdem hinzufügen?`)) return;
           const saved = upsertGroceryExpense({
             id: item.id,
             month: getMonthKeyFromDateValue(dateInput.value, currentMonth),
