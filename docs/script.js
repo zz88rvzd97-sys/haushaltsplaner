@@ -14096,10 +14096,12 @@ function showPersonalEditor(personId, editPost) {
 
   function showGroceryExpenseEditor(expense = null) {
     const isNew = !expense;
+    const today = new Date();
+    const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const item = expense || {
       id: generateId(),
       month: currentMonth,
-      date: `${currentMonth}-01`,
+      date: todayValue,
       name: '',
       amount: 0,
       note: '',
@@ -14111,7 +14113,7 @@ function showPersonalEditor(personId, editPost) {
     row.className = 'row';
     const dateInput = document.createElement('input');
     dateInput.type = 'date';
-    dateInput.value = item.date || `${item.month || currentMonth}-01`;
+    dateInput.value = item.date || (isNew ? todayValue : `${item.month || currentMonth}-01`);
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.value = item.name || '';
