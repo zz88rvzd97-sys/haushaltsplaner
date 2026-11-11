@@ -2426,6 +2426,17 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+.month-money-map { margin-top: 1rem; }
+.month-money-table th,
+.month-money-table td { border-right: 1px solid var(--line, #d9e2dc); }
+.month-money-table th:last-child,
+.month-money-table td:last-child { border-right: 0; }
+.month-money-table tbody tr + tr td { border-top: 1px solid var(--line, #d9e2dc); }
+.month-money-table td:not(:first-child),
+.month-money-table th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.month-money-open { color: var(--warning-text, #8b5600); font-weight: 700; }
+.month-debt-budget-note { margin-top: .85rem; }
+.month-close-review { margin: .75rem 0 1rem; }
 
 /* Developer Beta 1.16: Start immer im aktuellen Monat, Vergangenheit weiter bearbeitbar. */
 
