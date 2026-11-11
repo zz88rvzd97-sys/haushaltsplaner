@@ -11079,9 +11079,36 @@
         { title: 'Prüfungen', matches: (item) => item.area !== 'Einkommen' && item.area !== 'Gemeinsame Kosten' && item.area !== 'Offene Zahlungen' }
       ];
       taskGroups.forEach((group) => {
-        const groupItems = tasks.f
-... 1392 bytes omitted ...
-ls.free);
+        const groupItems = tasks.filter(group.matches);
+        if (!groupItems.length) return;
+        taskList.appendChild(createUiEl('div', 'overview-focus-group', `${group.title} · ${groupItems.length}`));
+        groupItems.forEach((item) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = `todo-row ${item.kind || ''}`.trim();
+          const copy = document.createElement('span');
+          copy.appendChild(createUiEl('strong', '', item.title));
+          copy.appendChild(createUiEl('small', '', item.detail));
+          row.appendChild(copy);
+          row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
+          row.addEventListener('click', () => switchSection(item.section || 'overview'));
+          taskList.appendChild(row);
+        });
+      });
+      focusCard.appendChild(taskList);
+    }
+    page.appendChild(focusCard);
+    page.appendChild(kpiGrid);
+    appendSafe(page, () => renderMonthMoneyMap(currentMonth), 'Monatszahlen');
+
+    const more = document.createElement('details');
+    more.className = 'compact-details overview-more-details';
+    const moreSummary = document.createElement('summary');
+    moreSummary.textContent = 'Weitere Auswertungen anzeigen';
+    more.appendChild(moreSummary);
+    const moreContent = createUiEl('div', 'overview-more-content');
+
+    const financeStatus = getFinanceStatus(details.free);
     const criticalMonths = findCriticalMonths(currentMonth);
     const financeCard = createUiEl('div', 'card compact-card finance-guard-card');
     financeCard.appendChild(createUiEl('h3', '', 'Finanz-Ampel'));
