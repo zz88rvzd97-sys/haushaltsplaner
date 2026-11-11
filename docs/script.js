@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.08
+/* * Haushaltsplaner Version 3.09
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.08';
+  const APP_VERSION = '3.09';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -10568,7 +10568,7 @@
     titleWrap.appendChild(sub);
     head.appendChild(titleWrap);
     const total = div('income-breakdown-total');
-    total.appendChild(div('small muted', 'Verfügbar gesamt'));
+    total.appendChild(div('small muted', options.debtBudget ? 'Vor zusätzlicher Schuldentilgung' : 'Verfügbar gesamt'));
     total.appendChild(div('income-breakdown-total-value', euro(totalAvailable)));
     head.appendChild(total);
     card.appendChild(head);
@@ -10577,7 +10577,13 @@
     [
       ['Netto gesamt', euro(totalIncome)],
       ['Gemeinsame Anteile', euro(totalCommon)],
-      ['Persönliche Ausgaben', euro(totalPersonal)]
+      ['Persönliche Ausgaben', euro(totalPersonal)],
+      ...(options.debtBudget ? [
+        ['Schuldenbudget insgesamt', euro(options.debtBudget.monthlyTarget || 0)],
+        ['Davon Raten bereits eingeplant', euro(options.debtBudget.linkedDebtCosts || 0)],
+        ['Zusätzlich im Schuldenbudget reserviert', euro(options.debtBudget.additionalReservation || 0)],
+        ['Sicher frei nach Tilgung', euro(options.safeFree || 0)]
+      ] : [])
     ].forEach(([label, value]) => {
       const box = div('income-breakdown-total-box');
       box.appendChild(div('small muted', label));
@@ -10625,7 +10631,7 @@
       personCard.appendChild(rows);
       const availableBox = div('person-available-box');
       availableBox.appendChild(makeIcon('▣', 'tiny'));
-      availableBox.appendChild(div('person-modern-label', 'Verfügbar'));
+      availableBox.appendChild(div('person-modern-label', options.debtBudget ? 'Vor zusätzlicher Tilgung verfügbar' : 'Verfügbar'));
       availableBox.appendChild(div('person-modern-value', euro(available)));
       personCard.appendChild(availableBox);
       peopleGrid.appendChild(personCard);
@@ -11191,10 +11197,14 @@
       { label: 'Ist-Auszahlungen erfasst', value: String(overrideCount) }
     ]));
 
+    const debtBudget = getDebtBudgetReservationForMonth(currentMonth);
+    const monthlyDetails = computeMonthDetails(currentMonth);
     wrapper.appendChild(renderIncomeBreakdownCard(getIncomeBreakdownForMonth(currentMonth), {
       monthKey: currentMonth,
+      debtBudget: debtBudget.monthlyTarget > 0 ? debtBudget : null,
+      safeFree: monthlyDetails.free,
       title: 'Aufteilung wie bisher in der Übersicht',
-      subtitle: `Netto, gemeinsame Kosten, persönliche Ausgaben und verfügbar für ${currentLabel}`
+      subtitle: `Netto, Kosten und Schuldentilgung für ${currentLabel}`
     }));
 
     const info = document.createElement('div');
@@ -13115,11 +13125,9 @@ function renderPersonal() {
       const commonShare = getPersonCommonShareForMonth(person.id, currentMonth);
       const commonSharePaid = isCommonSharePaidForMonth(person.id, currentMonth);
       const commonSharePaidAmount = commonSharePaid ? (getPersonPaidCommonShareForMonth(person.id, currentMonth) || commonShare) : 0;
-      let monthlySum = 0;
       let dueSum = 0;
       let paidSum = 0;
       posts.forEach((pc) => {
-        if (isPostActiveInMonth(pc, currentMonth)) monthlySum += getEffectiveAmountForMonth(pc, currentMonth) / Number(pc.interval || 1);
         if (isDue(pc, currentMonth)) {
           dueSum += getEffectiveAmountForMonth(pc, currentMonth);
           if (pc.paidMonths && pc.paidMonths.includes(currentMonth)) paidSum += getEffectiveAmountForMonth(pc, currentMonth);
@@ -13131,7 +13139,7 @@ function renderPersonal() {
       const openWithCommon = Math.max(dueWithCommon - paidWithCommon, 0);
       const commonShareDiff = roundMoney(commonShare - commonSharePaidAmount);
       card.appendChild(createSummaryMetrics([
-        { label: 'Geplant inkl. gemeinsamem Anteil', value: `${euro(dueWithCommon)}`, hint: `${euro(monthlySum)} persönlich · ${euro(commonSharePaid ? commonSharePaidAmount : commonShare)} gemeinsam.` },
+        { label: 'Geplant inkl. gemeinsamem Anteil', value: `${euro(dueWithCommon)}`, hint: `${euro(dueSum)} persönlich fällig · ${euro(commonSharePaid ? commonSharePaidAmount : commonShare)} gemeinsam.` },
         { label: 'Bereits erledigt', value: `${euro(paidWithCommon)}`, kind: paidWithCommon > 0 ? 'success' : '' },
         { label: 'Noch offen', value: `${euro(openWithCommon)}`, kind: openWithCommon > 0 ? 'warning' : 'success' }
       ]));
