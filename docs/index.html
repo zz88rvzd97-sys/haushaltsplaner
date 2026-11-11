@@ -1,10 +1,11 @@
 <!--
-  Haushaltsplaner Version 3.13
+  Haushaltsplaner Version 3.14
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
 <!-- Aktualisierung Version&nbsp;3.09: Die Einkommensübersicht trennt den Betrag vor zusätzlicher Schuldentilgung, die zusätzliche Tilgung innerhalb des 800-€-Schuldenpools und den anschließend sicheren Rest. Die Monatsübersicht persönlicher Ausgaben zeigt bei nicht fälligen Quartalsposten keine irreführenden Monatsanteile mehr. -->
 <!-- Aktualisierung Version&nbsp;3.10: Die Monatsübersicht fasst geplante, bezahlte und offene Beträge je Bereich zusammen. Der Datencheck trennt aktuelle Abweichungen von zukünftigen Planhinweisen. Der Monatsabschluss zeigt nur Rest, Schuldenbudget und eine kurze Prüfliste; Rücklagen- und Sparverteilung wurden aus diesem Ablauf entfernt. -->
-<!-- Aktualisierung Version&nbsp;3.13: Vollständiger Ansichtsaufbau wiederhergestellt und Cache-Version erhöht. -->
+<!-- Aktualisierung Version&nbsp;3.14: Einkaufsausgaben werden einzeln erfasst und vom eingezahlten Einkaufsgeld abgezogen. -->
+<!-- Aktualisierung Version&nbsp;3.14: Vollständiger Ansichtsaufbau wiederhergestellt und Cache-Version erhöht. -->
 <!-- Aktualisierung Version&nbsp;3.12: Fehler beim letzten Update behoben; App startet wieder korrekt. Vorherige Verbesserungen bleiben erhalten. -->
 <!-- Aktualisierung Version&nbsp;3.11: Offene Zahlungen unterscheiden jetzt Planmonat, laufenden Monat und ungeklärte Vorperioden, ohne unbekannte Fälligkeitstage als überfällig zu markieren. Plan- und Ist-Einkommen sind auf einen Blick gekennzeichnet, der Schuldenpool zeigt feste Raten und Sondertilgungen getrennt, und Datencheck-Hinweise führen direkt zum passenden Bereich. -->
 <!-- Aktualisierung Version&nbsp;3.08: Nach Standardraten prüft die App mögliche Komplettablösungen. Wenn keine geeignete Schuld vollständig getilgt werden kann, geht die zusätzliche Tilgung an Hoist Finance (Targobank). Die direkte Kreiskassen-Abtretung wird weiterhin automatisch zum Plan-Netto zugerechnet. -->
@@ -158,11 +159,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
     <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=3.13">
-    <link rel="manifest" href="manifest.json?v=3.13">
+    <link rel="stylesheet" href="style.css?v=3.14">
+    <link rel="manifest" href="manifest.json?v=3.14">
 
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.13">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.13">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.14">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.14">
     <meta name="theme-color" content="#456f57">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -172,7 +173,7 @@
     <div class="app-shell">
       <header class="app-sidebar">
         <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.13" alt=""></div>
+          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.14" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -231,7 +232,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 3.13 geladen</div>
+            <div class="version-chip" id="versionChip">Version 3.14 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -257,9 +258,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;3.13</footer>
+        <footer>Haushaltsplaner · Version&nbsp;3.14</footer>
       </div>
     </div>
-    <script src="script.js?v=3.13"></script>
+    <script src="script.js?v=3.14"></script>
   </body>
 </html>
