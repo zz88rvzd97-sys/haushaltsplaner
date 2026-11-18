@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.16
+/* * Haushaltsplaner Version 3.17
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,7 +15,7 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.16';
+  const APP_VERSION = '3.17';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -145,6 +145,7 @@
         addKey(expense && expense.month);
         addFromDate(expense && expense.date);
       });
+      (state.additionalFunds || []).forEach((entry) => addKey(entry && entry.month));
       (state.smokingExpenses || []).forEach((expense) => {
         addKey(expense && expense.month);
         addFromDate(expense && expense.date);
@@ -919,6 +920,7 @@
     commonCosts: [],
     personalCosts: [],
     bufferExpenses: [],
+    additionalFunds: [],
     taxRefunds: [],
     groceryExpenses: [],
     selfEmployment: {
@@ -1155,6 +1157,7 @@
       if (!Array.isArray(state.tankCalc.madeleine.monthlyEntries)) state.tankCalc.madeleine.monthlyEntries = [];
     }
     if (!Array.isArray(state.bufferExpenses)) state.bufferExpenses = [];
+    if (!Array.isArray(state.additionalFunds)) state.additionalFunds = [];
     if (!Array.isArray(state.taxRefunds)) state.taxRefunds = [];
     if (!Array.isArray(state.groceryExpenses)) state.groceryExpenses = [];
     if (!Array.isArray(state.contracts)) state.contracts = [];
@@ -4192,6 +4195,12 @@
         onClick: () => showPersonalQuickAddModal()
       },
       {
+        title: 'Geldeingang / Rückzahlung',
+        text: 'Zusätzlich verfügbares Geld eintragen',
+        icon: '↗',
+        onClick: () => showAdditionalFundsEditor()
+      },
+      {
         title: 'Sonstige Ausgabe',
         text: 'Einmalige Ausgabe für den Monat erfassen',
         icon: '+',
@@ -4504,6 +4513,16 @@
     };
   }
 
+  function getAdditionalFundsForMonth(monthKey) {
+    return (Array.isArray(state.additionalFunds) ? state.additionalFunds : [])
+      .filter((entry) => entry && entry.month === monthKey && Number(entry.amount) > 0);
+  }
+
+  function getAdditionalFundsSumForMonth(monthKey) {
+    return roundMoney(getAdditionalFundsForMonth(monthKey)
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+  }
+
   function computeMonthlyBudgetDetails(monthKey, options = {}) {
     const incomeResolver = typeof options.incomeResolver === 'function'
       ? options.incomeResolver
@@ -4555,9 +4574,10 @@
     const miscPlanned = roundMoney(getBufferExpensePlannedSumForMonth(monthKey));
     const miscOpen = roundMoney(Math.max(miscPlanned - miscPaid, 0));
     const carryoverIn = roundMoney(getCarryoverInForMonth(monthKey));
+    const additionalFunds = getAdditionalFundsSumForMonth(monthKey);
     const businessBudget = getSelfEmploymentBudgetImpactForMonth(monthKey);
     const debtBudget = getDebtBudgetReservationForMonth(monthKey, { incomeResolver });
-    const freeBeforeDebtBudget = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment - totalCommonRounded - totalPersonal);
+    const freeBeforeDebtBudget = roundMoney(totalIncome + carryoverIn + businessBudget.adjustment + additionalFunds - totalCommonRounded - totalPersonal);
     const freeBeforeMisc = roundMoney(freeBeforeDebtBudget - debtBudget.additionalReservation);
     const freeCurrent = roundMoney(freeBeforeMisc - miscPaid);
     const freeConservative = roundMoney(freeBeforeMisc - miscPlanned);
@@ -4573,6 +4593,7 @@
       totalPersonalAssigned,
       unassignedPersonalDue: roundMoney(unassignedPersonalDue),
       carryoverIn,
+      additionalFunds,
       businessIncome: businessBudget.income,
       businessExpensePaid: businessBudget.expensePaid,
       businessExpenseOpen: businessBudget.expenseOpen,
@@ -10569,7 +10590,7 @@
     const totalIncome = (personsData || []).reduce((sum, pd) => sum + Number(pd.income || 0), 0);
     const totalCommon = (personsData || []).reduce((sum, pd) => sum + Number(pd.commonShare || 0), 0);
     const totalPersonal = (personsData || []).reduce((sum, pd) => sum + Number(pd.personalDue || 0), 0);
-    const totalAvailable = (personsData || []).reduce((sum, pd) => sum + (Number(pd.income || 0) - Number(pd.commonShare || 0) - Number(pd.personalDue || 0)), 0);
+    const totalAvailable = roundMoney((personsData || []).reduce((sum, pd) => sum + (Number(pd.income || 0) - Number(pd.commonShare || 0) - Number(pd.personalDue || 0)), 0) + Number(options.additionalFunds || 0));
     const percentOf = (value, base) => !base ? '0,0 %' : `${((Number(value || 0) / Number(base || 1)) * 100).toFixed(1).replace('.', ',')} %`;
     const div = (cls, text) => {
       const el = document.createElement('div');
@@ -10596,7 +10617,7 @@
     titleWrap.appendChild(sub);
     head.appendChild(titleWrap);
     const total = div('income-breakdown-total');
-    total.appendChild(div('small muted', options.debtBudget ? 'Vor zusätzlicher Schuldentilgung' : 'Verfügbar gesamt'));
+    total.appendChild(div('small muted', options.additionalFunds ? 'Verfügbar inkl. zusätzlicher Eingänge' : (options.debtBudget ? 'Vor zusätzlicher Schuldentilgung' : 'Verfügbar gesamt')));
     total.appendChild(div('income-breakdown-total-value', euro(totalAvailable)));
     head.appendChild(total);
     card.appendChild(head);
@@ -10604,6 +10625,7 @@
     const totals = div('income-breakdown-totals');
     [
       ['Netto gesamt', euro(totalIncome)],
+      ...(Number(options.additionalFunds || 0) > 0 ? [['Zusätzliche Geldeingänge', euro(options.additionalFunds)]] : []),
       ['Gemeinsame Anteile', euro(totalCommon)],
       ['Persönliche Ausgaben', euro(totalPersonal)],
       ...(options.debtBudget ? [
@@ -11376,6 +11398,7 @@
     const monthlyDetails = computeMonthDetails(currentMonth);
     wrapper.appendChild(renderIncomeBreakdownCard(getIncomeBreakdownForMonth(currentMonth), {
       monthKey: currentMonth,
+      additionalFunds: monthlyDetails.additionalFunds,
       debtBudget: debtBudget.monthlyTarget > 0 ? debtBudget : null,
       safeFree: monthlyDetails.free,
       title: 'Aufteilung wie bisher in der Übersicht',
@@ -13231,6 +13254,120 @@ function showCommonEditor(editCost) {
     return isCommonAccountContributionPaid(monthKey, personId);
   }
 
+  function showAdditionalFundsEditor(editEntry = null) {
+    const content = document.createElement('div');
+    content.className = 'modal-form guided-post-form';
+    content.appendChild(createGuidedFormIntro(
+      editEntry ? 'Geldeingang bearbeiten' : 'Zusätzlichen Geldeingang erfassen',
+      `Der Betrag erhöht das verfügbare Geld für ${formatMonthLabel(editEntry ? editEntry.month : currentMonth)}. Er wird getrennt vom Gehalt und von der Kostenaufteilung geführt.`
+    ));
+    const row = document.createElement('div');
+    row.className = 'row guided-row';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'z. B. Einzahlung, Rückerstattung';
+    nameInput.value = editEntry ? editEntry.name : '';
+    const amountInput = createMoneyField(editEntry ? editEntry.amount : '');
+    row.appendChild(createLabelInput('Bezeichnung', nameInput));
+    row.appendChild(createLabelInput('Betrag in €', amountInput));
+    content.appendChild(row);
+
+    const row2 = document.createElement('div');
+    row2.className = 'row guided-row';
+    const personSelect = document.createElement('select');
+    personSelect.innerHTML = (state.persons || []).map((person) => `<option value="${person.id}">${person.name}</option>`).join('');
+    personSelect.value = editEntry && editEntry.personId ? editEntry.personId : ((state.persons.find((person) => person.name === 'Benny') || state.persons[0] || {}).id || '');
+    const kindSelect = document.createElement('select');
+    kindSelect.innerHTML = '<option value="deposit">Einzahlung / zusätzliches Geld</option><option value="refund">Rückerstattung / Gutschrift</option>';
+    kindSelect.value = editEntry && editEntry.kind ? editEntry.kind : 'deposit';
+    row2.appendChild(createLabelInput('Person', personSelect));
+    row2.appendChild(createLabelInput('Art', kindSelect));
+    content.appendChild(row2);
+
+    const modal = showModal(editEntry ? 'Geldeingang bearbeiten' : 'Zusätzlichen Geldeingang erfassen', content, [
+      { label: 'Abbrechen', className: 'secondary' },
+      { label: editEntry ? 'Änderungen speichern' : 'Eintragen', className: 'primary', onClick: (close) => {
+        const name = nameInput.value.trim();
+        const amount = parseMoneyInput(amountInput.value);
+        if (!name || !Number.isFinite(amount) || amount <= 0) {
+          alert('Bitte Bezeichnung und einen Betrag größer als 0 € eingeben.');
+          return;
+        }
+        const entry = {
+          id: editEntry && editEntry.id ? editEntry.id : generateId(),
+          name,
+          amount: roundMoney(amount),
+          personId: personSelect.value,
+          kind: kindSelect.value,
+          month: editEntry ? editEntry.month : currentMonth
+        };
+        if (editEntry) state.additionalFunds = state.additionalFunds.map((item) => item.id === editEntry.id ? entry : item);
+        else state.additionalFunds.push(entry);
+        saveState();
+        close();
+        render();
+      } }
+    ]);
+    return modal;
+  }
+
+  function renderAdditionalFundsCard() {
+    const entries = getAdditionalFundsForMonth(currentMonth);
+    const total = getAdditionalFundsSumForMonth(currentMonth);
+    const card = createUiEl('div', 'card additional-funds-card');
+    const head = createUiEl('div', 'compact-section-head');
+    const titleWrap = createUiEl('div');
+    titleWrap.appendChild(createUiEl('h2', '', 'Zusätzliche verfügbare Beträge'));
+    titleWrap.appendChild(createUiEl('p', 'small muted', 'Einzahlungen und Rückzahlungen erhöhen den freien Betrag, ohne das Gehalt oder die Aufteilung gemeinsamer Kosten zu verändern.'));
+    head.appendChild(titleWrap);
+    const addBtn = createUiEl('button', 'primary', '+ Geldeingang erfassen');
+    addBtn.type = 'button';
+    addBtn.addEventListener('click', () => showAdditionalFundsEditor());
+    head.appendChild(addBtn);
+    card.appendChild(head);
+    card.appendChild(createSummaryMetrics([
+      { label: 'Zusätzlich verfügbar', value: euro(total), hint: `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Einträge'} im Monat`, kind: total > 0 ? 'success' : '' }
+    ]));
+    if (!entries.length) {
+      card.appendChild(createUiEl('p', 'small muted', 'Für diesen Monat sind keine zusätzlichen Geldeingänge erfasst.'));
+      return card;
+    }
+    const table = document.createElement('table');
+    table.className = 'list-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>Bezeichnung</th><th>Person</th><th>Art</th><th>Betrag</th><th>Aktion</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    entries.forEach((entry) => {
+      const tr = document.createElement('tr');
+      const values = [
+        entry.name || 'Geldeingang',
+        (state.persons.find((person) => person.id === entry.personId) || {}).name || '—',
+        entry.kind === 'refund' ? 'Rückerstattung / Gutschrift' : 'Einzahlung / zusätzliches Geld',
+        euro(entry.amount)
+      ];
+      values.forEach((value) => tr.appendChild(createUiEl('td', '', value)));
+      const action = document.createElement('td');
+      const editBtn = createUiEl('button', 'secondary compact', 'Bearbeiten');
+      editBtn.type = 'button';
+      editBtn.addEventListener('click', () => showAdditionalFundsEditor(entry));
+      const deleteBtn = createUiEl('button', 'danger compact', 'Löschen');
+      deleteBtn.type = 'button';
+      deleteBtn.addEventListener('click', () => {
+        if (!confirm(`„${entry.name}“ aus ${formatMonthLabel(currentMonth)} löschen?`)) return;
+        state.additionalFunds = state.additionalFunds.filter((item) => item.id !== entry.id);
+        saveState();
+        render();
+      });
+      action.append(editBtn, deleteBtn);
+      tr.appendChild(action);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    card.appendChild(table);
+    return card;
+  }
+
   // Rendert die persönlichen Ausgaben pro Person
   
 function renderPersonal() {
@@ -13269,6 +13406,7 @@ function renderPersonal() {
       { label: 'Noch offen', value: `${euro(overallOpenWithCommon)}`, kind: overallOpenWithCommon > 0 ? 'warning' : 'success' }
     ]));
     personalSection.appendChild(summaryCard);
+    personalSection.appendChild(renderAdditionalFundsCard());
     const personalFilterCard = document.createElement('div');
     personalFilterCard.className = 'card compact-card';
     personalFilterCard.appendChild(makeSearchFilterBar(personalSearch, personalFilter, (v) => { personalSearch = v; }, (v) => { personalFilter = v; }, [['all','Alle'],['due','Fällig'],['open','Offen'],['paid','Bezahlt'],['linked','Mit Schuld verknüpft'],['reserve','Mit Rücklage']]));
