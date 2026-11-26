@@ -14,6 +14,7 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
+  const GROCERY_ROLLING_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
   const APP_VERSION = '3.17';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
@@ -8082,8 +8083,53 @@
     return true;
   }
 
+  function getGroceryMonthPaidTotal(monthKey) {
+    const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
+    return roundMoney(posts.reduce((sum, post) => {
+      if (!isPostPaidForMonth(post, monthKey)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    }, 0));
+  }
+
+  function getGroceryMonthSpentTotal(monthKey) {
+    return roundMoney(getGroceryExpenses()
+      .filter((expense) => expense.month === monthKey)
+      .reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+  }
+
+  function getGroceryRollingBalanceBefore(monthKey) {
+    if (!isMonthKey(monthKey) || monthKey <= GROCERY_ROLLING_START_MONTH) return 0;
+    let balance = 0;
+    const monthCount = monthDiff(GROCERY_ROLLING_START_MONTH, monthKey);
+    for (let index = 0; index < monthCount; index += 1) {
+      const month = addMonths(GROCERY_ROLLING_START_MONTH, index);
+      balance = roundMoney(balance + getGroceryMonthPaidTotal(month) - getGroceryMonthSpentTotal(month));
+    }
+    return balance;
+  }
+
+  function getGroceryCatchUpAmount(monthKey) {
+    if (!isMonthKey(monthKey) || monthKey <= GROCERY_ROLLING_START_MONTH) return 0;
+    const balanceBefore = getGroceryRollingBalanceBefore(monthKey);
+    return balanceBefore < -0.005
+      ? roundMoney(Math.ceil((Math.abs(balanceBefore) - 0.0001) / 10) * 10)
+      : 0;
+  }
+
+  function syncFutureGroceryTopUps(startMonth) {
+    if (!isMonthKey(startMonth)) return false;
+    let changed = false;
+    for (let index = 1; index <= 36; index += 1) {
+      changed = syncGroceryTopUpExpense(addMonths(startMonth, index), { silent: true }) || changed;
+    }
+    return changed;
+  }
+
   function getGroceryTopUpAllocation(monthKey = currentMonth) {
-    const calc = calculateBudgetTopUp('groceries', monthKey);
+    const baseCalc = calculateBudgetTopUp('groceries', monthKey);
+    const carryIn = getGroceryRollingBalanceBefore(monthKey);
+    const catchUp = baseCalc.active ? getGroceryCatchUpAmount(monthKey) : 0;
+    const calc = { ...baseCalc, topUp: roundMoney(baseCalc.topUp + catchUp), carryIn, catchUp };
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
     const weightedPosts = ensurePositiveAllocationWeights(posts.map((post) => ({
       id: post.id,
@@ -14302,6 +14348,7 @@ function showPersonalEditor(personId, editPost) {
           });
           if (!saved) return alert('Der Einkauf konnte nicht gespeichert werden.');
           addChangeLog('Einkaufsgeld', `${isNew ? 'Einkauf erfasst' : 'Einkauf geändert'}: ${saved.name} · ${euro(saved.amount)}.`, saved.month);
+          syncFutureGroceryTopUps(saved.month);
           saveState();
           close();
           render();
@@ -14324,7 +14371,9 @@ function showPersonalEditor(personId, editPost) {
     const stillToPay = roundMoney(Math.max(0, plannedTotal - paidTotal));
     const currentExpenses = getGroceryExpenses().filter((expense) => expense.month === currentMonth);
     const spentTotal = roundMoney(currentExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
-    const availableTotal = roundMoney(paidTotal - spentTotal);
+    const rollingBalanceEnabled = currentMonth >= GROCERY_ROLLING_START_MONTH;
+    const openingBalance = rollingBalanceEnabled ? getGroceryRollingBalanceBefore(currentMonth) : 0;
+    const availableTotal = roundMoney(openingBalance + paidTotal - spentTotal);
     const basisText = manualTarget != null
       ? `Manuell für ${formatMonthLabel(currentMonth)}`
       : 'Festes Monatsziel';
@@ -14380,13 +14429,27 @@ function showPersonalEditor(personId, editPost) {
     expenseHeader.appendChild(expenseTitle);
     expenseHeader.appendChild(addExpenseBtn);
     remainingCard.appendChild(expenseHeader);
-    remainingCard.appendChild(createUiEl('p', 'small muted', 'Erfasse hier jeden Einkauf. Der Betrag wird vom bereits eingezahlten Einkaufsgeld abgezogen; die Erfassung erzeugt keine zweite Kontobuchung.'));
-    remainingCard.appendChild(createSummaryMetrics([
+    remainingCard.appendChild(createUiEl('p', 'small muted', rollingBalanceEnabled
+      ? 'Der Rest wird ab November in den Folgemonat übernommen: Vormonatsrest + tatsächlich eingezahlt − Einkäufe = verfügbar. Wenn der Topf nicht reicht, wird der Beitrag im nächsten Monat um volle 10-€-Schritte erhöht.'
+      : 'Erfasse hier jeden Einkauf. Der Betrag wird vom bereits eingezahlten Einkaufsgeld abgezogen; die Erfassung erzeugt keine zweite Kontobuchung.'));
+    remainingCard.appendChild(createSummaryMetrics(rollingBalanceEnabled ? [
+      { label: 'Rest Vormonat', value: euro(openingBalance), kind: openingBalance < 0 ? 'danger' : '' },
+      { label: 'Eingezahlt', value: euro(paidTotal), kind: paidTotal > 0 ? 'success' : 'warning' },
+      { label: 'Ausgegeben', value: euro(spentTotal), kind: spentTotal > openingBalance + paidTotal ? 'danger' : '' },
+      { label: availableTotal >= 0 ? 'Jetzt verfügbar' : 'Fehlbetrag', value: euro(Math.abs(availableTotal)), kind: availableTotal < 0 ? 'danger' : 'success' }
+    ] : [
       { label: 'Eingezahlt', value: euro(paidTotal), kind: paidTotal > 0 ? 'success' : 'warning' },
       { label: 'Ausgegeben', value: euro(spentTotal), kind: spentTotal > paidTotal ? 'danger' : '' },
       { label: availableTotal >= 0 ? 'Noch verfügbar' : 'Über dem Eingezahlten', value: euro(Math.abs(availableTotal)), kind: availableTotal < 0 ? 'danger' : 'success' },
       { label: 'Erfasste Einkäufe', value: String(currentExpenses.length) }
     ]));
+    if (rollingBalanceEnabled) {
+      const nextMonthKey = nextMonth(currentMonth);
+      const nextAllocation = getGroceryTopUpAllocation(nextMonthKey);
+      if (nextAllocation.catchUp > 0) {
+        remainingCard.appendChild(createUiEl('div', 'info-box', `Für ${formatMonthLabel(nextMonthKey)} wird der Einkaufsgeld-Beitrag um ${euro(nextAllocation.catchUp)} auf ${euro(nextAllocation.topUp)} erhöht, damit der Fehlbetrag ausgeglichen wird.`));
+      }
+    }
     if (!currentExpenses.length) {
       remainingCard.appendChild(createUiEl('p', 'small muted', 'Für diesen Monat sind noch keine Einkäufe erfasst.'));
     } else {
@@ -14416,6 +14479,7 @@ function showPersonalEditor(personId, editPost) {
           if (!confirm(`Einkauf „${expense.name}“ über ${euro(expense.amount)} löschen?`)) return;
           deleteGroceryExpense(expense.id);
           addChangeLog('Einkaufsgeld', `Einkauf gelöscht: ${expense.name} · ${euro(expense.amount)}.`, expense.month);
+          syncFutureGroceryTopUps(expense.month);
           saveState();
           render();
         });
@@ -14456,6 +14520,7 @@ function showPersonalEditor(personId, editPost) {
       if (!Number.isFinite(amount) || amount < 0) return alert('Bitte ein gültiges Monatsziel eingeben. Komma-Beträge sind möglich.');
       if (!setGroceryTargetOverride(currentMonth, amount)) return alert('Das Monatsziel konnte nicht gespeichert werden.');
       const changed = syncGroceryTopUpExpense(currentMonth);
+      syncFutureGroceryTopUps(currentMonth);
       addChangeLog('Einkaufsgeld', `Monatsziel ${formatMonthLabel(currentMonth)} manuell auf ${euro(amount)} gesetzt${changed ? ' und in die Planung übernommen' : ''}.`, currentMonth);
       saveState();
       render();
