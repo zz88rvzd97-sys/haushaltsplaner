@@ -1,9 +1,13 @@
+Warning: truncated output (original token count: 5943)
+Total output lines: 273
+
 <!--
   Haushaltsplaner Version 3.19
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
 <!-- Aktualisierung Version&nbsp;3.09: Die Einkommensübersicht trennt den Betrag vor zusätzlicher Schuldentilgung, die zusätzliche Tilgung innerhalb des 800-€-Schuldenpools und den anschließend sicheren Rest. Die Monatsübersicht persönlicher Ausgaben zeigt bei nicht fälligen Quartalsposten keine irreführenden Monatsanteile mehr. -->
 <!-- Aktualisierung Version&nbsp;3.10: Die Monatsübersicht fasst geplante, bezahlte und offene Beträge je Bereich zusammen. Der Datencheck trennt aktuelle Abweichungen von zukünftigen Planhinweisen. Der Monatsabschluss zeigt nur Rest, Schuldenbudget und eine kurze Prüfliste; Rücklagen- und Sparverteilung wurden aus diesem Ablauf entfernt. -->
+<!-- Aktualisierung Version&nbsp;3.22: Tank- und Einkaufsgeld runden nur das Monatsziel auf 10 € auf; Überträge und Einzahlungen werden centgenau verrechnet und verteilt. -->
 <!-- Aktualisierung Version&nbsp;3.21: Tank- und Einkaufsgeld verwenden ab November den rollenden 12-Monats-Schnitt aus tatsächlichen Ausgaben und Prognosen; der Oktoberübertrag bleibt im Topf enthalten. -->
 <!-- Aktualisierung Version&nbsp;3.20: Tankgeld läuft ab Oktober mit den tatsächlichen Einzahlungen und Tankbelegen dynamisch weiter. Fehlbeträge werden vorgetragen, Guthaben mindert den nächsten Bedarf. -->
 <!-- Aktualisierung Version&nbsp;3.19: Einkaufsgeld trägt Restbeträge ab Oktober vor; Fehlbeträge erhöhen die Einzahlung im Folgemonat auf volle 10-Euro-Schritte. -->
@@ -61,125 +65,7 @@
   Aktualisierung Version&nbsp;2.83: Die Selbständigkeitsverwaltung ist aus dem
   Haushaltsplaner entfernt. Alte Betriebsdaten bleiben in Sicherungen erhalten,
   beeinflussen den privaten Haushalt ab Oktober 2026 aber nicht mehr. Bennys
-  Posten „Rauchzeug“ wird ab Oktober ebenfalls nicht mehr eingeplant. Dafür wird
-  bei Benny ab Oktober die „Zusatzrente HUK24“ mit monatlich 25&nbsp;€ eingeplant.
-  Aktualisierung Version&nbsp;2.82: Der feste Schuldenplan startet im Oktober
-  2026. September bleibt unverändert erhalten. Geplante, aber nicht wirklich
-  zurückgelegte Beträge aus September werden nicht als Oktober-Guthaben gewertet.
-  Erst ab Oktober zählt die Bestätigung „Zurückgelegt“.
-  Aktualisierung Version&nbsp;2.81: Der feste Schuldenplan startet im September
-  2026 ohne nur geplante Rücklagen aus August. Ab September zählt ein Betrag
-  erst dann als angespart, wenn er im Monatsassistenten ausdrücklich als
-  „Zurückgelegt“ bestätigt wurde. Bestehende August-Daten bleiben erhalten.
-  Aktualisierung Version&nbsp;2.80: Das Logo wird in der Seitenleiste randlos
-  zugeschnitten. Der weiße Außenbereich der Quelldatei ist nicht mehr sichtbar.
-  Aktualisierung Version&nbsp;2.79: Das vorhandene Haushaltsplanerengel-Logo ist
-  nun sichtbar in der Seitenleiste eingebunden. Navigation, Schnell-Erfassung
-  und Monatsübersicht verwenden verständliche Symbole statt Buchstaben, wobei
-  alle Textbeschriftungen für eine eindeutige Bedienung erhalten bleiben.
-  Aktualisierung Version&nbsp;2.78: Die Bedienung ist weiter vereinfacht. Es gibt
-  nur noch eine Monatsauswahl, der Monatsstart ist vollständig in der Übersicht
-  enthalten, Rücklagen und Töpfe stehen gemeinsam in einem Bereich und die
-  persönlichen Monatszahlen sind kompakter. Aufgaben ohne echten Betrag werden
-  ausgeblendet; der Sicherungsbereich zeigt zuerst nur die wichtigsten Aktionen.
-  Aktualisierung Version&nbsp;2.77: Wird eine Regelrate im Schuldenbereich als
-  bezahlt eingetragen, übernimmt die App den passenden Betrag automatisch in
-  den verknüpften gemeinsamen oder persönlichen Kostenposten. Sonderzahlungen
-  bleiben getrennt, zukünftige Raten unverändert und die Monatsausgabe wird
-  nicht doppelt abgezogen. Beim Zurücksetzen werden nur automatisch gesetzte
-  Kostenposten wieder geöffnet.
-  Aktualisierung Version&nbsp;2.76: Auch das Rauchzeug-Budget kann für jeden
-  ausgewählten Monat manuell festgelegt werden. Die Änderung wirkt sofort auf
-  die verfügbare Summe, bleibt in Sicherungen erhalten und verändert keine
-  Folgemonate. Mit einer Aktion wird wieder der normale persönliche Betrag
-  verwendet.
-  Aktualisierung Version&nbsp;2.75: Das Einkaufsgeld kann für jeden Monat
-  manuell festgelegt werden. Eine Vorgabe wie 500&nbsp;€ für September wirkt
-  sofort auf Ziel, Aufstockung und verfügbaren Betrag, verändert aber weder
-  frühere noch spätere Monate. Der automatische Wert kann jederzeit wieder
-  aktiviert werden.
-  Aktualisierung Version&nbsp;2.74: Ab September wird der vollständige
-  Schulden-Pool von 800&nbsp;€ in der verfügbaren Summe berücksichtigt.
-  Bereits enthaltene Raten werden nicht doppelt abgezogen. Die frei gewordenen
-  46&nbsp;€ von Pair AZ1 bleiben für Riverty AZ1 vorgemerkt. Beträge, die
-  vorerst nicht sinnvoll gezahlt werden können, gehen als gebundene
-  Schulden-Rücklage aufs Tagesgeld und bleiben für spätere Tilgungen erhalten.
-  Aktualisierung Version&nbsp;2.73: Jede Schuld erhält eine frei wählbare
-  Zahlungsmöglichkeit. Der neue Monatsassistent zeigt die konkreten Zahlungen,
-  kann sie als bezahlt oder später markieren und verteilt den Rest sofort neu.
-  Offene Zahlungswege, fällige Schuldenstände und zu prüfende Gesamtbeträge
-  stehen gesammelt in einer Klärliste. Nach einem neuen Schuldenstand zeigt die
-  App außerdem die Auswirkung auf Endmonat und nächstes Zahlungsziel.
-  Version&nbsp;2.72: HUK24 wird wegen des fehlenden Zahlungswegs
-  nur noch mit der vereinbarten Rate eingeplant. Sonderzahlungen und eine
-  Gesamtablösung werden weder vorgeschlagen noch zur Eingabe angeboten.
-  Version&nbsp;2.71: Auch bei CleverFit sind nur die normale
-  Rate oder die vollständige Restschuld möglich. Einzelne Sonderzahlungen
-  werden dort weder vorgeschlagen noch zur Eingabe angeboten.
-  Version&nbsp;2.70: Riverty S.19 erlaubt nur die vereinbarte
-  Rate oder die vollständige Gesamtforderung. Nach jeder Aktualisierung eines
-  Schuldenstands werden der 800-Euro-Plan und alle Vorschläge sofort neu
-  berechnet.
-  Version&nbsp;2.69: Bevor das zusätzliche Schuldenbudget auf
-  mehrere Vorschläge verteilt wird, prüft die Anwendung zuerst, ob damit eine
-  geeignete Schuld vollständig bezahlt werden kann.
-  Version&nbsp;2.68: Ab September 2026 gilt ein festes
-  Schuldenziel von 800&nbsp;€ pro Monat. Die Anwendung berücksichtigt zuerst
-  alle Standardraten und schlägt dann unabhängig vom freien Haushaltsbetrag
-  eine sinnvolle Ratenerhöhung oder Zusatztilgung vor. Zahlungsbeschränkungen
-  und bereits bezahlte Beträge werden automatisch beachtet.
-  Version&nbsp;2.67: Taskrabbit-Auszahlungen werden bei der Eingabe
-  direkt in Lohn, Material und Trinkgeld aufgeteilt. Der Gesamtbetrag wird
-  automatisch berechnet und sofort im Haushalt berücksichtigt; EÜR-Liste, CSV
-  und PDF zeigen daraus eine einzige Jahressumme. Einzelne Auszahlungen bleiben
-  als interner Nachweis bearbeitbar.
-  Version&nbsp;2.66: Überwiesene Betriebseinnahmen und -ausgaben
-  verändern den gesamten verfügbaren Betrag automatisch. Barzahlungen bleiben
-  vollständig in der EÜR, werden im Haushaltsbudget aber nicht eingerechnet.
-  Version&nbsp;2.65: Neue Betriebsausgaben können automatisch
-  als bezahlte „Sonstige Ausgabe“ übernommen werden. Barzahlung und Überweisung
-  werden in Buchungen, EÜR-Bericht und CSV-Ausgabe festgehalten, ohne Ausgaben
-  doppelt vom verfügbaren Betrag abzuziehen.
-  Version&nbsp;2.64: Regelmäßige gemeinsame und persönliche
-  Kosten werden automatisch als Vertragsvorschläge erkannt. Verknüpfte Schulden
-  und Budgettöpfe werden ausgelassen; andere Vorschläge lassen sich als
-  „Kein Vertrag“ ausblenden.
-  Version&nbsp;2.63: Verträge können mit Kosten, Laufzeit,
-  Kündigungsfrist und Prüfintervall verwaltet werden. Fristen werden automatisch
-  berechnet und auf der Übersicht angezeigt.
-  Version&nbsp;2.62: Monat und Jahr sind in der Seitenleiste
-  übersichtlicher aufgeteilt und verzichten auf unnötige Zusatztexte.
-  Version&nbsp;2.61: Auf dem PC scrollt die linke Seitenleiste als
-  Ganzes, sodass sie über ihre gesamte Fläche mit dem Mausrad bedienbar ist.
-  Version&nbsp;2.60: Die Monatsübersicht in der Seitenleiste zeigt
-  freie, gemeinsame und persönliche Beträge in klaren, gut lesbaren Zeilen.
-  Version&nbsp;2.59: Die Oberfläche erhält eine ruhige, sachliche
-  Finanz-Optik mit weniger Effekten, klareren Tabellen und einer kompakteren
-  Navigation. Funktionen und lokale Daten bleiben unverändert.
--->
-
-<!DOCTYPE html>
-<html lang="de">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Privater Haushaltsplaner für Einnahmen, Ausgaben und Schulden.">
-    <title>Haushaltsplaner – Benny &amp; Madeleine</title>
-    <link rel="stylesheet" href="style.css?v=3.16">
-    <link rel="manifest" href="manifest.json?v=3.16">
-
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3.16">
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=3.16">
-    <meta name="theme-color" content="#456f57">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="Planerengel">
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="app-sidebar">
-        <div class="brand-row">
-          <div class="brand-logo" aria-hidden="true"><img class="brand-logo-image" src="icon-192.png?v=3.16" alt=""></div>
+  Posten …1943 tokens truncated…brand-logo-image" src="icon-192.png?v=3.16" alt=""></div>
           <div class="brand-copy">
             <h1>Haushaltsplaner</h1>
             <span>Benny &amp; Madeleine</span>
@@ -264,9 +150,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;3.21</footer>
+        <footer>Haushaltsplaner · Version&nbsp;3.22</footer>
       </div>
     </div>
-    <script src="script.js?v=3.22"></script>
+    <script src="script.js?v=3.23"></script>
   </body>
 </html>
