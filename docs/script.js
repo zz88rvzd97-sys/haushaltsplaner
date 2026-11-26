@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.19
+/* * Haushaltsplaner Version 3.20
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -15,8 +15,9 @@
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
   const GROCERY_ROLLING_START_MONTH = '2026-10';
+  const TANK_ROLLING_START_MONTH = '2026-10';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.19';
+  const APP_VERSION = '3.20';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -7993,6 +7994,19 @@
     return rows.map((item) => ({ ...item, weight: 1 }));
   }
 
+  function getFuelRollingBalanceBefore(monthKey) {
+    if (!isMonthKey(monthKey) || monthKey <= TANK_ROLLING_START_MONTH) return 0;
+    let balance = 0;
+    const monthCount = monthDiff(TANK_ROLLING_START_MONTH, monthKey);
+    for (let index = 0; index < monthCount; index += 1) {
+      const month = addMonths(TANK_ROLLING_START_MONTH, index);
+      const paid = getFuelTopUpPaidAmount(month);
+      const spent = Number(getTankReceiptHouseholdStatsForMonth(month).netCost || 0);
+      balance = roundMoney(balance + paid - spent);
+    }
+    return balance;
+  }
+
   function calculateBudgetTopUp(type, monthKey = currentMonth) {
     const active = isBudgetTopUpActive(type, monthKey);
     let target = 0;
@@ -8008,13 +8022,17 @@
         ? `Manuelle Vorgabe für ${formatMonthLabel(monthKey)}`
         : 'Festes Monatsziel';
     }
-    const balance = active && type !== 'groceries' ? getBudgetTopUpBalance(type, monthKey) : 0;
+    const rollingFuel = type === 'fuel' && isMonthKey(monthKey) && monthKey >= TANK_ROLLING_START_MONTH;
+    const balance = active && type !== 'groceries'
+      ? (rollingFuel ? getFuelRollingBalanceBefore(monthKey) : getBudgetTopUpBalance(type, monthKey))
+      : 0;
+    const paidFuel = rollingFuel ? getFuelTopUpPaidAmount(monthKey) : 0;
     const missing = Math.max(0, target - balance);
     const manualGroceryTarget = type === 'groceries' && getGroceryTargetOverride(monthKey) != null;
     const topUp = active
       ? (type === 'groceries'
         ? (manualGroceryTarget ? roundMoney(target) : roundUpToNextFifty(target))
-        : roundUpToNextFive(missing))
+        : (rollingFuel && paidFuel > 0 ? paidFuel : (rollingFuel && balance < -0.005 ? roundUpToNextTen(missing) : roundUpToNextFive(missing))))
       : target;
     return { type, month: monthKey, active, target, balance, missing, topUp, source };
   }
@@ -15732,7 +15750,7 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', '2. Bisher bezahlt'));
-    card.appendChild(createUiEl('p', 'small muted', 'Die Restmenge ergibt sich aus dem übernommenen Rest des Vormonats plus den bezahlten Einzahlungen minus den erfassten Tankausgaben.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Tanktopf läuft ab Oktober automatisch weiter: bezahlte Einzahlungen minus echte Tankbelege. Ein negativer Rest wird mitgenommen, ein Guthaben senkt den nächsten Bedarf.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
     const live = getFuelPoolLiveStatus(currentMonth);
@@ -15759,7 +15777,7 @@ function showPersonalEditor(personId, editPost) {
     }
     card.appendChild(info);
 
-    if (calc.active) {
+    if (calc.active && currentMonth < TANK_ROLLING_START_MONTH) {
       const row = document.createElement('div');
       row.className = 'row';
       const restInput = document.createElement('input');
