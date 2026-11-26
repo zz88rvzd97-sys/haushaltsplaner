@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.18
+/* * Haushaltsplaner Version 3.19
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -14,9 +14,9 @@
   const APP_FUTURE_YEAR_RANGE = 50;
   const TANK_REAL_DATA_START_MONTH = '2026-06';
   const CARRYOVER_START_MONTH = '2026-08';
-  const GROCERY_ROLLING_START_MONTH = '2026-11';
+  const GROCERY_ROLLING_START_MONTH = '2026-10';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.18';
+  const APP_VERSION = '3.19';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -14430,7 +14430,7 @@ function showPersonalEditor(personId, editPost) {
     expenseHeader.appendChild(addExpenseBtn);
     remainingCard.appendChild(expenseHeader);
     remainingCard.appendChild(createUiEl('p', 'small muted', rollingBalanceEnabled
-      ? 'Der Rest wird ab November in den Folgemonat übernommen: Vormonatsrest + tatsächlich eingezahlt − Einkäufe = verfügbar. Wenn der Topf nicht reicht, wird der Beitrag im nächsten Monat um volle 10-€-Schritte erhöht.'
+      ? 'Der Rest wird ab Oktober in den Folgemonat übernommen: Vormonatsrest + tatsächlich eingezahlt − Einkäufe = verfügbar. Wenn der Topf nicht reicht, wird der Beitrag im nächsten Monat um volle 10-€-Schritte erhöht.'
       : 'Erfasse hier jeden Einkauf. Der Betrag wird vom bereits eingezahlten Einkaufsgeld abgezogen; die Erfassung erzeugt keine zweite Kontobuchung.'));
     remainingCard.appendChild(createSummaryMetrics(rollingBalanceEnabled ? [
       { label: 'Rest Vormonat', value: euro(openingBalance), kind: openingBalance < 0 ? 'danger' : '' },
