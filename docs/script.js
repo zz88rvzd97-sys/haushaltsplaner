@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.22
+/* * Haushaltsplaner Version 3.23
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,7 +19,7 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.22';
+  const APP_VERSION = '3.23';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -21452,6 +21452,13 @@ function createPotsCard() {
     if (document.visibilityState === 'hidden') saveState();
   });
   window.addEventListener('pagehide', () => saveState());
+
+  const preciseCarrySyncKey = 'budgetPreciseCarrySync_v1';
+  if (!localStorage.getItem(preciseCarrySyncKey)) {
+    syncIncomeBasedSharedTopUps(currentMonth, 36);
+    localStorage.setItem(preciseCarrySyncKey, APP_VERSION);
+    saveState();
+  }
 
   updateSaveStatus();
   // Starte das Rendering
