@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.21
+/* * Haushaltsplaner Version 3.22
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,7 +19,7 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.21';
+  const APP_VERSION = '3.22';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -7884,7 +7884,7 @@
     const baseline = Math.max(0, Number(getBudgetTopUpConfig('groceries').targetAmount || 500));
     const projectedCount = Math.max(0, targetMonths - entries.length);
     const average = targetMonths ? (total + projectedCount * baseline) / targetMonths : baseline;
-    const roundedAverage = roundUpToNextFifty(average);
+    const roundedAverage = roundUpToNextTen(average);
     return { entries, total, count: entries.length, realCount: entries.length, projectedCount, baseline, average, roundedAverage };
   }
 
@@ -8043,15 +8043,15 @@
     const manualGroceryTarget = type === 'groceries' && getGroceryTargetOverride(monthKey) != null;
     const topUp = active
       ? (type === 'groceries'
-        ? (manualGroceryTarget ? roundMoney(target) : roundUpToNextFifty(target))
-        : (rollingFuel && paidFuel > 0 ? paidFuel : (rollingFuel && balance < -0.005 ? roundUpToNextTen(missing) : roundUpToNextFive(missing))))
+        ? roundMoney(target)
+        : (rollingFuel ? (paidFuel > 0 ? paidFuel : roundMoney(missing)) : roundUpToNextFive(missing)))
       : target;
     return { type, month: monthKey, active, target, balance, missing, topUp, source };
   }
 
   function getFuelTopUpAllocation(monthKey = currentMonth) {
     const calc = calculateBudgetTopUp('fuel', monthKey);
-    const allocations = splitRoundedToFive(calc.topUp, ensurePositiveAllocationWeights([
+    const allocations = splitExactAmount(calc.topUp, ensurePositiveAllocationWeights([
       { id: 'benny', weight: getIncomeWeightForPerson('benny', monthKey) },
       { id: 'madeleine', weight: getIncomeWeightForPerson('madeleine', monthKey) }
     ]));
@@ -8141,9 +8141,7 @@
   function getGroceryCatchUpAmount(monthKey) {
     if (!isMonthKey(monthKey) || monthKey <= GROCERY_ROLLING_START_MONTH) return 0;
     const balanceBefore = getGroceryRollingBalanceBefore(monthKey);
-    return balanceBefore < -0.005
-      ? roundMoney(Math.ceil((Math.abs(balanceBefore) - 0.0001) / 10) * 10)
-      : 0;
+    return roundMoney(-balanceBefore);
   }
 
   function syncFutureGroceryTopUps(startMonth) {
@@ -8159,13 +8157,13 @@
     const baseCalc = calculateBudgetTopUp('groceries', monthKey);
     const carryIn = getGroceryRollingBalanceBefore(monthKey);
     const catchUp = baseCalc.active ? getGroceryCatchUpAmount(monthKey) : 0;
-    const calc = { ...baseCalc, topUp: roundMoney(baseCalc.topUp + catchUp), carryIn, catchUp };
+    const calc = { ...baseCalc, topUp: roundMoney(Math.max(0, baseCalc.topUp + catchUp)), carryIn, catchUp };
     const posts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
     const weightedPosts = ensurePositiveAllocationWeights(posts.map((post) => ({
       id: post.id,
       weight: getIncomeWeightForPerson(post.personId, monthKey)
     })));
-    const allocations = splitRoundedToFive(calc.topUp, weightedPosts);
+    const allocations = splitExactAmount(calc.topUp, weightedPosts);
     return { ...calc, allocations };
   }
 
@@ -8301,7 +8299,7 @@
     const avgKm = basisMonths ? (totals.km + projectedCount * projectedUnit.km) / basisMonths : 0;
     const avgLiters = basisMonths ? (totals.liters + projectedCount * projectedUnit.liters) / basisMonths : 0;
     const realConsumption = totals.km > 0 ? (totals.liters / totals.km) * 100 : 0;
-    return { count: basisMonths, realCount, projectedCount, basisMonths, entries, totals, projectedUnit, projectedNetTotal, avgNet, avgKm, avgLiters, realConsumption, roundedBudget: roundUpToNextFive(avgNet) };
+    return { count: basisMonths, realCount, projectedCount, basisMonths, entries, totals, projectedUnit, projectedNetTotal, avgNet, avgKm, avgLiters, realConsumption, roundedBudget: roundUpToNextTen(avgNet) };
   }
 
   function getTankForecastShare(personKey, baseMonth = currentMonth) {
@@ -8332,7 +8330,7 @@
       return {
         priceUsed: householdStats.projectedUnit && householdStats.projectedUnit.priceUsed ? householdStats.projectedUnit.priceUsed : 0,
         raw,
-        rounded: roundUpToNextFive(raw),
+        rounded: roundMoney(raw),
         source: householdStats.projectedCount > 0
           ? `Gesamt-12-Monats-Schnitt nach Kilometeranteil (${householdStats.realCount} echt + ${householdStats.projectedCount} Prognose)`
           : 'Gesamt-12-Monats-Schnitt nach Kilometeranteil (12 echte Monate)',
@@ -8342,7 +8340,7 @@
       };
     }
     const manual = getTankManualForecastValue(cfg, 0);
-    return { priceUsed: manual.priceUsed, raw: manual.net, rounded: roundUpToNextFive(manual.net), source: 'Kilometer × Verbrauch × Preis', avgStats: { count: 0, realCount: 0, projectedCount: 12, basisMonths: 12, avgNet: manual.net }, share };
+    return { priceUsed: manual.priceUsed, raw: manual.net, rounded: roundMoney(manual.net), source: 'Kilometer × Verbrauch × Preis', avgStats: { count: 0, realCount: 0, projectedCount: 12, basisMonths: 12, avgNet: manual.net }, share };
   }
 
   function getTankCalcPersonKey(personIdOrName) {
@@ -14420,7 +14418,7 @@ function showPersonalEditor(personId, editPost) {
     const forecastCard = document.createElement('div');
     forecastCard.className = 'card tank-forecast-card';
     forecastCard.appendChild(createUiEl('h3', '', '1. Monatsprognose'));
-    forecastCard.appendChild(createUiEl('p', 'small muted', 'Ab November fließt der laufende 12-Monats-Schnitt aus echten Einkäufen und Prognosemonaten in das Ziel ein; Fehlbeträge aus dem Vormonat kommen als Puffer hinzu.'));
+    forecastCard.appendChild(createUiEl('p', 'small muted', 'Ab November fließt der laufende 12-Monats-Schnitt aus echten Einkäufen und Prognosemonaten in das Ziel ein. Nur das Monatsziel wird auf volle 10 € aufgerundet; Überträge werden centgenau verrechnet.'));
     forecastCard.appendChild(createSummaryMetrics([
       { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : calc.source },
       { label: 'Einzahlung geplant', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'Noch nicht aktiv'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' },
@@ -14470,7 +14468,7 @@ function showPersonalEditor(personId, editPost) {
     expenseHeader.appendChild(addExpenseBtn);
     remainingCard.appendChild(expenseHeader);
     remainingCard.appendChild(createUiEl('p', 'small muted', rollingBalanceEnabled
-      ? 'Der Rest wird ab Oktober in den Folgemonat übernommen: Vormonatsrest + tatsächlich eingezahlt − Einkäufe = verfügbar. Wenn der Topf nicht reicht, wird der Beitrag im nächsten Monat um volle 10-€-Schritte erhöht.'
+      ? 'Der Rest wird ab Oktober centgenau in den Folgemonat übernommen: Vormonatsrest + tatsächlich eingezahlt − Einkäufe = verfügbar. Das Monatsziel wird auf volle 10 € aufgerundet; der Übertrag verändert den Beitrag centgenau.'
       : 'Erfasse hier jeden Einkauf. Der Betrag wird vom bereits eingezahlten Einkaufsgeld abgezogen; die Erfassung erzeugt keine zweite Kontobuchung.'));
     remainingCard.appendChild(createSummaryMetrics(rollingBalanceEnabled ? [
       { label: 'Rest Vormonat', value: euro(openingBalance), kind: openingBalance < 0 ? 'danger' : '' },
@@ -14591,7 +14589,7 @@ function showPersonalEditor(personId, editPost) {
     if (calc.active) {
       info.innerHTML = manualTarget != null
         ? `<strong>Manuelle Monatsvorgabe:</strong> Für diesen Monat werden <strong>${euro(calc.topUp)}</strong> eingeplant.`
-        : `<strong>Festes Monatsziel:</strong> ${euro(calc.target)}; eingeplant werden <strong>${euro(calc.topUp)}</strong>. Übriges Geld kommt ins Sparglas.`;
+        : `<strong>Monatsziel:</strong> ${euro(calc.target)}; mit centgenauem Übertrag eingeplant werden <strong>${euro(calc.topUp)}</strong>. Ein Rest bleibt im Einkaufsgeldtopf.`;
     } else if (currentMonth === config.targetStartMonth) {
       info.innerHTML = `<strong>Startmonat:</strong> Für ${formatMonthLabel(currentMonth)} gilt das feste Monatsziel von <strong>${euro(calc.target)}</strong>.`;
     } else {
@@ -15772,7 +15770,7 @@ function showPersonalEditor(personId, editPost) {
     const card = document.createElement('div');
     card.className = 'card';
     card.appendChild(createUiEl('h3', '', '2. Bisher bezahlt'));
-    card.appendChild(createUiEl('p', 'small muted', 'Der Tanktopf läuft ab Oktober automatisch weiter: bezahlte Einzahlungen minus echte Tankbelege. Ein negativer Rest wird mitgenommen, ein Guthaben senkt den nächsten Bedarf.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Tanktopf läuft ab Oktober automatisch weiter. Nur das Monatsziel wird auf volle 10 € aufgerundet; Guthaben und Fehlbeträge aus dem Vormonat werden centgenau verrechnet.'));
 
     const calc = getFuelTopUpAllocation(currentMonth);
     const live = getFuelPoolLiveStatus(currentMonth);
