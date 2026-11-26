@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 5943)
-Total output lines: 273
+Warning: truncated output (original token count: 5985)
+Total output lines: 274
 
 <!--
   Haushaltsplaner Version 3.19
@@ -7,6 +7,7 @@ Total output lines: 273
 -->
 <!-- Aktualisierung Version&nbsp;3.09: Die Einkommensübersicht trennt den Betrag vor zusätzlicher Schuldentilgung, die zusätzliche Tilgung innerhalb des 800-€-Schuldenpools und den anschließend sicheren Rest. Die Monatsübersicht persönlicher Ausgaben zeigt bei nicht fälligen Quartalsposten keine irreführenden Monatsanteile mehr. -->
 <!-- Aktualisierung Version&nbsp;3.10: Die Monatsübersicht fasst geplante, bezahlte und offene Beträge je Bereich zusammen. Der Datencheck trennt aktuelle Abweichungen von zukünftigen Planhinweisen. Der Monatsabschluss zeigt nur Rest, Schuldenbudget und eine kurze Prüfliste; Rücklagen- und Sparverteilung wurden aus diesem Ablauf entfernt. -->
+<!-- Aktualisierung Version&nbsp;3.23: Die neuen centgenauen Überträge werden einmalig in die offenen Folgeposten übernommen; nur Monatsziele runden auf 10 €. -->
 <!-- Aktualisierung Version&nbsp;3.22: Tank- und Einkaufsgeld runden nur das Monatsziel auf 10 € auf; Überträge und Einzahlungen werden centgenau verrechnet und verteilt. -->
 <!-- Aktualisierung Version&nbsp;3.21: Tank- und Einkaufsgeld verwenden ab November den rollenden 12-Monats-Schnitt aus tatsächlichen Ausgaben und Prognosen; der Oktoberübertrag bleibt im Topf enthalten. -->
 <!-- Aktualisierung Version&nbsp;3.20: Tankgeld läuft ab Oktober mit den tatsächlichen Einzahlungen und Tankbelegen dynamisch weiter. Fehlbeträge werden vorgetragen, Guthaben mindert den nächsten Bedarf. -->
@@ -35,59 +36,7 @@ Total output lines: 273
   Zurücklegen bleibt bestehen. Frühere Monatsabschlüsse und Sicherungen bleiben
   erhalten.
   Aktualisierung Version&nbsp;2.89: Die Bereichsnavigation zeigt alle Ziele als
-  direkte, gruppierte Schaltflächen statt als native Auswahllisten.
-  Auf Desktop und Mobilgeräten sind die Bereiche schnell erkennbar und direkt
-  anwählbar.
-  Aktualisierung Version&nbsp;2.88: Monatsbeiträge sind klar von den im Monat
-  offenen Abbuchungen getrennt; Rücklagenzuordnungen zählen nicht als Abbuchung.
-  Die Übersicht zeigt nicht monatliche Kosten kompakt mit Monatsanteil und
-  Planzyklus. Tank- und Einkaufsgeld nennen das
-  persönliche Lohnkonto als Zahlungsquelle. Der beendete Rauchzeug-Bereich ist
-  aus der Navigation entfernt; frühere Einträge bleiben gespeichert.
-  Aktualisierung Version&nbsp;2.87: Das zusätzliche Schuldenbudget wird jetzt vor
-  jeder Rücklage oder Teil-Sonderzahlung vollständig darauf geprüft, ob sich
-  damit eine offene Schuld komplett erledigen lässt. Nach jeder Ablösung wird
-  diese Prüfung mit dem verbleibenden Monatsbudget wiederholt.
-  Aktualisierung Version&nbsp;2.86: Direkt vom Lohn einbehaltene persönliche
-  Zahlungen werden vor der Einkommensquote abgezogen. Gemeinschaftskosten,
-  Tankgeld und Einkaufsgeld richten sich damit nach dem tatsächlich ausgezahlten
-  Einkommen; im Haushaltsbudget bleibt der eingetragene Gesamtlohn vollständig
-  erhalten und der Lohnabzug wird weiterhin genau einmal als Ausgabe geführt.
-  Aktualisierung Version&nbsp;2.85: Im Tankbereich wird auch bei den realen
-  Kilometern der Einkommensanteil als Grundlage der Einzahlung angezeigt. Die
-  Kilometeranzeige bleibt ausschließlich für Fahrleistung und Verbrauch.
-  Aktualisierung Version&nbsp;2.84: Gemeinsame Tank- und Einkaufsgeld-Töpfe werden
-  jetzt wie die übrigen Gemeinschaftskosten nach dem Einkommen des jeweiligen
-  Monats verteilt. Gehaltsänderungen aktualisieren die offenen Einzahlungen für
-  den aktuellen Monat und die folgende Jahresplanung automatisch; persönliche
-  Ausgaben bleiben unverändert. Die Aufteilung der Gemeinschaftskosten wird
-  weiterhin auf 5-Euro-Schritte gerundet.
-  Aktualisierung Version&nbsp;2.83: Die Selbständigkeitsverwaltung ist aus dem
-  Haushaltsplaner entfernt. Alte Betriebsdaten bleiben in Sicherungen erhalten,
-  beeinflussen den privaten Haushalt ab Oktober 2026 aber nicht mehr. Bennys
-  Posten …1943 tokens truncated…brand-logo-image" src="icon-192.png?v=3.16" alt=""></div>
-          <div class="brand-copy">
-            <h1>Haushaltsplaner</h1>
-            <span>Benny &amp; Madeleine</span>
-          </div>
-        </div>
-        <div id="globalMonthBar" class="global-month-bar sidebar-month-widget" role="group" aria-label="Monatsauswahl"></div>
-        <button id="quickCaptureButton" class="quick-capture-action" type="button"><span aria-hidden="true">＋</span> Schnell erfassen</button>
-        <nav class="mobile-nav" aria-label="Bereiche">
-          <div class="mobile-nav-grid">
-            <div class="mobile-nav-group">
-              <div class="mobile-nav-heading">Täglich</div>
-              <button type="button" class="mobile-nav-link active" data-section="overview"><span class="nav-icon" aria-hidden="true">⌂</span><b>Übersicht</b></button>
-              <button type="button" class="mobile-nav-link" data-section="openpayments"><span class="nav-icon" aria-hidden="true">✓</span><b>Offene Zahlungen</b></button>
-              <button type="button" class="mobile-nav-link" data-section="common"><span class="nav-icon" aria-hidden="true">⇄</span><b>Gemeinsame Kosten</b></button>
-              <button type="button" class="mobile-nav-link" data-section="personal"><span class="nav-icon" aria-hidden="true">♙</span><b>Persönliche Ausgaben</b></button>
-              <button type="button" class="mobile-nav-link" data-section="debts"><span class="nav-icon" aria-hidden="true">€</span><b>Schulden</b></button>
-              <button type="button" class="mobile-nav-link" data-section="save"><span class="nav-icon" aria-hidden="true">↓</span><b>Sichern</b></button>
-            </div>
-            <div class="mobile-nav-group">
-              <div class="mobile-nav-heading">Weitere Bereiche</div>
-              <button type="button" class="mobile-nav-link" data-section="income"><span class="nav-icon" aria-hidden="true">↑</span><b>Einkommen</b></button>
-              <button type="button" class="mobile-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
+  direkte, gruppierte Schaltflächen statt als nativ…2985 tokens truncated…ton" class="mobile-nav-link" data-section="tankcalc"><span class="nav-icon" aria-hidden="true">⌁</span><b>Tankgeld</b></button>
               <button type="button" class="mobile-nav-link" data-section="groceries"><span class="nav-icon" aria-hidden="true">▤</span><b>Einkaufsgeld</b></button>
               <button type="button" class="mobile-nav-link" data-section="contracts"><span class="nav-icon" aria-hidden="true">⌑</span><b>Verträge</b></button>
               <button type="button" class="mobile-nav-link" data-section="buffer"><span class="nav-icon" aria-hidden="true">＋</span><b>Sonstige Ausgaben</b></button>
@@ -150,9 +99,9 @@ Total output lines: 273
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;3.22</footer>
+        <footer>Haushaltsplaner · Version&nbsp;3.23</footer>
       </div>
     </div>
-    <script src="script.js?v=3.23"></script>
+    <script src="script.js?v=3.24"></script>
   </body>
 </html>
