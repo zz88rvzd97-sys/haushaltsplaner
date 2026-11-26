@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.17
+/* * Haushaltsplaner Version 3.18
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,7 +16,7 @@
   const CARRYOVER_START_MONTH = '2026-08';
   const GROCERY_ROLLING_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.17';
+  const APP_VERSION = '3.18';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
