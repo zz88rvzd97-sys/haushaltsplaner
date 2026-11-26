@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.20
+/* * Haushaltsplaner Version 3.21
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -16,8 +16,10 @@
   const CARRYOVER_START_MONTH = '2026-08';
   const GROCERY_ROLLING_START_MONTH = '2026-10';
   const TANK_ROLLING_START_MONTH = '2026-10';
+  const TANK_AVERAGE_START_MONTH = '2026-11';
+  const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.20';
+  const APP_VERSION = '3.21';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -7871,21 +7873,28 @@
   }
 
   function getGroceryAverageStats(monthKey = currentMonth, maxMonths = 12) {
+    const targetMonths = Math.max(1, Number(maxMonths || 12));
     const priorMonth = addMonths(monthKey, -1);
+    const firstWindowMonth = addMonths(monthKey, -targetMonths);
+    const startMonth = firstWindowMonth > GROCERY_AVERAGE_START_MONTH ? firstWindowMonth : GROCERY_AVERAGE_START_MONTH;
     const entries = getGroceryMonthlyTotals()
-      .filter((row) => row.month <= priorMonth)
-      .slice(0, Math.max(1, Number(maxMonths || 12)));
+      .filter((row) => row.month >= startMonth && row.month <= priorMonth)
+      .slice(0, targetMonths);
     const total = entries.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    const count = entries.length;
-    const average = count ? total / count : 0;
-    const roundedAverage = count ? roundUpToNextFifty(average) : 0;
-    return { entries, total, count, average, roundedAverage };
+    const baseline = Math.max(0, Number(getBudgetTopUpConfig('groceries').targetAmount || 500));
+    const projectedCount = Math.max(0, targetMonths - entries.length);
+    const average = targetMonths ? (total + projectedCount * baseline) / targetMonths : baseline;
+    const roundedAverage = roundUpToNextFifty(average);
+    return { entries, total, count: entries.length, realCount: entries.length, projectedCount, baseline, average, roundedAverage };
   }
 
   function getFoodMoneyPlannedTarget(monthKey = currentMonth) {
     const cfg = getBudgetTopUpConfig('groceries');
     const manualTarget = getGroceryTargetOverride(monthKey);
     if (manualTarget != null) return manualTarget;
+    if (isMonthKey(monthKey) && monthKey >= GROCERY_AVERAGE_START_MONTH) {
+      return getGroceryAverageStats(monthKey, 12).roundedAverage;
+    }
     if (isMonthKey(monthKey) && cfg && isMonthKey(cfg.targetStartMonth) && monthDiff(cfg.targetStartMonth, monthKey) >= 0) {
       return Math.max(0, Number(cfg.targetAmount || 500));
     }
@@ -8014,13 +8023,16 @@
     if (type === 'fuel') {
       const stats = getTankHouseholdAverageStats(monthKey, 12);
       target = Number(stats && stats.roundedBudget || 0);
-      source = stats && stats.projectedCount > 0 ? `${stats.realCount} echt + ${stats.projectedCount} Prognose` : '12-Monats-Basis';
+      source = stats && stats.projectedCount > 0 ? `12-Monats-Schnitt · ${stats.realCount} echt + ${stats.projectedCount} Prognose` : '12-Monats-Schnitt';
     } else if (type === 'groceries') {
       target = getFoodMoneyPlannedTarget(monthKey);
       const manualTarget = getGroceryTargetOverride(monthKey);
+      const stats = getGroceryAverageStats(monthKey, 12);
       source = manualTarget != null
         ? `Manuelle Vorgabe für ${formatMonthLabel(monthKey)}`
-        : 'Festes Monatsziel';
+        : (monthKey >= GROCERY_AVERAGE_START_MONTH
+          ? `12-Monats-Schnitt · ${stats.realCount} echt + ${stats.projectedCount} Prognose`
+          : 'Festes Monatsziel');
     }
     const rollingFuel = type === 'fuel' && isMonthKey(monthKey) && monthKey >= TANK_ROLLING_START_MONTH;
     const balance = active && type !== 'groceries'
@@ -8250,8 +8262,17 @@
 
   function getTankHouseholdRealMonthlyRecords(baseMonth = currentMonth) {
     normalizeTankClosedMonths();
-    return state.tankCalc.closedMonths
-      .filter((month) => month < baseMonth)
+    const months = new Set(state.tankCalc.closedMonths
+      .filter((month) => month >= TANK_AVERAGE_START_MONTH && month < baseMonth));
+    getTankReceipts().forEach((receipt) => {
+      if (receipt.month >= TANK_AVERAGE_START_MONTH && receipt.month < baseMonth) months.add(receipt.month);
+    });
+    ['benny', 'madeleine'].forEach((personKey) => {
+      getTankMonthlyEntries(personKey).forEach((entry) => {
+        if (entry.month >= TANK_AVERAGE_START_MONTH && entry.month < baseMonth) months.add(entry.month);
+      });
+    });
+    return Array.from(months)
       .sort((a, b) => String(b).localeCompare(String(a)))
       .map((month) => getTankHouseholdMonthlyRecord(month))
       .filter((entry) => Number(entry.netCost || 0) > 0);
@@ -14015,6 +14036,7 @@ function showPersonalEditor(personId, editPost) {
       note
     });
     addChangeLog('Tankgeld', `Tankbeleg ${formatMonthLabel(receipt.month)} gespeichert · netto ${euro(receipt.netCost)}`, receipt.month);
+    syncAllTankgeldExpenses({ silent: true, monthKey: nextMonth(entryMonth) });
     saveState();
     return true;
   }
@@ -14394,13 +14416,13 @@ function showPersonalEditor(personId, editPost) {
     const availableTotal = roundMoney(openingBalance + paidTotal - spentTotal);
     const basisText = manualTarget != null
       ? `Manuell für ${formatMonthLabel(currentMonth)}`
-      : 'Festes Monatsziel';
+      : calc.source;
     const forecastCard = document.createElement('div');
     forecastCard.className = 'card tank-forecast-card';
     forecastCard.appendChild(createUiEl('h3', '', '1. Monatsprognose'));
-    forecastCard.appendChild(createUiEl('p', 'small muted', 'Festes Monatsziel und geplanter Anteil pro Lohnkonto.'));
+    forecastCard.appendChild(createUiEl('p', 'small muted', 'Ab November fließt der laufende 12-Monats-Schnitt aus echten Einkäufen und Prognosemonaten in das Ziel ein; Fehlbeträge aus dem Vormonat kommen als Puffer hinzu.'));
     forecastCard.appendChild(createSummaryMetrics([
-      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : 'fester Planwert' },
+      { label: 'Monatsziel', value: euro(calc.target), kind: calc.target > 0 ? 'success' : 'warning', hint: manualTarget != null ? 'manuell festgelegt' : calc.source },
       { label: 'Einzahlung geplant', value: calc.active ? euro(calc.topUp) : (currentMonth === config.targetStartMonth ? euro(calc.target) : 'Noch nicht aktiv'), kind: calc.active || currentMonth === config.targetStartMonth ? 'success' : 'warning' },
       { label: 'Berechnungsbasis', value: basisText }
     ]));
@@ -16014,7 +16036,7 @@ function showPersonalEditor(personId, editPost) {
     syncAllBtn.type = 'button';
     syncAllBtn.className = 'success';
     syncAllBtn.textContent = 'Tankgeld jetzt synchronisieren';
-    syncAllBtn.addEventListener('click', () => { syncAllTankgeldExpenses({ silent: false }); saveState(); render(); });
+    syncAllBtn.addEventListener('click', () => { syncAllTankgeldExpenses({ silent: false }); syncIncomeBasedSharedTopUps(nextMonth(currentMonth), 36); saveState(); render(); });
     tankSyncInfo.appendChild(document.createElement('br'));
     tankSyncInfo.appendChild(syncAllBtn);
     card.appendChild(tankSyncInfo);
@@ -16054,6 +16076,7 @@ function showPersonalEditor(personId, editPost) {
       kmInput.addEventListener('change', () => {
         cfg.kmPerMonth = Number(kmInput.value || 0);
         syncTankgeldExpense(personKey, { silent: true });
+        syncIncomeBasedSharedTopUps(nextMonth(currentMonth), 36);
         saveState();
         render();
       });
@@ -16115,6 +16138,7 @@ function showPersonalEditor(personId, editPost) {
       avgInput.addEventListener('change', () => {
         cfg.avgPrice = avgInput.value;
         syncTankgeldExpense(personKey, { silent: true });
+        syncIncomeBasedSharedTopUps(nextMonth(currentMonth), 36);
         saveState();
         render();
       });
