@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.26
+/* * Haushaltsplaner Version 3.27
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,7 +19,7 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.26';
+  const APP_VERSION = '3.27';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -16534,18 +16534,20 @@ function showPersonalEditor(personId, editPost) {
     const head = document.createElement('div');
     head.className = 'compact-section-head';
     head.appendChild(createUiEl('h3', '', `Schulden-Monatsassistent · ${formatMonthLabel(monthKey)}`));
-    const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
-    head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monat erledigt'));
+    const deferredAmount = getDebtBudgetDeferredAmountForMonth(monthKey, activePlan);
+    const openAmount = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0) - deferredAmount));
+    head.appendChild(createUiEl('span', openAmount > 0.005 ? 'pill warning' : 'pill success', openAmount > 0.005 ? `${euro(openAmount)} zu bearbeiten` : 'Monatsziel erledigt'));
     card.appendChild(head);
-    card.appendChild(createUiEl('p', 'small muted', 'Der Grundpool beträgt 800 €. Ab Januar 2027 kommt bei Benny Einkommen über 2.300 € als separates Sondertilgungsbudget hinzu. Erst prüft die App, ob eine geeignete Schuld vollständig ablösbar ist; wenn nicht, geht die zusätzliche Tilgung an Hoist Finance (Targobank). Vereinbarte Monatsraten bleiben unverändert.'));
+    card.appendChild(createUiEl('p', 'small muted', 'Der Grundpool beträgt 800 €. Als „Später“ markierte Sondertilgungen werden für diesen Monat freigegeben und nicht als offene Zahlung gezählt. Vereinbarte Standardraten bleiben eingeplant. Ab Januar 2027 kommt bei Benny Einkommen über 2.300 € als separates Sondertilgungsbudget hinzu.'));
     if (monthKey === snowballConfig.monthlyTargetStartMonth) {
       card.appendChild(createUiEl('div', 'notice info', 'Neustart des Schuldenplans: Geplante, aber nicht wirklich zurückgelegte Beträge aus September werden nicht übernommen. Ab Oktober zählt eine Schulden-Rücklage erst nach deiner Bestätigung „Zurückgelegt“.'));
     }
     const debtSavingsDeposit = roundMoney(Number(row.debtSavingsDeposit || 0));
-    const remainingThisMonth = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0)));
+    const remainingThisMonth = roundMoney(Math.max(0, Number(row.monthlyTarget || row.pool || 0) - Number(row.alreadyPaid || 0) - deferredAmount));
     const monthlyMetrics = [
       { label: 'Monatsziel', value: euro(row.monthlyTarget || row.pool || 0), kind: 'success' },
       { label: 'Bereits bezahlt', value: euro(row.alreadyPaid || 0), kind: Number(row.alreadyPaid || 0) > 0 ? 'success' : '' },
+      ...(deferredAmount > 0.005 ? [{ label: 'Für später freigegeben', value: euro(deferredAmount), kind: 'warning' }] : []),
       { label: 'Noch offen', value: euro(remainingThisMonth), kind: remainingThisMonth > 0.005 ? 'warning' : 'success' }
     ];
     if (monthKey >= snowballConfig.incomeLinkedExtraStartMonth && Number(row.monthlyTarget || 0) > 0) {
