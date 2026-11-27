@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.25
+/* * Haushaltsplaner Version 3.26
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,7 +19,7 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.25';
+  const APP_VERSION = '3.26';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -3249,8 +3249,9 @@
     const snowball = buildSnowballPlan(startMonth, horizon, { incomeResolver: options.incomeResolver });
     (snowball.rows || []).forEach((row) => {
       if (!map[row.month]) return;
+      const deferredAmount = getDebtBudgetDeferredAmountForMonth(row.month, snowball);
       const fixedPool = Number(row.monthlyTarget || 0) > 0
-        ? Number(row.pool || row.monthlyTarget || 0)
+        ? Math.max(0, Number(row.pool || row.monthlyTarget || 0) - deferredAmount)
         : Number(row.total || 0);
       const dayMoneyTransfer = Number(row.debtSavingsDeposit != null
         ? row.debtSavingsDeposit
@@ -3258,7 +3259,7 @@
           + (row.payoffReserve && !row.payoffReserve.canPayoff ? Number(row.payoffReserve.reserveAdded || 0) : 0)));
       map[row.month].planned += fixedPool;
       map[row.month].base += Number(row.base || 0);
-      map[row.month].snowballExtra += Number(row.extra || 0);
+      map[row.month].snowballExtra += Math.max(0, Number(row.extra || 0) - deferredAmount);
       map[row.month].dynamicExtra = (Number(map[row.month].dynamicExtra || 0) + Number(row.dynamicExtra || 0));
       map[row.month].dayMoneyTransfer += dayMoneyTransfer;
       map[row.month].creditorPayments += Math.max(0, fixedPool - dayMoneyTransfer);
@@ -3358,6 +3359,38 @@
       + getIncomeLinkedDebtExtraForMonth(monthKey, incomeResolver)));
   }
 
+  function getDebtBudgetDeferredAmountForMonth(monthKey, plan = null) {
+    if (!isMonthKey(monthKey)) return 0;
+    const activePlan = plan || buildSnowballPlan(monthKey, 1);
+    const row = getDebtPlanRowForMonth(activePlan, monthKey);
+    if (!row || !Array.isArray(row.payments)) return 0;
+    const grouped = new Map();
+    row.payments.forEach((payment) => {
+      const name = payment.debt || 'Schuld';
+      const debt = (state.debts || []).find((entry) => entry && entry.name === name) || null;
+      const key = debt && debt.id ? debt.id : name;
+      if (!grouped.has(key)) grouped.set(key, { debt, rate: 0, extra: 0, fullPayoff: 0 });
+      const item = grouped.get(key);
+      if (payment.type === 'rate') item.rate += Number(payment.amount || 0);
+      if (payment.type === 'snowball' || payment.type === 'budget_extra') item.extra += Number(payment.amount || 0);
+      if (payment.type === 'full_payoff') {
+        item.fullPayoff = Number(payment.amount || 0);
+        item.rate += Number(payment.rateAmount || 0);
+        item.extra += Number(payment.snowballAmount || 0);
+      }
+    });
+
+    let deferred = 0;
+    grouped.forEach((item) => {
+      if (!item.debt || !(item.extra > 0.005)) return;
+      const actionType = item.fullPayoff > 0 ? 'full_payoff' : 'planned_payment';
+      const actionAmount = item.fullPayoff > 0 ? item.fullPayoff : roundMoney(item.rate + item.extra);
+      const actionKey = getDebtAssistantActionKey(monthKey, item.debt.id, actionType, actionAmount);
+      if (getDebtAssistantActionStatus(actionKey) === 'later') deferred += item.extra;
+    });
+    return roundMoney(Math.max(0, deferred));
+  }
+
   function getDebtBudgetReservationForMonth(monthKey, options = {}) {
     const linkedDebtCosts = roundMoney(Math.max(0, getLinkedDebtCostTotalForMonth(monthKey)));
     const hasDebtActivity = (state.debts || []).some((debt) => Number(debt && debt.amountOpen || 0) > 0.005
@@ -3370,13 +3403,22 @@
     const requiredDebtPayments = monthlyTarget > 0
       ? roundMoney(Math.max(0, Number(getDebtPlanForMonth(monthKey).planned || 0)))
       : 0;
-    const reservedTotal = monthlyTarget > 0
+    const reservedBeforeDeferred = monthlyTarget > 0
       ? roundMoney(Math.max(monthlyTarget, linkedDebtCosts, requiredDebtPayments))
       : linkedDebtCosts;
+    const deferredAmount = Math.min(
+      Math.max(0, reservedBeforeDeferred - Math.max(linkedDebtCosts, requiredDebtPayments)),
+      getDebtBudgetDeferredAmountForMonth(monthKey)
+    );
+    const reservedTotal = roundMoney(Math.max(
+      Math.max(linkedDebtCosts, requiredDebtPayments),
+      reservedBeforeDeferred - deferredAmount
+    ));
     return {
       monthlyTarget,
       linkedDebtCosts,
       requiredDebtPayments,
+      deferredAmount,
       reservedTotal,
       additionalReservation: roundMoney(Math.max(0, reservedTotal - linkedDebtCosts))
     };
@@ -3913,9 +3955,10 @@
     const reservation = getDebtBudgetReservationForMonth(monthKey);
     const activePlan = plan || buildSnowballPlan(monthKey, 1);
     const row = getDebtPlanRowForMonth(activePlan, monthKey);
+    const deferredAmount = getDebtBudgetDeferredAmountForMonth(monthKey, activePlan);
     const reservedTotal = roundMoney(Math.max(
       Number(reservation.reservedTotal || 0),
-      row ? Number(row.pool || row.total || 0) : 0
+      row ? Math.max(0, Number(row.pool || row.total || 0) - deferredAmount) : 0
     ));
     const dayMoneyTransfer = roundMoney(row
       ? Number(row.debtSavingsDeposit || 0)
@@ -3923,6 +3966,7 @@
     return {
       ...reservation,
       reservedTotal,
+      deferredAmount,
       row,
       dayMoneyTransfer,
       creditorBudget: roundMoney(Math.max(0, reservedTotal - dayMoneyTransfer)),
@@ -11878,6 +11922,7 @@
       ...details,
       linkedDebtCosts,
       debtPlanned: Number(debtBudgetSummary.reservedTotal || debtPlan.planned || 0),
+      debtBudgetAdditionalReservation: Number(debtBudgetSummary.additionalReservation || 0),
       debtBase: Number(debtPlan.planned || 0),
       debtSnowballExtra: 0,
       debtDynamicExtra: 0,
