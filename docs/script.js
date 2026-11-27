@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.27
+/* * Haushaltsplaner Version 3.28
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -1016,7 +1016,8 @@
     monthlyTargetStartMonth: '2026-10',
     incomeLinkedExtraStartMonth: '2027-01',
     incomeLinkedExtraThreshold: 2300,
-    incomeLinkedExtraPersonName: 'Benny'
+    incomeLinkedExtraPersonName: 'Benny',
+    smallPayoffTopUpLimit: 20
   };
 
   function sanitizeStateTextValues(value, seen = new WeakSet()) {
@@ -1273,6 +1274,7 @@
         debtPlanLastRecalculatedDebtName: '',
         debtPlanLastImpact: null,
         debtAssistantActionStatus: {},
+        smallPayoffTopUpDecisions: {},
         debtSavingsLedger: []
       };
     }
@@ -1292,6 +1294,12 @@
     } else {
       state.appMeta.debtAssistantActionStatus = Object.fromEntries(Object.entries(state.appMeta.debtAssistantActionStatus)
         .filter(([key, value]) => typeof key === 'string' && (value === 'later' || value === 'done')));
+    }
+    if (!state.appMeta.smallPayoffTopUpDecisions || typeof state.appMeta.smallPayoffTopUpDecisions !== 'object' || Array.isArray(state.appMeta.smallPayoffTopUpDecisions)) {
+      state.appMeta.smallPayoffTopUpDecisions = {};
+    } else {
+      state.appMeta.smallPayoffTopUpDecisions = Object.fromEntries(Object.entries(state.appMeta.smallPayoffTopUpDecisions)
+        .filter(([key, value]) => typeof key === 'string' && ['approved', 'declined'].includes(value)));
     }
     if (!Array.isArray(state.appMeta.debtSavingsLedger)) state.appMeta.debtSavingsLedger = [];
     state.appMeta.debtSavingsLedger = state.appMeta.debtSavingsLedger
@@ -3590,6 +3598,7 @@
       let base = 0;
       let extra = 0;
       let budgetExtra = 0;
+      let smallPayoffTopUp = 0;
       let newlyFreed = 0;
       const notes = [];
       const payments = [];
@@ -3887,6 +3896,45 @@
         }
       }
 
+      // Ein kleiner freiwilliger Zusatzbetrag kann eine Schuld ablösen, für die
+      // bereits eine Sondertilgung geplant ist. Er liegt außerhalb des Monatspools;
+      // alle anderen geplanten Schuldzahlungen bleiben unverändert.
+      if (monthlyTarget > 0 && alreadyPaid <= 0.005) {
+        const approvedDebt = planDebts.find((debt) => debt.id
+          && getSmallPayoffTopUpDecision(month, debt.id) === 'approved');
+        if (approvedDebt && getFixedDebtBudgetCandidates([approvedDebt]).length) {
+          const targetPayments = payments.filter((payment) => payment.debt === approvedDebt.name);
+          const hasSpecialPayment = targetPayments.some((payment) => payment.type === 'budget_extra' || payment.type === 'snowball');
+          const alreadyFull = targetPayments.some((payment) => payment.type === 'full_payoff');
+          const topUp = roundMoney(Math.max(0, Number(approvedDebt.open || 0)));
+          if (hasSpecialPayment && !alreadyFull && topUp > 0.005 && topUp <= Number(snowballConfig.smallPayoffTopUpLimit || 20) + 0.005) {
+            const rateAmount = roundMoney(targetPayments.filter((payment) => payment.type === 'rate').reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+            const specialAmount = roundMoney(targetPayments.filter((payment) => payment.type === 'budget_extra' || payment.type === 'snowball').reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+            const payoffAmount = roundMoney(rateAmount + specialAmount + topUp);
+            for (let paymentIndex = payments.length - 1; paymentIndex >= 0; paymentIndex -= 1) {
+              if (payments[paymentIndex].debt === approvedDebt.name) payments.splice(paymentIndex, 1);
+            }
+            approvedDebt.open = 0;
+            newlyFreed += Number(approvedDebt.rate || 0);
+            smallPayoffTopUp = topUp;
+            payments.push({
+              type: 'full_payoff',
+              debt: approvedDebt.name,
+              amount: payoffAmount,
+              budgetAmount: roundMoney(rateAmount + specialAmount),
+              rateAmount,
+              snowballAmount: specialAmount,
+              topUpAmount: topUp,
+              originalRate: approvedDebt.rate,
+              remainingAfter: 0,
+              completed: true,
+              note: `${euro(topUp)} zusätzlich außerhalb des Schuldenbudgets`
+            });
+            notes.push(`${approvedDebt.name}: mit ${euro(topUp)} zusätzlichem Betrag vollständig ablösen`);
+          }
+        }
+      }
+
       const dedicatedDeposit = payoffReserve && !payoffReserve.canPayoff
         ? Number(payoffReserve.reserveAdded || 0)
         : 0;
@@ -3918,6 +3966,7 @@
         base: roundMoney(base),
         extra: roundMoney(extra),
         budgetExtra: roundMoney(budgetExtra),
+        smallPayoffTopUp,
         dynamicExtra: incomeLinkedExtra,
         incomeLinkedExtra,
         fixedMonthlyTarget: monthlyTarget > 0 ? roundMoney(Math.max(0, monthlyTarget - incomeLinkedExtra)) : 0,
@@ -16451,6 +16500,42 @@ function showPersonalEditor(personId, editPost) {
     else delete state.appMeta.debtAssistantActionStatus[actionKey];
   }
 
+  function getSmallPayoffTopUpDecisionKey(monthKey, debtId) {
+    return `${monthKey}|${debtId}`;
+  }
+
+  function getSmallPayoffTopUpDecision(monthKey, debtId) {
+    normalizeAppMeta();
+    return state.appMeta.smallPayoffTopUpDecisions[getSmallPayoffTopUpDecisionKey(monthKey, debtId)] || '';
+  }
+
+  function setSmallPayoffTopUpDecision(monthKey, debtId, decision) {
+    normalizeAppMeta();
+    const key = getSmallPayoffTopUpDecisionKey(monthKey, debtId);
+    if (decision === 'approved' || decision === 'declined') state.appMeta.smallPayoffTopUpDecisions[key] = decision;
+    else delete state.appMeta.smallPayoffTopUpDecisions[key];
+  }
+
+  function getSmallPayoffTopUpSuggestion(row, monthKey) {
+    if (!row || !isMonthKey(monthKey) || Number(row.alreadyPaid || 0) > 0.005) return null;
+    const candidates = [];
+    (state.debts || []).forEach((debt) => {
+      if (!debt || !debt.id || !getFixedDebtBudgetCandidates([debt]).length) return;
+      if (getSmallPayoffTopUpDecision(monthKey, debt.id)) return;
+      const debtPayments = (row.payments || []).filter((payment) => payment.debt === debt.name);
+      if (debtPayments.some((payment) => payment.type === 'full_payoff')) return;
+      const plannedExtra = debtPayments
+        .filter((payment) => payment.type === 'budget_extra' || payment.type === 'snowball')
+        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      if (plannedExtra <= 0.005) return;
+      const plannedForDebt = debtPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      const remaining = roundMoney(Math.max(0, Number(debt.amountOpen || 0) - plannedForDebt));
+      if (remaining <= 0.005 || remaining > Number(snowballConfig.smallPayoffTopUpLimit || 20) + 0.005) return;
+      candidates.push({ debt, amount: remaining, plannedExtra });
+    });
+    return candidates.sort((a, b) => a.amount - b.amount || a.debt.name.localeCompare(b.debt.name, 'de'))[0] || null;
+  }
+
   function getRecordedDebtSavingsReserveBeforeMonth(monthKey) {
     normalizeAppMeta();
     if (!isMonthKey(monthKey)) return 0;
@@ -16560,6 +16645,9 @@ function showPersonalEditor(personId, editPost) {
     if (debtSavingsDeposit > 0.005) {
       monthlyMetrics.push({ label: 'Davon zurücklegen', value: euro(debtSavingsDeposit), kind: 'warning', hint: 'Bleibt für Schulden gebunden.' });
     }
+    if (Number(row.smallPayoffTopUp || 0) > 0.005) {
+      monthlyMetrics.push({ label: 'Zusatz zur Ablösung', value: euro(row.smallPayoffTopUp), kind: 'success', hint: 'Freiwilliger Betrag außerhalb des Schuldenbudgets.' });
+    }
     card.appendChild(createSummaryMetrics(monthlyMetrics));
 
     const grouped = new Map();
@@ -16567,7 +16655,7 @@ function showPersonalEditor(personId, editPost) {
       const name = payment.debt || 'Schuld';
       const debt = (state.debts || []).find((entry) => entry && entry.name === name) || null;
       const key = debt && debt.id ? debt.id : name;
-      if (!grouped.has(key)) grouped.set(key, { debt, name, rate: 0, extra: 0, fullPayoff: 0, notes: [] });
+      if (!grouped.has(key)) grouped.set(key, { debt, name, rate: 0, extra: 0, fullPayoff: 0, topUp: 0, notes: [] });
       const item = grouped.get(key);
       if (payment.type === 'rate') item.rate += Number(payment.amount || 0);
       if (payment.type === 'snowball' || payment.type === 'budget_extra') item.extra += Number(payment.amount || 0);
@@ -16575,6 +16663,7 @@ function showPersonalEditor(personId, editPost) {
         item.fullPayoff = Number(payment.amount || 0);
         item.rate += Number(payment.rateAmount || 0);
         item.extra += Number(payment.snowballAmount || 0);
+        item.topUp += Number(payment.topUpAmount || 0);
       }
       if (payment.note) item.notes.push(payment.note);
     });
@@ -16583,7 +16672,7 @@ function showPersonalEditor(personId, editPost) {
       ensureDebtConfig(debt);
       if (debt.paymentType !== 'one_time' || Number(debt.amountOpen || 0) <= 0 || debt.nextDueMonth !== monthKey) return;
       if (Array.from(grouped.values()).some((item) => item.debt && item.debt.id === debt.id)) return;
-      grouped.set(debt.id, { debt, name: debt.name || 'Einmalzahlung', rate: Number(debt.amountOpen || 0), extra: 0, fullPayoff: 0, notes: ['einmalig fällig'] });
+      grouped.set(debt.id, { debt, name: debt.name || 'Einmalzahlung', rate: Number(debt.amountOpen || 0), extra: 0, fullPayoff: 0, topUp: 0, notes: ['einmalig fällig'] });
     });
 
     const list = document.createElement('div');
@@ -16606,6 +16695,7 @@ function showPersonalEditor(personId, editPost) {
         if (item.rate > 0) parts.push(`Rate ${euro(item.rate)}`);
         if (item.extra > 0) parts.push(`zusätzlich ${euro(item.extra)}`);
       }
+      if (item.topUp > 0.005) parts.push(`${euro(item.topUp)} freiwilliger Zusatz außerhalb des Schuldenbudgets`);
       if (isDebtRatePendingForMonth(item.debt, monthKey)) parts.push('beantragt – noch nicht bewilligt');
       if (item.notes.length) parts.push(item.notes[0]);
       info.appendChild(createUiEl('small', 'muted', parts.join(' · ')));
@@ -16632,7 +16722,9 @@ function showPersonalEditor(personId, editPost) {
             month: monthKey,
             amount: total,
             mode: 'extra',
-            note: 'Gesamtzahlung aus dem Schulden-Monatsassistenten',
+            note: item.topUp > 0.005
+              ? `Gesamtzahlung aus dem Monatsassistenten · ${euro(item.topUp)} freiwillig zusätzlich`
+              : 'Gesamtzahlung aus dem Schulden-Monatsassistenten',
             debtReserveWithdrawalAmount: item.debt.id === row.generalDebtSavingsWithdrawalDebtId
               ? Number(row.generalDebtSavingsWithdrawal || 0)
               : 0,
@@ -16666,6 +16758,38 @@ function showPersonalEditor(personId, editPost) {
       actionRow.appendChild(actions);
       list.appendChild(actionRow);
     });
+
+    const topUpSuggestion = getSmallPayoffTopUpSuggestion(row, monthKey);
+    if (topUpSuggestion) {
+      const prompt = document.createElement('div');
+      prompt.className = 'notice info';
+      prompt.appendChild(createUiEl('strong', '', 'Knapp an der Ablösung'));
+      prompt.appendChild(createUiEl('p', 'small', `Die geplante Sondertilgung lässt bei ${topUpSuggestion.debt.name} noch ${euro(topUpSuggestion.amount)} offen. Möchtest du diesen Betrag zusätzlich einsetzen und die Schuld vollständig ablösen? Die anderen geplanten Schuldzahlungen bleiben unverändert.`));
+      const actions = document.createElement('div');
+      actions.className = 'row';
+      const approveBtn = document.createElement('button');
+      approveBtn.type = 'button';
+      approveBtn.className = 'success';
+      approveBtn.textContent = `${euro(topUpSuggestion.amount)} zusätzlich einplanen`;
+      approveBtn.addEventListener('click', () => {
+        setSmallPayoffTopUpDecision(monthKey, topUpSuggestion.debt.id, 'approved');
+        saveState();
+        render();
+      });
+      const declineBtn = document.createElement('button');
+      declineBtn.type = 'button';
+      declineBtn.className = 'secondary';
+      declineBtn.textContent = 'Diesen Monat nicht';
+      declineBtn.addEventListener('click', () => {
+        setSmallPayoffTopUpDecision(monthKey, topUpSuggestion.debt.id, 'declined');
+        saveState();
+        render();
+      });
+      actions.appendChild(approveBtn);
+      actions.appendChild(declineBtn);
+      prompt.appendChild(actions);
+      list.appendChild(prompt);
+    }
 
     if (row.payoffReserve && !row.payoffReserve.canPayoff && Number(row.payoffReserve.reserveAdded || 0) > 0) {
       const reserve = row.payoffReserve;
