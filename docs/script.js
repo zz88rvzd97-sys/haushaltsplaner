@@ -11081,9 +11081,717 @@
 
     appendSafe(page, () => renderTodoCard(currentMonth), 'Heute / diesen Monat offen');
 
-    appendSafe(page, () => renderOpenPaymentsOve
-... 38034 bytes omitted ...
-lanceBtn.addEventListener('click', () => {
+    appendSafe(page, () => renderOpenPaymentsOverviewCard(currentMonth, { compact: true }), 'Offene Zahlungen');
+
+    appendSafe(page, () => { const taxPotOverview = renderTaxRefundPotCard(); if (taxPotOverview && taxPotOverview.classList) taxPotOverview.classList.add('overview-tax-pot-card'); return taxPotOverview; }, 'Steuererstattungs-Topf');
+
+    appendSafe(page, () => renderMonthCompareCard(currentMonth), 'Monatsvergleich');
+
+    const incomeLinkCard = div('card compact-card overview-income-link-card');
+    const incomeLinkTitle = document.createElement('h3');
+    incomeLinkTitle.textContent = 'Einkommen & Aufteilung';
+    incomeLinkCard.appendChild(incomeLinkTitle);
+    const incomeLinkText = document.createElement('p');
+    incomeLinkText.className = 'small muted';
+    incomeLinkText.textContent = 'Die detaillierte Aufteilung nach Personen findest du jetzt im Bereich Einkommen. Die Übersicht bleibt dadurch bewusst schlank.';
+    incomeLinkCard.appendChild(incomeLinkText);
+    const incomeLinkBtn = document.createElement('button');
+    incomeLinkBtn.type = 'button';
+    incomeLinkBtn.className = 'secondary compact';
+    incomeLinkBtn.textContent = 'Zum Einkommen';
+    incomeLinkBtn.addEventListener('click', () => {
+      currentSection = 'income';
+      render();
+    });
+    incomeLinkCard.appendChild(incomeLinkBtn);
+    page.appendChild(incomeLinkCard);
+
+    const insight = div('dashboard-insight');
+    insight.appendChild(makeIcon('▥', 'insight'));
+    const insightText = div('dashboard-insight-text');
+    const insightTitle = document.createElement('strong');
+    insightTitle.textContent = totalAvail >= 0 ? 'Gut geplant!' : 'Achtung, prüfen!';
+    const insightSub = document.createElement('span');
+    insightSub.textContent = totalAvail >= 0 ? 'Dein Haushalt ist im Gleichgewicht. Weiter so!' : 'Der aktuelle Monat ist rechnerisch im Minus.';
+    insightText.appendChild(insightTitle);
+    insightText.appendChild(insightSub);
+    insight.appendChild(insightText);
+    const insightBtn = document.createElement('button');
+    insightBtn.type = 'button';
+    insightBtn.className = 'secondary compact';
+    insightBtn.textContent = 'Details ansehen';
+    insightBtn.addEventListener('click', () => {
+      currentSection = 'savings';
+      render();
+    });
+    insight.appendChild(insightBtn);
+    page.appendChild(insight);
+
+    overviewSection.appendChild(page);
+    const compactGrid = div('overview-compact-grid');
+    appendSafe(compactGrid, () => renderOverviewDataCheckSummaryCard(), 'Datencheck');
+    appendSafe(compactGrid, () => renderWarningsCard(currentMonth), 'Warnungen');
+    overviewSection.appendChild(compactGrid);
+
+    const logDetails = document.createElement('details');
+    logDetails.className = 'compact-details';
+    const logSummary = document.createElement('summary');
+    logSummary.textContent = 'Änderungsprotokoll anzeigen';
+    logDetails.appendChild(logSummary);
+    appendSafe(logDetails, () => renderChangeLogCard(5), 'Änderungsprotokoll');
+    overviewSection.appendChild(logDetails);
+  }
+
+  function renderOverview() {
+    overviewSection.innerHTML = '';
+
+    const details = computeMonthDetails(currentMonth);
+    const commonAccountTarget = getCommonAccountTargetSummary(currentMonth);
+    const page = createUiEl('div', 'dashboard-page simplified-dashboard');
+
+    const appendSafe = (parent, builder, label) => {
+      try {
+        const node = typeof builder === 'function' ? builder() : builder;
+        if (node) parent.appendChild(node);
+        return node;
+      } catch (err) {
+        recordRuntimeIssue('Übersicht', `${label || 'Block'} konnte nicht geladen werden`, err);
+        const fallback = createUiEl('div', 'card compact-card notice warning');
+        fallback.appendChild(createUiEl('strong', '', `${label || 'Block'} konnte nicht geladen werden.`));
+        fallback.appendChild(createUiEl('p', 'small muted', 'Die übrige Übersicht bleibt nutzbar.'));
+        parent.appendChild(fallback);
+        return fallback;
+      }
+    };
+
+    const header = createUiEl('div', 'dashboard-header simplified-dashboard-header');
+    const titleWrap = createUiEl('div', 'dashboard-title-wrap');
+    titleWrap.appendChild(createUiEl('h2', '', 'Übersicht'));
+    titleWrap.appendChild(createUiEl('p', '', `${formatMonthLabel(currentMonth)} · nur das, was jetzt wichtig ist`));
+    header.appendChild(titleWrap);
+    page.appendChild(header);
+
+    appendSafe(page, () => renderRuntimeIssueNotice(), 'Fehlerwächter');
+
+    const kpiGrid = createUiEl('div', 'dash-kpi-grid simplified-kpi-grid');
+    const addKpi = ({ label, value, hint, icon, kind = '' }) => {
+      const card = createUiEl('div', `dash-kpi simplified-kpi ${kind}`.trim());
+      const top = createUiEl('div', 'dash-kpi-top');
+      top.appendChild(createUiEl('div', 'modern-icon', icon));
+      top.appendChild(createUiEl('div', 'dash-kpi-label', label));
+      card.appendChild(top);
+      card.appendChild(createUiEl('div', 'dash-kpi-value', value));
+      card.appendChild(createUiEl('div', 'dash-kpi-hint', hint));
+      kpiGrid.appendChild(card);
+    };
+
+    addKpi({
+      label: 'Offene gemeinsame Abbuchungen',
+      value: euro(commonAccountTarget.openTotal),
+      hint: `Diesen Monat fällig ${euro(commonAccountTarget.dueTotal)} · bereits bezahlt ${euro(commonAccountTarget.paidTotal)}`,
+      icon: 'G',
+      kind: commonAccountTarget.openTotal > 0 ? 'blue' : 'mint'
+    });
+    const businessAdjustment = Number(details.businessBudgetAdjustment || 0);
+    const overviewFreeHints = [];
+    if (details.miscOpen > 0) overviewFreeHints.push(`${euro(details.miscOpen)} offene sonstige Ausgaben sind bereits abgezogen`);
+    else overviewFreeHints.push('Nach allen geplanten Kosten dieses Monats');
+    if (details.businessBudgetHasActivity) {
+      overviewFreeHints.push(`Selbstständigkeit ${businessAdjustment > 0 ? '+' : businessAdjustment < 0 ? '−' : ''}${euro(Math.abs(businessAdjustment))} enthalten`);
+    }
+    addKpi({
+      label: 'Insgesamt verfügbar',
+      value: euro(details.free),
+      hint: overviewFreeHints.join(' · '),
+      icon: details.free >= 0 ? '€' : '!',
+      kind: details.free >= 0 ? 'mint' : 'danger'
+    });
+    const carryoverStatus = getCarryoverStatusForMonth(currentMonth);
+    if (carryoverStatus.active) {
+      const carryoverNotice = createUiEl(
+        'div',
+        `notice ${carryoverStatus.isStart || carryoverStatus.closed ? 'success' : 'warning'} month-carryover-notice`
+      );
+      const carryoverCopy = createUiEl('span');
+      if (carryoverStatus.isStart) {
+        carryoverCopy.innerHTML = '<strong>Neustart ab August:</strong> Dieser Monat beginnt ohne alten Übertrag. Der Rest aus August wird beim Monatsabschluss automatisch nach September übernommen.';
+      } else if (carryoverStatus.closed) {
+        carryoverCopy.innerHTML = `<strong>${euro(carryoverStatus.amount)} aus ${formatMonthLabel(carryoverStatus.previousMonth)} übernommen.</strong> Der Betrag ist bereits in „Insgesamt verfügbar“ enthalten.`;
+      } else {
+        carryoverCopy.innerHTML = `<strong>Noch kein Übertrag aus ${formatMonthLabel(carryoverStatus.previousMonth)}.</strong> Sobald der Vormonat abgeschlossen ist, erscheint dessen Rest hier automatisch.`;
+      }
+      carryoverNotice.appendChild(carryoverCopy);
+      if (!carryoverStatus.isStart && !carryoverStatus.closed) {
+        const closePreviousButton = document.createElement('button');
+        closePreviousButton.type = 'button';
+        closePreviousButton.className = 'secondary compact';
+        closePreviousButton.textContent = 'Vormonat abschließen';
+        closePreviousButton.addEventListener('click', () => {
+          setCurrentMonth(carryoverStatus.previousMonth);
+          currentSection = 'monthclose';
+          render();
+        });
+        carryoverNotice.appendChild(closePreviousButton);
+      }
+      page.appendChild(carryoverNotice);
+    }
+
+    const tasks = getMonthStartChecklist(currentMonth)
+      .filter((item) => !item.done)
+      .sort((a, b) => {
+        const rank = { danger: 0, warning: 1, info: 2, success: 3 };
+        return (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9);
+      });
+    const focusCard = createUiEl('div', 'card overview-focus-card');
+    const focusHead = createUiEl('div', 'compact-section-head');
+    focusHead.appendChild(createUiEl('h3', '', 'Monatsstand'));
+    focusHead.appendChild(createUiEl(
+      'span',
+      tasks.length ? 'pill warning' : 'pill success',
+      tasks.length ? `${tasks.length} offen` : 'alles vorbereitet'
+    ));
+    focusCard.appendChild(focusHead);
+    focusCard.appendChild(createUiEl(
+      'p',
+      'small muted',
+      'Kurzer Blick auf Gehalt, Zahlungen und Abschlussstatus.'
+    ));
+    const monthOpenPayments = collectOpenPaymentsForMonth(currentMonth);
+    const incomeReceived = (state.persons || []).filter((person) => isPersonIncomeReceived(person, currentMonth)).length;
+    const incomeIsFuture = currentMonth > dateToMonthKey(new Date());
+    const monthClosed = isMonthClosed(currentMonth);
+    focusCard.appendChild(createSummaryMetrics([
+      { label: 'Geldeingänge', value: incomeIsFuture ? `${(state.persons || []).length} Planwerte` : `${incomeReceived}/${(state.persons || []).length}`, hint: incomeIsFuture ? 'Ist-Auszahlungen noch nicht fällig' : 'tatsächliche Eingänge erfasst', kind: incomeIsFuture ? '' : (incomeReceived === (state.persons || []).length ? 'success' : 'warning') },
+      { label: 'Zahlungen noch offen', value: `${monthOpenPayments.rows.length} · ${euro(monthOpenPayments.totalOpen)}`, hint: currentMonth > dateToMonthKey(new Date()) ? 'für den Planmonat vorgemerkt' : (currentMonth === dateToMonthKey(new Date()) ? 'im Monatsverlauf; Abbuchungstage sind nicht hinterlegt' : 'Vorperiode: Zahlungsstatus prüfen'), kind: currentMonth < dateToMonthKey(new Date()) && monthOpenPayments.rows.length ? 'warning' : '' },
+      { label: 'Monatsstatus', value: monthClosed ? 'Abgeschlossen' : 'Vorläufig', hint: monthClosed ? 'Beleg gespeichert' : 'Bleibt offen, bis du abschließt', kind: monthClosed ? 'success' : 'warning' }
+    ]));
+    const paymentReviewButton = document.createElement('button');
+    paymentReviewButton.type = 'button';
+    paymentReviewButton.className = 'secondary compact';
+    paymentReviewButton.textContent = 'Zahlungen ansehen';
+    paymentReviewButton.addEventListener('click', () => switchSection('openpayments'));
+    focusCard.appendChild(paymentReviewButton);
+
+    if (!tasks.length) {
+      focusCard.appendChild(createUiEl('div', 'empty-state success', 'Für diesen Monat ist nichts Weiteres offen.'));
+    } else {
+      const taskList = createUiEl('div', 'todo-list overview-focus-list');
+      const taskGroups = [
+        { title: 'Geldeingänge', matches: (item) => item.area === 'Einkommen' || item.area === 'Gemeinsame Kosten' },
+        { title: 'Zahlungen', matches: (item) => item.area === 'Offene Zahlungen' },
+        { title: 'Prüfungen', matches: (item) => item.area !== 'Einkommen' && item.area !== 'Gemeinsame Kosten' && item.area !== 'Offene Zahlungen' }
+      ];
+      taskGroups.forEach((group) => {
+        const groupItems = tasks.filter(group.matches);
+        if (!groupItems.length) return;
+        taskList.appendChild(createUiEl('div', 'overview-focus-group', `${group.title} · ${groupItems.length}`));
+        groupItems.forEach((item) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = `todo-row ${item.kind || ''}`.trim();
+          const copy = document.createElement('span');
+          copy.appendChild(createUiEl('strong', '', item.title));
+          copy.appendChild(createUiEl('small', '', item.detail));
+          row.appendChild(copy);
+          row.appendChild(createUiEl('b', '', item.actionLabel || 'Öffnen'));
+          row.addEventListener('click', () => switchSection(item.section || 'overview'));
+          taskList.appendChild(row);
+        });
+      });
+      focusCard.appendChild(taskList);
+    }
+    page.appendChild(focusCard);
+    page.appendChild(kpiGrid);
+    appendSafe(page, () => renderTrackedBudgetBalances(currentMonth), 'Restbeträge Tank- und Einkaufsgeld');
+    appendSafe(page, () => renderMonthMoneyMap(currentMonth), 'Monatszahlen');
+
+    const more = document.createElement('details');
+    more.className = 'compact-details overview-more-details';
+    const moreSummary = document.createElement('summary');
+    moreSummary.textContent = 'Weitere Auswertungen anzeigen';
+    more.appendChild(moreSummary);
+    const moreContent = createUiEl('div', 'overview-more-content');
+
+    const financeStatus = getFinanceStatus(details.free);
+    const criticalMonths = findCriticalMonths(currentMonth);
+    const financeCard = createUiEl('div', 'card compact-card finance-guard-card');
+    financeCard.appendChild(createUiEl('h3', '', 'Finanz-Ampel'));
+    const financeChips = createUiEl('div', 'status-chip-list');
+    financeChips.appendChild(createUiEl('span', `pill ${financeStatus.kind}`, `${formatMonthLabel(currentMonth)}: ${financeStatus.label}`));
+    financeChips.appendChild(createUiEl('span', 'pill', financeStatus.text));
+    if (criticalMonths.length) {
+      criticalMonths.forEach((item) => {
+        financeChips.appendChild(createUiEl('span', 'pill danger', `${item.label}: ${euro(item.free)}`));
+      });
+    } else {
+      financeChips.appendChild(createUiEl('span', 'pill success', 'Keine negativen Monate in der 12-Monats-Vorschau'));
+    }
+    financeCard.appendChild(financeChips);
+    moreContent.appendChild(financeCard);
+
+    appendSafe(moreContent, () => renderOpenPaymentsOverviewCard(currentMonth, { compact: true }), 'Offene Zahlungen');
+    appendSafe(moreContent, () => renderMonthCompareCard(currentMonth), 'Monatsvergleich');
+    const statusGrid = createUiEl('div', 'overview-compact-grid');
+    appendSafe(statusGrid, () => renderOverviewDataCheckSummaryCard(), 'Datencheck');
+    appendSafe(statusGrid, () => renderWarningsCard(currentMonth), 'Warnungen');
+    moreContent.appendChild(statusGrid);
+
+    const logDetails = document.createElement('details');
+    logDetails.className = 'compact-details';
+    const logSummary = document.createElement('summary');
+    logSummary.textContent = 'Änderungsprotokoll anzeigen';
+    logDetails.appendChild(logSummary);
+    appendSafe(logDetails, () => renderChangeLogCard(5), 'Änderungsprotokoll');
+    moreContent.appendChild(logDetails);
+
+    more.appendChild(moreContent);
+    page.appendChild(more);
+
+    overviewSection.appendChild(page);
+  }
+
+  function renderTrackedBudgetBalances(monthKey) {
+    const card = createUiEl('div', 'card overview-budget-balance-card');
+    card.appendChild(createUiEl('h3', '', 'Tank- und Einkaufsgeld'));
+    card.appendChild(createUiEl('p', 'small muted', `${formatMonthLabel(monthKey)} · eingezahlt, ausgegeben und noch verfügbar`));
+
+    const fuel = getFuelPoolLiveStatus(monthKey);
+    const groceryPlan = getGroceryTopUpAllocation(monthKey);
+    const groceryPosts = getFoodMoneyPosts().filter((post) => isPostActiveInMonth(post, monthKey));
+    const groceryPaid = roundMoney(groceryPosts.reduce((sum, post) => {
+      if (!isPostPaidForMonth(post, monthKey)) return sum;
+      return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+    }, 0));
+    const groceryExpenses = getGroceryExpenses().filter((expense) => expense.month === monthKey);
+    const grocerySpent = roundMoney(groceryExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+    const groceryAvailable = roundMoney(groceryPaid - grocerySpent);
+    const fuelAvailable = roundMoney(fuel.shortage > 0 ? -fuel.shortage : fuel.currentBalance);
+    const totalAvailable = roundMoney(fuelAvailable + groceryAvailable);
+
+    const metrics = createSummaryMetrics([
+      {
+        label: 'Tankgeld eingezahlt',
+        value: euro(fuel.funded),
+        hint: fuel.openingBalance > 0 ? `${euro(fuel.openingBalance)} Übertrag + ${euro(fuel.paidTopUp)} bezahlt` : 'bezahlte Einzahlungen',
+        kind: fuel.funded > 0 ? 'success' : 'warning'
+      },
+      { label: 'Getankt', value: euro(fuel.spent), hint: `${fuel.receipts.receiptCount} Tankbelege erfasst` },
+      {
+        label: fuel.shortage > 0 ? 'Tankgeld fehlt' : 'Tankgeld verfügbar',
+        value: euro(Math.abs(fuelAvailable)),
+        hint: fuel.shortage > 0 ? 'Ausgaben übersteigen den Topf' : 'im gemeinsamen Tanktopf',
+        kind: fuel.shortage > 0 ? 'danger' : 'success'
+      },
+      {
+        label: 'Einkaufsgeld eingezahlt',
+        value: euro(groceryPaid),
+        hint: groceryPlan.active ? `${euro(groceryPlan.topUp)} geplant` : 'Monatsziel noch nicht aktiv',
+        kind: groceryPaid > 0 ? 'success' : 'warning'
+      },
+      { label: 'Eingekauft', value: euro(grocerySpent), hint: `${groceryExpenses.length} Einkäufe erfasst` },
+      {
+        label: groceryAvailable < 0 ? 'Einkaufsgeld fehlt' : 'Einkaufsgeld verfügbar',
+        value: euro(Math.abs(groceryAvailable)),
+        hint: groceryAvailable < 0 ? 'Ausgaben übersteigen die Einzahlung' : 'vom eingezahlten Betrag',
+        kind: groceryAvailable < 0 ? 'danger' : 'success'
+      },
+      {
+        label: totalAvailable < 0 ? 'Zusammen fehlt' : 'Zusammen verfügbar',
+        value: euro(Math.abs(totalAvailable)),
+        hint: 'Tankgeld und Einkaufsgeld',
+        kind: totalAvailable < 0 ? 'danger' : 'success'
+      }
+    ]);
+    metrics.classList.add('overview-budget-balance-metrics');
+    card.appendChild(metrics);
+
+    const actions = createUiEl('div', 'row overview-budget-quick-actions');
+    const groceryButton = document.createElement('button');
+    groceryButton.type = 'button';
+    groceryButton.className = 'primary compact';
+    groceryButton.textContent = '+ Einkauf erfassen';
+    groceryButton.addEventListener('click', () => showGroceryExpenseEditor());
+    const fuelButton = document.createElement('button');
+    fuelButton.type = 'button';
+    fuelButton.className = 'secondary compact';
+    fuelButton.textContent = '+ Tankbeleg erfassen';
+    fuelButton.addEventListener('click', () => showTankReceiptEditor());
+    actions.appendChild(groceryButton);
+    actions.appendChild(fuelButton);
+    card.appendChild(actions);
+    return card;
+  }
+
+  function renderMonthMoneyMap(monthKey) {
+    const common = getCommonAccountTargetSummary(monthKey);
+    const personal = (state.personalCosts || []).reduce((sum, post) => {
+      if (isDue(post, monthKey)) return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+      return sum;
+    }, 0);
+    const personalPaid = (state.personalCosts || []).reduce((sum, post) => {
+      if (isDue(post, monthKey) && isPostPaidForMonth(post, monthKey)) return sum + Number(getEffectiveAmountForMonth(post, monthKey) || 0);
+      return sum;
+    }, 0);
+    const debt = getDebtPlanForMonth(monthKey);
+    const misc = {
+      planned: getBufferExpensePlannedSumForMonth(monthKey),
+      paid: getBufferExpenseSumForMonth(monthKey),
+      open: getBufferExpenseOpenSumForMonth(monthKey)
+    };
+    const rows = [
+      { label: 'Gemeinsame Abbuchungen', planned: common.dueTotal, paid: common.paidTotal, open: common.openTotal },
+      { label: 'Persönliche Ausgaben', planned: personal, paid: personalPaid, open: Math.max(0, personal - personalPaid) },
+      { label: 'Schuldenraten', planned: debt.planned, paid: debt.paid, open: debt.open },
+      { label: 'Sonstige Ausgaben', ...misc }
+    ];
+    const card = createUiEl('section', 'card compact-card month-money-map');
+    const head = createUiEl('div', 'compact-section-head');
+    head.appendChild(createUiEl('h3', '', `Monatszahlen · ${formatMonthLabel(monthKey)}`));
+    head.appendChild(createUiEl('span', 'pill', 'geplant · bezahlt · offen'));
+    card.appendChild(head);
+    card.appendChild(createUiEl('p', 'small muted', 'Offen bedeutet: im ausgewählten Monat fällig, aber noch nicht als bezahlt erfasst. Schuldenraten sind bereits Teil der gemeinsamen oder persönlichen Kosten, wenn sie dort verknüpft sind; die Zeilen daher nicht addieren.'));
+    const table = document.createElement('table');
+    table.className = 'list-table compact-table month-money-table';
+    table.innerHTML = '<thead><tr><th>Bereich</th><th>Geplant</th><th>Bezahlt</th><th>Offen</th></tr></thead>';
+    const body = document.createElement('tbody');
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      [row.label, euro(row.planned), euro(row.paid), euro(row.open)].forEach((value, index) => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        if (index === 3 && row.open > 0.005) td.className = 'month-money-open';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    card.appendChild(table);
+    const budget = getDebtBudgetReservationForMonth(monthKey);
+    if (budget.monthlyTarget > 0) {
+      const debtNote = createUiEl('div', 'notice info month-debt-budget-note');
+      debtNote.appendChild(createUiEl('strong', '', `Schuldenbudget: ${euro(budget.monthlyTarget)} insgesamt`));
+      debtNote.appendChild(createUiEl('p', 'small muted', `${euro(budget.linkedDebtCosts)} davon stecken bereits in den Kostenposten; ${euro(budget.additionalReservation)} werden zusätzlich für Schuldentilgung gebunden. Aktuelle Raten: ${euro(debt.planned)} geplant · ${euro(debt.paid)} bezahlt · ${euro(debt.open)} offen. Der sichere freie Betrag oben berücksichtigt die Budgetbindung bereits.`));
+      card.appendChild(debtNote);
+    }
+    return card;
+  }
+
+  function matchesSearchText(value, search) {
+    const q = String(search || '').trim().toLowerCase();
+    if (!q) return true;
+    return String(value || '').toLowerCase().includes(q);
+  }
+
+  function matchesPostStatus(post, monthKey, filter) {
+    const f = filter || 'all';
+    const due = isDue(post, monthKey);
+    const paid = isPostPaidForMonth(post, monthKey);
+    if (f === 'due') return due;
+    if (f === 'open') return due && !paid;
+    if (f === 'paid') return paid;
+    if (f === 'linked') return !!getLinkedDebtForPost(post);
+    if (f === 'reserve') return !!getLinkedSavingsGoal(post);
+    return true;
+  }
+
+  function scheduleSearchRender(input) {
+    const searchId = input && input.dataset ? input.dataset.searchField : '';
+    const selectionStart = input && typeof input.selectionStart === 'number' ? input.selectionStart : null;
+    const selectionEnd = input && typeof input.selectionEnd === 'number' ? input.selectionEnd : selectionStart;
+    pendingSearchFocus = searchId ? { searchId, selectionStart, selectionEnd } : null;
+    if (pendingSearchRenderTimer) clearTimeout(pendingSearchRenderTimer);
+    pendingSearchRenderTimer = setTimeout(() => {
+      pendingSearchRenderTimer = null;
+      render();
+    }, 120);
+  }
+
+  function restorePendingSearchFocus() {
+    if (!pendingSearchFocus || !pendingSearchFocus.searchId) return;
+    const focus = pendingSearchFocus;
+    pendingSearchFocus = null;
+    const input = document.querySelector(`[data-search-field="${focus.searchId}"]`);
+    if (!input || typeof input.focus !== 'function') return;
+    input.focus();
+    if (typeof input.setSelectionRange === 'function' && focus.selectionStart !== null) {
+      const start = Math.max(0, Number(focus.selectionStart || 0));
+      const end = Math.max(start, Number(focus.selectionEnd || start));
+      try { input.setSelectionRange(start, end); } catch (err) {}
+    }
+  }
+
+  function makeSearchFilterBar(searchValue, filterValue, onSearch, onFilter, options) {
+    const wrap = document.createElement('div');
+    wrap.className = 'filter-bar';
+    const input = document.createElement('input');
+    input.type = 'search';
+    input.placeholder = 'Suchen …';
+    input.value = searchValue || '';
+    input.dataset.searchField = `${currentSection}:search`;
+    input.addEventListener('input', (e) => {
+      onSearch(e.target.value);
+      scheduleSearchRender(e.target);
+    });
+    const select = document.createElement('select');
+    (options || [
+      ['all', 'Alle'], ['due', 'Fällig'], ['open', 'Offen'], ['paid', 'Bezahlt']
+    ]).forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      if (filterValue === value) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.addEventListener('change', (e) => { onFilter(e.target.value); render(); });
+    wrap.appendChild(input);
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+
+  function renderIncome() {
+    if (!incomeSection) return;
+    incomeSection.innerHTML = '';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'card income-page-card';
+
+    const header = document.createElement('div');
+    header.className = 'section-header';
+    const currentLabel = formatMonthLabel(currentMonth);
+    header.innerHTML = `<div><h2>Einkommen</h2><p class="muted">Für zukünftige Monate gilt zunächst der Grundlohn. Für ${currentLabel} kannst du die tatsächliche Auszahlung mit Zuschlägen eintragen.</p></div>`;
+    wrapper.appendChild(header);
+
+    normalizeAllPersonConfigs();
+    const totalNet = (state.persons || []).reduce((sum, person) => sum + getPersonNet(person, currentMonth), 0);
+    const overrideCount = (state.persons || []).filter((person) => person.netOverrides && person.netOverrides[currentMonth] != null).length;
+    const planCount = Math.max(0, (state.persons || []).length - overrideCount);
+    const incomeStatusLabel = overrideCount === 0
+      ? 'Planwerte'
+      : (planCount === 0 ? 'Ist-Auszahlungen' : 'Mix aus Ist und Plan');
+    wrapper.appendChild(createSummaryMetrics([
+      { label: `Netto gesamt · ${incomeStatusLabel}`, value: euro(totalNet), hint: overrideCount === 0 ? 'Noch keine tatsächliche Auszahlung eingetragen.' : `${overrideCount} Ist · ${planCount} Planwert(e)` },
+      { label: 'Personen', value: String((state.persons || []).length) },
+      { label: 'Ist-Auszahlungen erfasst', value: String(overrideCount) }
+    ]));
+
+    const debtBudget = getDebtBudgetReservationForMonth(currentMonth);
+    const monthlyDetails = computeMonthDetails(currentMonth);
+    wrapper.appendChild(renderIncomeBreakdownCard(getIncomeBreakdownForMonth(currentMonth), {
+      monthKey: currentMonth,
+      additionalFunds: monthlyDetails.additionalFunds,
+      debtBudget: debtBudget.monthlyTarget > 0 ? debtBudget : null,
+      safeFree: monthlyDetails.free,
+      title: 'Aufteilung wie bisher in der Übersicht',
+      subtitle: `Netto, Kosten und Schuldentilgung für ${currentLabel}`
+    }));
+
+    const info = document.createElement('div');
+    info.className = 'info-box';
+    info.innerHTML = '<strong>So funktioniert es:</strong> Der Grundlohn ist der Planwert für Monate, deren Auszahlung noch nicht bekannt ist. Sobald die Abrechnung da ist, trägst du die tatsächlich ausgezahlte Summe nur für diesen Monat ein. Eine bekannte dauerhafte Gehaltsänderung, etwa nach einer Weiterbildung, kannst du ab dem passenden Monat als neuen Planwert speichern.';
+    wrapper.appendChild(info);
+
+    const grid = document.createElement('div');
+    grid.className = 'person-grid income-person-grid';
+
+    (state.persons || []).forEach((person) => {
+      ensurePersonIncomeConfig(person);
+      const active = getPersonNet(person, currentMonth);
+      const standard = Number(person.net || 0);
+      const hasOverride = person.netOverrides && person.netOverrides[currentMonth] != null;
+      const activeTimeline = getActiveNetTimelineEntry(person, currentMonth);
+      const nextTimeline = getNextNetTimelineEntry(person, currentMonth);
+      const sourceLabel = getPersonNetSourceLabel(person, currentMonth);
+      const hasActualNet = hasOverride;
+      const activeShift = getPersonShift(person, currentMonth);
+      const hasShiftOverride = person.shiftOverrides && person.shiftOverrides[currentMonth] != null;
+      const payrollDeduction = getPayrollDeductionForPerson(person, currentMonth);
+      const incomeShareBasis = getIncomeShareBasis(person, currentMonth, active);
+
+      const card = document.createElement('div');
+      card.className = 'person-card income-card';
+
+      const head = document.createElement('div');
+      head.className = 'person-card-head';
+      const left = document.createElement('div');
+      left.innerHTML = `<span class="person-avatar">${(person.name || '?').charAt(0).toUpperCase()}</span><h3>${person.name || 'Person'}</h3>`;
+      const badge = document.createElement('span');
+      badge.className = `badge ${hasActualNet ? 'badge-ok' : ''}`;
+      badge.textContent = hasActualNet ? 'Ist-Auszahlung erfasst' : (activeTimeline ? 'Planwert aktiv' : 'Grundlohn aktiv');
+      head.appendChild(left);
+      head.appendChild(badge);
+      card.appendChild(head);
+
+      const metrics = document.createElement('div');
+      metrics.className = 'person-metrics';
+      metrics.innerHTML = `
+        <div><span>Verwendet in ${currentLabel}</span><strong>${euro(active)}</strong></div>
+        <div><span>Grundlohn / Basis</span><strong>${euro(standard)}</strong></div>
+        <div><span>Basis für gemeinsame Kosten</span><strong>${euro(incomeShareBasis)}</strong>${payrollDeduction > 0 ? `<small>nach ${euro(payrollDeduction)} Lohnabzug</small>` : ''}</div>
+        <div><span>Quelle</span><strong>${sourceLabel}</strong></div>
+        <div><span>Verschiebung</span><strong>${euro(activeShift)}</strong>${hasShiftOverride ? '<small>nur dieser Monat</small>' : ''}</div>
+      `;
+      card.appendChild(metrics);
+
+      if (payrollDeduction > 0) {
+        const deductionHint = document.createElement('p');
+        deductionHint.className = 'small muted';
+        deductionHint.textContent = `${euro(active)} enthält ${euro(payrollDeduction)} direkten Lohnabzug. Für Gemeinschaftskosten, Tankgeld und Einkaufsgeld zählen deshalb ${euro(incomeShareBasis)}.`;
+        card.appendChild(deductionHint);
+      }
+
+      if (hasOverride) {
+        const actualHint = document.createElement('p');
+        actualHint.className = 'small muted';
+        actualHint.textContent = `Für ${currentLabel} wird die tatsächliche Auszahlung verwendet. Der Grundlohn bleibt für andere Monate unverändert.`;
+        card.appendChild(actualHint);
+      } else if (activeTimeline) {
+        const planHint = document.createElement('p');
+        planHint.className = 'small muted';
+        planHint.textContent = `Für ${currentLabel} wird vorläufig der Planwert ${euro(activeTimeline.amount)} verwendet. Sobald die Auszahlung feststeht, trage unten den Ist-Betrag für diesen Monat ein.`;
+        card.appendChild(planHint);
+      } else if (nextTimeline) {
+        const hint = document.createElement('p');
+        hint.className = 'small muted';
+        hint.textContent = `Nächster bekannter Planwert: ${euro(nextTimeline.amount)} ab ${formatMonthLabel(nextTimeline.month)}.`;
+        card.appendChild(hint);
+      }
+
+      const form = document.createElement('div');
+      form.className = 'income-inline-form';
+
+      const standardInput = document.createElement('input');
+      standardInput.type = 'text';
+      standardInput.inputMode = 'decimal';
+      standardInput.value = formatNumberInput(standard);
+
+      const monthInput = document.createElement('input');
+      monthInput.type = 'text';
+      monthInput.inputMode = 'decimal';
+      monthInput.placeholder = 'leer = Grundlohn / Planwert';
+      monthInput.value = hasOverride
+        ? formatNumberInput(Math.max(0, Number(person.netOverrides[currentMonth]) - payrollDeduction))
+        : '';
+
+      form.appendChild(createLabelInput('Grundlohn / Basis-Netto', standardInput));
+      form.appendChild(createLabelInput(`Tatsächlich ausgezahlt in ${currentLabel}`, monthInput));
+      if (payrollDeduction > 0) {
+        const payrollNote = document.createElement('p');
+        payrollNote.className = 'small muted';
+        payrollNote.textContent = `Abtretung: ${euro(payrollDeduction)} · wird automatisch zum Plan-Netto addiert. Hier nur den Betrag eintragen, der auf dem Konto angekommen ist.`;
+        form.appendChild(payrollNote);
+      }
+      const shiftNote = document.createElement('p');
+      shiftNote.className = 'small muted';
+      shiftNote.textContent = hasShiftOverride
+        ? `Ausgleich/Verschiebung: ${euro(activeShift)} nur für ${currentLabel}; normal wären ${euro(Number(person.shift || 0))}.`
+        : `Ausgleich/Verschiebung: ${euro(activeShift)}. Dieser Wert wird nicht im Einkommen geändert, damit das Netto nicht versehentlich als Ausgleich gespeichert wird.`;
+      form.appendChild(shiftNote);
+
+      const receivedEntry = getPersonIncomeReceivedEntry(person, currentMonth);
+      const receivedBalanceApplied = !!(receivedEntry && receivedEntry.balanceApplied === true);
+      const incomeAccountRow = document.createElement('div');
+      incomeAccountRow.className = 'row income-received-row';
+      const receivedBox = document.createElement('div');
+      receivedBox.className = receivedEntry ? 'notice success income-received-status' : 'notice income-received-status';
+      receivedBox.innerHTML = receivedEntry
+        ? `<strong>Erhalten:</strong> ${euro(receivedEntry.amount)} für ${currentLabel} markiert.`
+        : `<strong>Noch nicht erhalten:</strong> ${euro(getPersonCashPayout(person, currentMonth))} Auszahlung für ${currentLabel} ist noch nicht als Eingang markiert.`;
+      incomeAccountRow.appendChild(receivedBox);
+      form.appendChild(incomeAccountRow);
+
+      const actions = document.createElement('div');
+      actions.className = 'button-row income-actions';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'primary';
+      saveBtn.textContent = 'Einkommen speichern';
+      saveBtn.addEventListener('click', () => {
+        const standardValue = parseMoneyInput(standardInput.value);
+        const monthRaw = String(monthInput.value || '').trim();
+
+        if (!Number.isFinite(standardValue) || standardValue < 0) {
+          alert('Bitte einen gültigen Grundlohn eingeben.');
+          return;
+        }
+
+        person.net = standardValue;
+        ensurePersonIncomeConfig(person);
+
+        if (monthRaw === '') {
+          if (person.netOverrides && person.netOverrides[currentMonth] != null) {
+            delete person.netOverrides[currentMonth];
+            addChangeLog('Einkommen', `${person.name}: Ist-Auszahlung für ${currentLabel} gelöscht; Planwert wird wieder verwendet.`);
+          } else {
+            addChangeLog('Einkommen', `${person.name}: Grundlohn / Basis-Netto auf ${euro(standardValue)} gesetzt.`);
+          }
+        } else {
+          const monthValue = parseMoneyInput(monthRaw);
+          if (!Number.isFinite(monthValue) || monthValue < 0) {
+            alert('Bitte eine gültige tatsächliche Auszahlung eingeben.');
+            return;
+          }
+          const totalIncome = roundMoney(monthValue + payrollDeduction);
+          person.netOverrides[currentMonth] = totalIncome;
+          addChangeLog('Einkommen', `${person.name}: Auszahlung für ${currentLabel} auf ${euro(monthValue)} gesetzt${payrollDeduction > 0 ? `; Lohnabtretung ${euro(payrollDeduction)} ergänzt (Plan-Netto ${euro(totalIncome)}).` : '.'}`);
+        }
+
+        syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
+        saveState();
+        render();
+      });
+
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'secondary';
+      clearBtn.textContent = 'Ist-Auszahlung löschen';
+      clearBtn.addEventListener('click', () => {
+        ensurePersonIncomeConfig(person);
+        delete person.netOverrides[currentMonth];
+        addChangeLog('Einkommen', `${person.name}: Ist-Auszahlung für ${currentLabel} gelöscht; Planwert wird wieder verwendet.`);
+        syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
+        saveState();
+        render();
+      });
+
+      const applyStandardFutureBtn = document.createElement('button');
+      applyStandardFutureBtn.type = 'button';
+      applyStandardFutureBtn.className = 'success';
+      applyStandardFutureBtn.textContent = `Grundlohn ab ${currentLabel} als Planwert setzen`;
+      applyStandardFutureBtn.addEventListener('click', () => {
+        const standardValue = parseMoneyInput(standardInput.value);
+        if (!Number.isFinite(standardValue) || standardValue < 0) return alert('Bitte einen gültigen Grundlohn eingeben.');
+        person.net = standardValue;
+        setPersonNetForMonth(person, currentMonth, standardValue, 'future');
+        addChangeLog('Einkommen', `${person.name}: Grundlohn / Planwert ab ${currentLabel} auf ${euro(standardValue)} gesetzt.`);
+        syncPersonIncomeReceivedAmount(person, currentMonth);
+        syncIncomeBasedSharedTopUps(currentMonth);
+        saveState();
+        render();
+      });
+
+      const incomeReceivedBtn = document.createElement('button');
+      incomeReceivedBtn.type = 'button';
+      incomeReceivedBtn.className = receivedEntry ? 'secondary' : 'success';
+      incomeReceivedBtn.textContent = receivedEntry ? 'Lohn-Eingang rückgängig' : 'Lohn erhalten markieren';
+      incomeReceivedBtn.addEventListener('click', () => {
+        if (setPersonIncomeReceived(person, currentMonth, !receivedEntry, '')) {
+          saveState();
+          render();
+        }
+      });
+
+      actions.appendChild(saveBtn);
+      actions.appendChild(clearBtn);
+      actions.appendChild(applyStandardFutureBtn);
+      if (ACCOUNTS_ENABLED && receivedEntry && !receivedBalanceApplied) {
+        const applyIncomeBalanceBtn = document.createElement('button');
+        applyIncomeBalanceBtn.type = 'button';
+        applyIncomeBalanceBtn.className = 'success';
+        applyIncomeBalanceBtn.textContent = 'Eingang einmal zum Kontostand addieren';
+        applyIncomeBalanceBtn.addEventListener('click', () => {
           if (!confirm('Nur fortfahren, wenn dieser Lohneingang noch nicht in deinem eingetragenen Kontostand enthalten ist. Jetzt einmal hinzufügen?')) return;
           if (applyPersonIncomeBalance(person, currentMonth, true)) {
             syncPaymentsPaidWithIncome(person, currentMonth, true);
