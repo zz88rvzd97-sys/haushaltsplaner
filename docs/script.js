@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.23
+/* * Haushaltsplaner Version 3.25
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,7 +19,7 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.23';
+  const APP_VERSION = '3.25';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
@@ -2773,19 +2773,22 @@
       const payment = paid ? getCommonAccountContributionPayment(monthKey, pd.person.id) : null;
       const paidAmount = paid ? roundMoney(Number(payment && payment.amount || plannedAmount)) : 0;
       const openAmount = paid ? Math.max(roundMoney(plannedAmount - paidAmount), 0) : plannedAmount;
+      const creditAmount = paid ? Math.max(roundMoney(paidAmount - plannedAmount), 0) : 0;
       return {
         person: pd.person,
         amount: paid ? paidAmount : plannedAmount,
         plannedAmount,
         paidAmount,
         openAmount,
+        creditAmount,
         paid,
         locked: !!payment
       };
     });
     const contributionsTotal = roundMoney(persons.reduce((sum, row) => sum + row.plannedAmount, 0));
     const contributionsPaid = roundMoney(persons.reduce((sum, row) => sum + row.paidAmount, 0));
-    const contributionsOpen = roundMoney(persons.reduce((sum, row) => sum + row.openAmount, 0));
+    const contributionCredits = roundMoney(persons.reduce((sum, row) => sum + row.creditAmount, 0));
+    const contributionsOpen = Math.max(roundMoney(contributionsTotal - contributionsPaid), 0);
     const dueCommon = (state.commonCosts || [])
       .filter((item) => isDue(item, monthKey))
       .map((item) => ({
@@ -2815,6 +2818,7 @@
       persons,
       contributionsTotal,
       contributionsPaid,
+      contributionCredits,
       contributionsOpen,
       dueCommon,
       actualDueTotal,
@@ -9786,16 +9790,17 @@
     });
 
     const commonDetails = computeCommonAccountDetails(monthKey);
-    const incoming = (commonDetails.persons || [])
-      .filter((row) => Number(row.openAmount || 0) > 0.005)
-      .map((row) => ({
-        personId: row.person.id,
-        name: `${row.person.name} Anteil gemeinsame Kosten`,
-        amount: Number(row.openAmount || 0),
-      accountId: ACCOUNTS_ENABLED ? DEFAULT_SHARED_ACCOUNT_ID : '',
-      accountName: ACCOUNTS_ENABLED ? getAccountName(DEFAULT_SHARED_ACCOUNT_ID) : 'Monatsanteile',
-        note: row.paid ? `${euro(row.paidAmount)} fixiert eingegangen, Differenz offen` : 'noch nicht eingegangen'
-      }));
+    const incoming = Number(commonDetails.contributionsOpen || 0) > 0.005
+      ? [{
+        name: 'Gemeinschaftskonto netto',
+        amount: Number(commonDetails.contributionsOpen || 0),
+        accountId: ACCOUNTS_ENABLED ? DEFAULT_SHARED_ACCOUNT_ID : '',
+        accountName: ACCOUNTS_ENABLED ? getAccountName(DEFAULT_SHARED_ACCOUNT_ID) : 'Monatsanteile',
+        note: Number(commonDetails.contributionCredits || 0) > 0.005
+          ? `Nach Verrechnung von ${euro(commonDetails.contributionCredits)} über dem persönlichen Monatsanteil`
+          : 'Noch nicht als eingegangen markiert'
+      }]
+      : [];
 
     const groups = Array.from(byAccount.values()).sort((a, b) => {
       if (!a.accountId && b.accountId) return 1;
@@ -10121,7 +10126,7 @@
       if (Number(row.plannedAmount || row.amount || 0) > 0) {
         const done = Number(row.openAmount || 0) <= 0.005;
         const detail = done
-          ? `${euro(row.paidAmount || row.amount)} eingegangen.`
+          ? `${euro(row.paidAmount || row.amount)} eingegangen.${Number(row.creditAmount || 0) > 0.005 ? ` ${euro(row.creditAmount)} über dem Monatsanteil.` : ''}`
           : (row.paid
             ? `${euro(row.paidAmount)} fixiert eingegangen, ${euro(row.openAmount)} Differenz offen.`
             : `${euro(row.openAmount || row.amount)} noch offen.`);
@@ -12522,7 +12527,12 @@
     shares.appendChild(createSummaryMetrics([
       { label: 'Soll-Eingang', value: euro(details.contributionsTotal) },
       { label: 'Bereits eingegangen', value: euro(details.contributionsPaid), kind: details.contributionsPaid > 0 ? 'success' : '' },
-      { label: 'Noch offen', value: euro(details.contributionsOpen), kind: details.contributionsOpen > 0 ? 'warning' : 'success' },
+      {
+        label: 'Noch offen',
+        value: euro(details.contributionsOpen),
+        kind: details.contributionsOpen > 0 ? 'warning' : 'success',
+        hint: details.contributionCredits > 0.005 ? `Netto nach ${euro(details.contributionCredits)} über Monatsanteil` : ''
+      },
       { label: 'Nach offenen Anteilen', value: euro(details.afterExpectedContributions), kind: details.afterExpectedContributions >= 0 ? 'success' : 'danger' }
     ]));
     const shareTable = document.createElement('table');
@@ -12539,7 +12549,9 @@
       if (rowData.paid) {
         const fixedHint = document.createElement('div');
         fixedHint.className = 'small muted';
-        fixedHint.textContent = Math.abs(plannedDiff) > 0.005
+        fixedHint.textContent = Number(rowData.creditAmount || 0) > 0.005
+          ? `${euro(rowData.creditAmount)} über Monatsanteil`
+          : Math.abs(plannedDiff) > 0.005
           ? `fixiert · aktueller Soll-Anteil ${euro(rowData.plannedAmount)}`
           : 'fixiert beim Eingang';
         tdAmount.appendChild(fixedHint);
@@ -12823,7 +12835,11 @@ function renderCommon() {
         label: 'Noch zu überweisen',
         value: euro(contributionDetails.contributionsOpen),
         kind: contributionDetails.contributionsOpen > 0 ? 'warning' : 'success',
-        hint: contributionDetails.contributionsOpen > 0 ? 'Noch nicht als überwiesen markiert' : 'Alle Monatsanteile sind erledigt'
+        hint: contributionDetails.contributionsOpen > 0
+          ? (contributionDetails.contributionCredits > 0.005
+            ? `Netto nach ${euro(contributionDetails.contributionCredits)} über Monatsanteil`
+            : 'Noch nicht als überwiesen markiert')
+          : 'Alle Monatsanteile sind erledigt'
       }
     ]));
     card.appendChild(targetCard);
@@ -12949,7 +12965,9 @@ function renderCommon() {
         'div',
         'small muted common-contribution-payment-hint',
         rowData.paid
-          ? `${euro(rowData.paidAmount)} eingegangen · ${euro(rowData.openAmount)} noch offen`
+          ? (Number(rowData.creditAmount || 0) > 0.005
+            ? `${euro(rowData.paidAmount)} eingegangen · ${euro(rowData.creditAmount)} über Monatsanteil`
+            : `${euro(rowData.paidAmount)} eingegangen · ${euro(rowData.openAmount)} noch offen`)
           : `${euro(rowData.openAmount)} noch offen`
       ));
       const paymentControls = document.createElement('div');
