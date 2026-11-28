@@ -21660,3 +21660,40 @@ function createPotsCard() {
   if (versionChip) {
     const params = new URLSearchParams(window.location.search);
     if (params.has('refresh')) {
+      versionChip.textContent = VERSION_UPDATE_TEXT;
+      setTimeout(() => {
+        versionChip.textContent = VERSION_READY_TEXT;
+      }, 2500);
+    } else {
+      versionChip.textContent = VERSION_READY_TEXT;
+    }
+  }
+
+
+  // Zusätzlicher Schutz auf Mac/Safari/iPhone: Wenn der Browser Tabs einfriert,
+  // die App minimiert oder die Seite neu lädt, wird der aktuelle Zustand vorher
+  // noch einmal in mehreren lokalen Speicher-Schlüsseln gesichert.
+  window.addEventListener('beforeunload', () => saveState());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveState();
+  });
+  window.addEventListener('pagehide', () => saveState());
+
+  const preciseCarrySyncKey = 'budgetPreciseCarrySync_v1';
+  if (!localStorage.getItem(preciseCarrySyncKey)) {
+    syncIncomeBasedSharedTopUps(currentMonth, 36);
+    localStorage.setItem(preciseCarrySyncKey, APP_VERSION);
+    saveState();
+  }
+
+  updateSaveStatus();
+  // Starte das Rendering
+  render();
+  automaticBrowserBackupInitialized = true;
+  Promise.all([
+    reconcileAutomaticBrowserBackups(),
+    reconcileExternalBackupConnection()
+  ]).then(([automaticChanged, externalChanged]) => {
+    if ((automaticChanged || externalChanged) && (currentSection === 'save' || currentSection === 'overview' || currentSection === 'monthstart')) render();
+  });
+})();
