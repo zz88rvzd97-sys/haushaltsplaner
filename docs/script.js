@@ -1,4 +1,4 @@
-/* * Haushaltsplaner Version 3.28
+/* * Haushaltsplaner Version 3.29
  *
  * Die Monatsanteile der gemeinsamen Kosten können pro Person und Monat
  * manuell eingetragen werden. Deutsche Komma-Beträge werden unterstützt;
@@ -19,11 +19,13 @@
   const TANK_AVERAGE_START_MONTH = '2026-11';
   const GROCERY_AVERAGE_START_MONTH = '2026-11';
   const PRIVATE_HOUSEHOLD_ONLY_START_MONTH = '2026-10';
-  const APP_VERSION = '3.27';
+  const APP_VERSION = '3.29';
   const HOUSEHOLD_PAYMENT_METHOD_LABELS = {
     cash: 'Bar',
     transfer: 'Überweisung',
-    direct_debit: 'Lastschrift'
+    direct_debit: 'Lastschrift',
+    standing_order: 'Dauerauftrag',
+    transfer_after_notice: 'Überweisung nach Zahlungsbescheid'
   };
 
   function normalizeHouseholdPaymentMethod(value) {
@@ -36,7 +38,7 @@
 
   function createHouseholdPaymentMethodSelect(value = '') {
     const select = document.createElement('select');
-    select.innerHTML = '<option value="">Nicht angegeben</option><option value="cash">Bar</option><option value="transfer">Überweisung</option><option value="direct_debit">Lastschrift</option>';
+    select.innerHTML = '<option value="">Nicht angegeben</option><option value="cash">Bar</option><option value="transfer">Überweisung</option><option value="direct_debit">Lastschrift</option><option value="standing_order">Dauerauftrag</option><option value="transfer_after_notice">Überweisung nach Zahlungsbescheid</option>';
     select.value = normalizeHouseholdPaymentMethod(value);
     return select;
   }
@@ -637,6 +639,9 @@
       debt.paymentType = inferDebtPaymentType(debt);
     }
     if (debt.paymentType === 'open_plan') debt.monthlyRate = 0;
+    if (!['standing_order', 'direct_debit', 'transfer', 'transfer_after_notice'].includes(debt.plannedPaymentMethod)) debt.plannedPaymentMethod = '';
+    const dueDay = Number(debt.dueDay);
+    debt.dueDay = Number.isInteger(dueDay) && dueDay >= 1 && dueDay <= 31 ? dueDay : 0;
     normalizeDebtRateTimeline(debt);
     ensureDebtRateChangeRule(debt);
     ensureDebtCreditorRule(debt);
@@ -16733,7 +16738,7 @@ function showPersonalEditor(personId, editPost) {
               ? Number(row.payoffReserve.leftoverAfterPayoff || 0)
               : 0,
             debtReserveRemainderActionKey: `${actionKey}|reserve-remainder`,
-            paymentMethod: item.debt.paymentMethod || '',
+            paymentMethod: item.debt.plannedPaymentMethod || '',
             afterSave: () => setDebtAssistantActionStatus(actionKey, 'done')
           });
           return;
@@ -16747,7 +16752,7 @@ function showPersonalEditor(personId, editPost) {
           mode: markAsMonthly ? 'regular' : 'extra',
           note: item.extra > 0 ? `Rate ${euro(item.rate)} · zusätzlich ${euro(item.extra)}` : 'Vereinbarte Monatszahlung',
           source: 'Schulden-Monatsassistent',
-          paymentMethod: item.debt.paymentMethod || '',
+          paymentMethod: item.debt.plannedPaymentMethod || '',
           allowUnrestrictedPayment: true,
           afterSave: () => setDebtAssistantActionStatus(actionKey, 'done')
         });
@@ -17670,7 +17675,9 @@ function showPersonalEditor(personId, editPost) {
         const creditorRuleText = getDebtCreditorRule(d)?.label || '';
         const latestBalanceCheck = getLatestDebtBalanceCheck(d, currentMonth);
         const latestPayment = (d.paymentHistory || []).slice().sort((a, b) => String(b.month || '').localeCompare(String(a.month || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
-        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Schuldart:</span> ${typeHtml}</div><div><span>Letzter Zahlungsweg:</span> ${latestPayment ? `${getHouseholdPaymentMethodLabel(latestPayment.paymentMethod)} · ${formatMonthLabel(latestPayment.month)}` : 'noch keiner erfasst'}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Ratenregel:</span> ${reviewRuleText}</div>` : ''}${creditorRuleText ? `<div><span>Zahlungsregel:</span> ${creditorRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
+        const plannedPaymentText = d.plannedPaymentMethod ? getHouseholdPaymentMethodLabel(d.plannedPaymentMethod) : 'noch nicht angegeben';
+        const dueDayText = Number(d.dueDay) > 0 ? `${d.dueDay}. des Monats` : 'Fälligkeitstag noch offen';
+        const debtDetailsHtml = `<strong>${d.name}</strong><div><span>Schuldart:</span> ${typeHtml}</div><div><span>Geplanter Zahlungsweg:</span> ${plannedPaymentText}</div><div><span>Fälligkeitstag:</span> ${dueDayText}</div><div><span>Letzter Zahlungsweg:</span> ${latestPayment ? `${getHouseholdPaymentMethodLabel(latestPayment.paymentMethod)} · ${formatMonthLabel(latestPayment.month)}` : 'noch keiner erfasst'}</div><div><span>Standprüfung:</span> ${getDebtBalanceCheckModeLabel(d)}</div><div><span>Letzter bestätigter Stand:</span> ${latestBalanceCheck ? `${formatMonthLabel(latestBalanceCheck.month)} · ${euro(latestBalanceCheck.amount)}` : 'noch keiner'}</div>${reviewRuleText ? `<div><span>Ratenregel:</span> ${reviewRuleText}</div>` : ''}${creditorRuleText ? `<div><span>Zahlungsregel:</span> ${creditorRuleText}</div>` : ''}<div><span>Ratenverlauf:</span> ${getDebtRateTimelineText(d) ? getDebtRateTimelineText(d) : '-'}</div>${getNextDebtRateChangeText(d) ? `<div class="small muted">${getNextDebtRateChangeText(d)}</div>` : ''}`;
         actionCell.appendChild(createActionMenu([
           { label: 'Bearbeiten', className: 'primary', onClick: () => showDebtEditor(d) },
           { label: 'Rate ändern', className: 'secondary', onClick: () => showDebtRateEditor(d) },
@@ -17894,7 +17901,7 @@ function showPersonalEditor(personId, editPost) {
       mode: 'regular',
       source: sourceParts.join(' · '),
       note: `${sourceParts.join(' · ')} · aus dem festen Schuldenbudget`,
-      paymentMethod: debt.paymentMethod || '',
+      paymentMethod: debt.plannedPaymentMethod || '',
       afterSave: () => saveState()
     });
   }
@@ -18245,9 +18252,31 @@ function showPersonalEditor(personId, editPost) {
     row2.appendChild(createLabelInput('Nächste Fälligkeit', refs.dueInput));
     content.appendChild(row2);
 
+    const paymentDetailsRow = document.createElement('div');
+    paymentDetailsRow.className = 'row';
+    refs.plannedPaymentMethodSelect = document.createElement('select');
+    refs.plannedPaymentMethodSelect.innerHTML = `
+      <option value="">Noch nicht angegeben</option>
+      <option value="standing_order">Dauerauftrag</option>
+      <option value="direct_debit">Lastschrift</option>
+      <option value="transfer">Überweisung</option>
+      <option value="transfer_after_notice">Überweisung nach Zahlungsbescheid</option>
+    `;
+    refs.plannedPaymentMethodSelect.value = editDebt ? (editDebt.plannedPaymentMethod || '') : '';
+    paymentDetailsRow.appendChild(createLabelInput('Geplanter Zahlungsweg', refs.plannedPaymentMethodSelect));
+    refs.dueDayInput = document.createElement('input');
+    refs.dueDayInput.type = 'number';
+    refs.dueDayInput.min = '1';
+    refs.dueDayInput.max = '31';
+    refs.dueDayInput.step = '1';
+    refs.dueDayInput.placeholder = 'optional';
+    refs.dueDayInput.value = editDebt && Number(editDebt.dueDay) > 0 ? String(editDebt.dueDay) : '';
+    paymentDetailsRow.appendChild(createLabelInput('Fälligkeitstag im Monat', refs.dueDayInput));
+    content.appendChild(paymentDetailsRow);
+
     const hint = document.createElement('p');
     hint.className = 'small muted';
-    hint.textContent = 'Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate. Ab Oktober 2026 werden insgesamt 800 € monatlich eingeplant; die gewählte Zahlungsmöglichkeit entscheidet automatisch, welche Schuld zusätzliche Beträge erhalten darf.';
+    hint.textContent = 'Der geplante Zahlungsweg wird beim Eintragen einer Zahlung vorausgewählt. Der Fälligkeitstag ist optional und kann zwischen 1 und 31 liegen. Die App fragt einsehbare Schuldenstände monatlich ab, alle anderen nur alle zwölf Monate.';
     content.appendChild(hint);
 
     showModal(editDebt ? 'Schuld bearbeiten' : 'Neue Schuld anlegen', content, [
@@ -18264,6 +18293,11 @@ function showPersonalEditor(personId, editPost) {
           const open = parseMoneyInput(refs.openInput.value);
           let rate = parseMoneyInput(refs.rateInput.value);
           const due = refs.dueInput.value;
+          const plannedPaymentMethod = ['standing_order', 'direct_debit', 'transfer', 'transfer_after_notice'].includes(refs.plannedPaymentMethodSelect.value)
+            ? refs.plannedPaymentMethodSelect.value
+            : '';
+          const dueDayValue = refs.dueDayInput.value.trim();
+          const dueDay = dueDayValue ? Number(dueDayValue) : 0;
           const paymentType = refs.paymentTypeSelect.value;
           const paymentRuleMode = DEBT_PAYMENT_RULE_MODES.includes(refs.paymentRuleSelect.value) ? refs.paymentRuleSelect.value : 'flexible';
           const balanceCheckMode = refs.balanceCheckModeSelect.value === 'monthly' ? 'monthly' : 'annual';
@@ -18274,6 +18308,7 @@ function showPersonalEditor(personId, editPost) {
           if (paymentType === 'installment' && open > 0 && !(rate > 0)) return alert('Bei Ratenzahlung muss eine Monatsrate größer 0 € hinterlegt sein.');
           if (paymentType === 'open_plan') rate = 0;
           if (!due || !/^\d{4}-\d{2}$/.test(due)) return alert('Bitte eine gültige Fälligkeit wählen.');
+          if (dueDayValue && (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31)) return alert('Bitte einen Fälligkeitstag zwischen 1 und 31 eingeben oder das Feld leer lassen.');
           if (editDebt && getDebtAnnualRateRule(editDebt) && Math.abs(Number(editDebt.monthlyRate || 0) - rate) > 0.01 && !isDebtRateChangeAllowedInMonth(editDebt, currentMonth)) {
             return alert(`${editDebt.name}: Die Monatsrate darf nur zum 01.${String(getDebtAnnualRateRule(editDebt).month).padStart(2, '0')}. geändert werden. Nutze dafür bitte „Rate ändern“ und wähle den Mai des jeweiligen Jahres.`);
           }
@@ -18287,13 +18322,15 @@ function showPersonalEditor(personId, editPost) {
             editDebt.paymentRuleMode = paymentRuleMode;
             editDebt.balanceCheckMode = balanceCheckMode;
             editDebt.nextDueMonth = due;
+            editDebt.plannedPaymentMethod = plannedPaymentMethod;
+            editDebt.dueDay = dueDay;
             editDebt.accountId = ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '';
             if (open <= 0 && wasOpen) editDebt.completedMonth = currentMonth;
             if (open > 0) delete editDebt.completedMonth;
             ensureDebtConfig(editDebt);
             recalculateDebtPlanningAfterBalanceChange(editDebt, currentMonth);
           } else {
-            const newDebt = { id: generateId(), name, amountOpen: open, monthlyRate: rate, paymentType, paymentRuleMode, balanceCheckMode, balanceChecks: [], nextDueMonth: due, paidMonths: [], rateTimeline: [], accountId: ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '' };
+            const newDebt = { id: generateId(), name, amountOpen: open, monthlyRate: rate, paymentType, paymentRuleMode, balanceCheckMode, balanceChecks: [], nextDueMonth: due, plannedPaymentMethod, dueDay, paidMonths: [], rateTimeline: [], accountId: ACCOUNTS_ENABLED ? (refs.accountSelect.value || '') : '' };
             if (open <= 0) newDebt.completedMonth = currentMonth;
             state.debts.push(newDebt);
             ensureDebtConfig(newDebt);

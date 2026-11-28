@@ -1,11 +1,12 @@
 <!--
-  Haushaltsplaner Version 3.28
+  Haushaltsplaner Version 3.29
   Rücklagen, Töpfe und Rauchzeug wurden aus dem aktiven Plan entfernt.
 -->
 <!-- Aktualisierung Version&nbsp;3.09: Die Einkommensübersicht trennt den Betrag vor zusätzlicher Schuldentilgung, die zusätzliche Tilgung innerhalb des 800-€-Schuldenpools und den anschließend sicheren Rest. Die Monatsübersicht persönlicher Ausgaben zeigt bei nicht fälligen Quartalsposten keine irreführenden Monatsanteile mehr. -->
 <!-- Aktualisierung Version&nbsp;3.10: Die Monatsübersicht fasst geplante, bezahlte und offene Beträge je Bereich zusammen. Der Datencheck trennt aktuelle Abweichungen von zukünftigen Planhinweisen. Der Monatsabschluss zeigt nur Rest, Schuldenbudget und eine kurze Prüfliste; Rücklagen- und Sparverteilung wurden aus diesem Ablauf entfernt. -->
 <!-- Aktualisierung Version&nbsp;3.27: Später verschobene Sondertilgungen werden aus dem Monatsrest gelöst und zählen nicht mehr als offene Zahlung. -->
 <!-- Aktualisierung Version&nbsp;3.28: Wenn eine geplante Sondertilgung eine Schuld bis auf höchstens 20 € offen lässt, fragt der Monatsassistent freiwillig nach einem Zusatzbetrag. Andere geplante Schuldzahlungen bleiben unverändert. -->
+<!-- Aktualisierung Version&nbsp;3.29: Bei jeder Schuld lassen sich geplanter Zahlungsweg und Fälligkeitstag erfassen; beides wird in der Schuldenliste angezeigt und der Zahlungsweg bei Zahlungseinträgen vorausgewählt. -->
 <!-- Aktualisierung Version&nbsp;3.22: Tank- und Einkaufsgeld runden nur das Monatsziel auf 10 € auf; Überträge und Einzahlungen werden centgenau verrechnet und verteilt. -->
 <!-- Aktualisierung Version&nbsp;3.21: Tank- und Einkaufsgeld verwenden ab November den rollenden 12-Monats-Schnitt aus tatsächlichen Ausgaben und Prognosen; der Oktoberübertrag bleibt im Topf enthalten. -->
 <!-- Aktualisierung Version&nbsp;3.20: Tankgeld läuft ab Oktober mit den tatsächlichen Einzahlungen und Tankbelegen dynamisch weiter. Fehlbeträge werden vorgetragen, Guthaben mindert den nächsten Bedarf. -->
@@ -241,7 +242,7 @@
         <div class="sidebar-bottom">
           <button id="reloadButton" class="side-action" type="button"><span aria-hidden="true">↻</span> Neu laden</button>
           <div class="side-status-card">
-            <div class="version-chip" id="versionChip">Version 3.28 geladen</div>
+            <div class="version-chip" id="versionChip">Version 3.29 geladen</div>
             <div class="side-status-line"><span aria-hidden="true">✓</span> Alle Daten sind aktuell</div>
             <div class="side-save-status" id="saveStatus">Speicherstatus wird geprüft …</div>
           </div>
@@ -267,9 +268,9 @@
           <section id="save" class="tab-section"></section>
           <section id="buffer" class="tab-section"></section>
         </main>
-        <footer>Haushaltsplaner · Version&nbsp;3.28</footer>
+        <footer>Haushaltsplaner · Version&nbsp;3.29</footer>
       </div>
     </div>
-    <script src="script.js?v=3.28"></script>
+    <script src="script.js?v=3.29"></script>
   </body>
 </html>
